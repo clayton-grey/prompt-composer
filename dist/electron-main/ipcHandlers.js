@@ -2,34 +2,18 @@
 /**
  * @file ipcHandlers.ts
  * @description
- * This file registers IPC handlers for interacting with the local file system.
- * - We parse and respect .gitignore rules
- * - We skip the .git folder
- * - We only return allowed text-based file extensions
- * - We also now return an object that includes the 'absolutePath', 'baseName', and 'children'
- *   so that the React code doesn't need to call any Node.js path methods.
+ * This file registers IPC handlers for interacting with the local file system
+ * and other tasks, including "export-xml" for saving the XML file.
  *
- * IPC Handler: "list-directory"
- *  - Input: dirPath (could be relative or absolute)
- *  - Returns: {
- *      absolutePath: string,
- *      baseName: string,
- *      children: Array<{ name, path, type, children? }>
- *    }
+ * Key Responsibilities:
+ *  - "list-directory": returns { absolutePath, baseName, children } for the given dirPath
+ *  - "read-file": returns the content of a file as a string
+ *  - "export-xml": opens a save dialog, writes the XML file if confirmed
  *
- * IPC Handler: "read-file"
- *  - Input: filePath (absolute path)
- *  - Returns: string (file content)
- *
- * @dependencies
- *  - electron (ipcMain)
+ * Dependencies:
+ *  - electron (ipcMain, dialog)
  *  - fs, path (Node.js)
  *  - ignore (to parse .gitignore)
- *
- * @notes
- *  - .git folder is explicitly skipped
- *  - .gitignore is loaded from the project root (cwd) in this MVP
- *  - The returned object helps the front-end avoid usage of Node modules (like path)
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -40,20 +24,13 @@ const electron_1 = require("electron");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const ignore_1 = __importDefault(require("ignore"));
-/**
- * Allowed file extensions for text-based files.
- * We can expand this list if needed.
- */
+// Allowed file extensions for text-based files
 const ALLOWED_EXTENSIONS = [
     '.txt', '.md', '.js', '.ts', '.tsx', '.jsx', '.json', '.py', '.css', '.html'
 ];
 /**
- * Recursively reads the directory contents, filters out ignored paths,
- * and returns a nested JSON structure of directories/files.
- *
- * @param dirPath The absolute path to list
- * @param ig An instance of ignore.Ignore containing .gitignore patterns
- * @return A list of file/directory TreeNode objects (children)
+ * Recursively reads directory contents, filters out ignored paths,
+ * returns a nested JSON structure of directories/files.
  */
 function readDirectoryRecursive(dirPath, ig) {
     let results = [];
@@ -65,16 +42,15 @@ function readDirectoryRecursive(dirPath, ig) {
         console.error('[list-directory] Failed to read dir:', dirPath, err);
         return results;
     }
-    // Sort entries (folders then files, purely alphabetical)
+    // Sort entries
     dirEntries.sort((a, b) => a.localeCompare(b));
     for (const entry of dirEntries) {
-        // Explicitly skip .git folder
+        // Skip .git folder
         if (entry === '.git') {
             continue;
         }
         const fullPath = path_1.default.join(dirPath, entry);
         const relPath = path_1.default.relative(process.cwd(), fullPath);
-        // Check if the path matches .gitignore patterns
         if (ig.ignores(relPath)) {
             continue;
         }
@@ -83,7 +59,7 @@ function readDirectoryRecursive(dirPath, ig) {
             stats = fs_1.default.statSync(fullPath);
         }
         catch {
-            continue; // skip if can't stat
+            continue;
         }
         if (stats.isDirectory()) {
             results.push({
@@ -107,12 +83,10 @@ function readDirectoryRecursive(dirPath, ig) {
     return results;
 }
 /**
- * Registers all IPC handlers needed for file system operations.
- * Currently:
- *   "list-directory": returns { absolutePath, baseName, children } for the given dirPath
- *   "read-file": returns the content of a file as a string
+ * Registers all IPC handlers used by the renderer process.
  */
 function registerIpcHandlers() {
+    // list-directory
     electron_1.ipcMain.handle('list-directory', async (_event, dirPath) => {
         let targetPath = dirPath;
         if (!path_1.default.isAbsolute(dirPath)) {
@@ -132,6 +106,7 @@ function registerIpcHandlers() {
             children: tree
         };
     });
+    // read-file
     electron_1.ipcMain.handle('read-file', async (_event, filePath) => {
         try {
             console.log('[read-file] Reading file:', filePath);
@@ -144,6 +119,34 @@ function registerIpcHandlers() {
             throw err;
         }
     });
-    // The "show-open-dialog" handler is removed per user request (outside the spec).
+    /**
+     * export-xml
+     * Input: { defaultFileName: string, xmlContent: string }
+     * Output: boolean (true if saved successfully, false if canceled or error)
+     */
+    electron_1.ipcMain.handle('export-xml', async (_event, { defaultFileName, xmlContent }) => {
+        try {
+            const saveDialogOptions = {
+                title: 'Export Prompt Composition as XML',
+                defaultPath: defaultFileName || 'prompt_composition.xml',
+                filters: [
+                    { name: 'XML Files', extensions: ['xml'] },
+                    { name: 'All Files', extensions: ['*'] }
+                ]
+            };
+            const result = await electron_1.dialog.showSaveDialog(saveDialogOptions);
+            if (result.canceled || !result.filePath) {
+                console.log('[export-xml] Save dialog canceled');
+                return false;
+            }
+            fs_1.default.writeFileSync(result.filePath, xmlContent, 'utf-8');
+            console.log('[export-xml] Successfully saved XML to:', result.filePath);
+            return true;
+        }
+        catch (err) {
+            console.error('[export-xml] Failed to save XML:', err);
+            return false;
+        }
+    });
 }
 exports.registerIpcHandlers = registerIpcHandlers;

@@ -2,32 +2,19 @@
 /**
  * @file preload.ts
  * @description
- * This file runs in the Electron main process before the renderer loads.
- * We define window.electronAPI with relevant methods (listDirectory, readFile, etc.).
+ * Runs in the Electron main process before the renderer loads.
+ * We define window.electronAPI with relevant methods (listDirectory, readFile, exportXml, etc.).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
-/**
- * If you do not see this log, your app is definitely NOT loading this updated file.
- */
 console.log('[Preload] This is the UPDATED preload.ts code! removeChannelListener is defined.');
-// Expose the electronAPI object in the renderer
 electron_1.contextBridge.exposeInMainWorld('electronAPI', {
-    /**
-     * Example: Send a one-way message to main process
-     */
     sendMessage: (channel, data) => {
         electron_1.ipcRenderer.send(channel, data);
     },
-    /**
-     * Listen for messages on a particular channel from main
-     */
     onMessage: (channel, callback) => {
         electron_1.ipcRenderer.on(channel, callback);
     },
-    /**
-     * Removes the listener for a given channel
-     */
     removeChannelListener: (channel, callback) => {
         electron_1.ipcRenderer.removeListener(channel, callback);
     },
@@ -41,5 +28,10 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
      * Reads a file from disk
      */
     readFile: (filePath) => electron_1.ipcRenderer.invoke('read-file', filePath),
-    // Removed showOpenDialog property as requested
+    /**
+     * exportXml: Opens a save dialog for .xml, writes xmlContent to disk if confirmed
+     */
+    exportXml: async (args) => {
+        return electron_1.ipcRenderer.invoke('export-xml', args);
+    }
 });
