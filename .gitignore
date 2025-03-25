@@ -3,3 +3,5 @@ node_modules
 .prompt_composer
 patch.xml
 patch.py
+dist
+release

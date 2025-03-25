@@ -10,11 +10,12 @@
     "build": "tsc && vite build",
     "compile-electron": "tsc --project electron.tsconfig.json",
     "start": "npm run compile-electron && electron .",
-    "start:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && npm run compile-electron && cross-env NODE_ENV=development electron .\""
+    "start:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && npm run compile-electron && cross-env NODE_ENV=development electron .\"",
+    "build:electron": "npm run compile-electron && electron-builder",
+    "dist:all": "npm run build && npm run build:electron"
   },
   "dependencies": {
     "@dqbd/tiktoken": "^1.0.4",
-    "electron": "^25.2.0",
     "ignore": "^7.0.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -28,6 +29,8 @@
     "autoprefixer": "^10.4.14",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
+    "electron": "^25.2.0",
+    "electron-builder": "^24.6.0",
     "postcss": "^8.4.21",
     "tailwindcss": "^3.3.2",
     "typescript": "^4.9.5",
@@ -35,5 +38,18 @@
     "vite-plugin-top-level-await": "^1.0.0",
     "vite-plugin-wasm": "^3.3.0",
     "wait-on": "^8.0.3"
+  },
+  "build": {
+    "productName": "Prompt Composer",
+    "appId": "com.promptcomposer.app",
+    "files": [
+      "dist/",
+      "dist/electron-main/",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    }
   }
 }
