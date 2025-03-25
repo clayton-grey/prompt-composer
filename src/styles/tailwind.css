@@ -1,0 +1,11 @@
+/**
+ * @file tailwind.css
+ * @description
+ * A file that applies Tailwind's base, components, and utilities layers.
+ * Imported in index.tsx to provide global utility classes throughout
+ * the application.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
