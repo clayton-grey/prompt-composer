@@ -11,6 +11,8 @@
  * - Tracking user-selected files from the file tree
  * - getFlattenedPrompt() for final prompt generation
  * - importComposition() to replace the current composition with imported data
+ * - Now also fetches/attaches the project ASCII file map to the file block
+ *   so that it's included at the start of the final prompt output.
  */
 
 import React, {
@@ -26,6 +28,7 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Block, FilesBlock } from '../types/Block';
 import { initEncoder, estimateTokens } from '../utils/tokenizer';
 import { flattenBlocks } from '../utils/flattenPrompt';
+import { generateProjectAsciiMap } from '../utils/fileMapBuilder';
 
 interface PromptSettings {
   maxTokens: number;
@@ -37,9 +40,6 @@ interface TokenUsage {
   totalTokens: number;
 }
 
-/**
- * The PromptContextType declares the structure we expose in our context.
- */
 interface PromptContextType {
   blocks: Block[];
   settings: PromptSettings;
@@ -62,10 +62,6 @@ interface PromptContextType {
   updateSelectedFiles: (fileMap: Record<string, string>) => void;
   getSelectedFileEntries: () => Array<{ path: string; content: string; language: string }>;
   getFlattenedPrompt: () => string;
-
-  /**
-   * importComposition - Overwrites the current composition with the given blocks & settings.
-   */
   importComposition: (newBlocks: Block[], newSettings: PromptSettings) => void;
 }
 
@@ -96,9 +92,6 @@ const PromptContext = createContext<PromptContextType>({
   importComposition: () => {}
 });
 
-/**
- * A helper to guess the language from a file extension.
- */
 function guessLanguageFromExtension(ext: string): string {
   switch (ext.toLowerCase()) {
     case 'js':
@@ -163,12 +156,9 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     });
   }, []);
 
-  /**
-   * addFileBlock: Creates a new file block with a single file. 
-   * If a file block already exists, skip creation.
-   */
   const addFileBlock = useCallback(
     (filePath: string, fileContent: string, language: string) => {
+      // If a files block already exists, we skip (assuming we only want one).
       const existingFileBlock = blocks.find((b) => b.type === 'files') as FilesBlock | undefined;
       if (existingFileBlock) {
         console.log(
@@ -188,25 +178,43 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
             content: fileContent,
             language
           }
-        ]
+        ],
+        projectAsciiMap: '' // We'll fill it below
       };
 
       setBlocks((prev) => [...prev, newBlock]);
+
+      // If we want the entire project map in this block, we can do so asynchronously:
+      generateProjectAsciiMap('.')
+        .then((mapStr) => {
+          setBlocks((prevBlocks) => {
+            return prevBlocks.map((b) => {
+              if (b.id === newBlock.id && b.type === 'files') {
+                const fb = b as FilesBlock;
+                return {
+                  ...fb,
+                  projectAsciiMap: mapStr
+                };
+              }
+              return b;
+            });
+          });
+        })
+        .catch((err) => {
+          console.error('[PromptContext] Failed to generate project ASCII map:', err);
+        });
     },
     [blocks]
   );
 
   /**
    * setSingleFileBlock: Overwrites or creates a single file block that includes all given file entries.
+   * Also fetches and attaches the ASCII file map to the block so that when
+   * we flatten the prompt, the ASCII map is included at the top.
    */
   const setSingleFileBlock = useCallback(
-    (
-      fileEntries: {
-        path: string;
-        content: string;
-        language: string;
-      }[]
-    ) => {
+    (fileEntries: { path: string; content: string; language: string }[]) => {
+      // Build a new or updated file block
       setBlocks((prev) => {
         const existingBlockIndex = prev.findIndex((b) => b.type === 'files');
         if (existingBlockIndex === -1) {
@@ -219,8 +227,30 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
               path: f.path,
               content: f.content,
               language: f.language
-            }))
+            })),
+            projectAsciiMap: ''
           };
+
+          // We'll do an async update for projectAsciiMap
+          generateProjectAsciiMap('.')
+            .then((mapStr) => {
+              setBlocks((prevBlocks) => {
+                return prevBlocks.map((b) => {
+                  if (b.id === newBlock.id && b.type === 'files') {
+                    const fb = b as FilesBlock;
+                    return {
+                      ...fb,
+                      projectAsciiMap: mapStr
+                    };
+                  }
+                  return b;
+                });
+              });
+            })
+            .catch((err) => {
+              console.error('[PromptContext] Failed to generate project ASCII map:', err);
+            });
+
           return [...prev, newBlock];
         } else {
           // update existing
@@ -231,8 +261,32 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
               path: f.path,
               content: f.content,
               language: f.language
-            }))
+            })),
+            // We'll re-fetch the project map
+            projectAsciiMap: ''
           };
+
+          // Perform the async fetch
+          generateProjectAsciiMap('.')
+            .then((mapStr) => {
+              setBlocks((prevBlocks) => {
+                return prevBlocks.map((b) => {
+                  if (b.id === updatedBlock.id && b.type === 'files') {
+                    const fb = b as FilesBlock;
+                    return {
+                      ...fb,
+                      projectAsciiMap: mapStr
+                    };
+                  }
+                  return b;
+                });
+              });
+            })
+            .catch((err) => {
+              console.error('[PromptContext] Failed to generate project ASCII map:', err);
+            });
+
+          // Rebuild the block array
           const filteredBlocks = prev.filter((b) => b.type !== 'files');
           return [...filteredBlocks, updatedBlock];
         }
@@ -261,8 +315,11 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
           blockText = block.content;
           break;
         case 'files': {
-          const filesConcatenated = (block as FilesBlock).files.map((f) => f.content).join('\n');
-          blockText = filesConcatenated;
+          const fb = block as FilesBlock;
+          // If a file map is stored, we want to count it too
+          const mapText = fb.projectAsciiMap || '';
+          const filesConcatenated = fb.files.map((f) => f.content).join('\n');
+          blockText = mapText + '\n' + filesConcatenated;
           break;
         }
         default:
@@ -280,9 +337,6 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     });
   }, [blocks, settings.model]);
 
-  /**
-   * updateSelectedFiles: Stores the user's selected files from the sidebar, with a separate usage count.
-   */
   const updateSelectedFiles = useCallback((fileMap: Record<string, string>) => {
     setSelectedFiles(fileMap);
 
@@ -307,18 +361,19 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     });
   }, [selectedFiles]);
 
+  /**
+   * Flattened prompt is generated by flattenBlocks. We now have the "projectAsciiMap"
+   * in any FilesBlock, which flattenBlocks will place at the start of the block.
+   */
   const getFlattenedPrompt = useCallback((): string => {
     return flattenBlocks(blocks);
   }, [blocks]);
 
   /**
    * importComposition: Replaces our current blocks/settings with the ones from the imported XML.
-   * This is called from the TopBar after we parse the XML.
    */
   const importComposition = useCallback((newBlocks: Block[], newSettings: PromptSettings) => {
-    // Overwrite blocks
     setBlocks(newBlocks);
-    // Overwrite settings
     setSettingsState(newSettings);
   }, []);
 

@@ -1,16 +1,19 @@
-
 /**
  * @file ipcHandlers.ts
  * @description
  * This file registers IPC handlers for interacting with the local file system
- * and other tasks, including "export-xml" for saving the XML file and now
- * "import-xml" for loading it.
+ * and other tasks, including "export-xml" for saving the XML file,
+ * "import-xml" for loading it, "list-directory" for reading directories,
+ * "read-file" for reading file contents, "export-file-map" for saving a file map ASCII text file,
+ * and now "create-folder" to create a new folder in the given parentPath.
  *
  * Key Responsibilities:
  *  - "list-directory": returns { absolutePath, baseName, children } for the given dirPath
  *  - "read-file": returns the content of a file as a string
  *  - "export-xml": opens a save dialog, writes the XML file if confirmed
- *  - "import-xml": opens an open dialog for .xml, reads file content if confirmed, returns it
+ *  - "import-xml": opens a file dialog for .xml
+ *  - "export-file-map": opens a save dialog, writes ASCII tree to a .txt if confirmed
+ *  - "create-folder": creates a new folder in parentPath, ensuring no name collisions by appending "(1)", "(2)", etc.
  *
  * Dependencies:
  *  - electron (ipcMain, dialog)
@@ -60,6 +63,8 @@ function readDirectoryRecursive(
     // Skip .git folder
     if (entry === '.git') {
       continue;
+    } else if (entry === '.DS_Store') {
+      continue;
     }
 
     const fullPath = path.join(dirPath, entry);
@@ -99,6 +104,35 @@ function readDirectoryRecursive(
 }
 
 /**
+ * Creates a new folder in the given parentPath. If a folder with the given name already
+ * exists, we append "(1)", "(2)", etc., until we find a unique folder name.
+ * 
+ * @param parentPath - The directory in which to create the folder
+ * @param folderName - The desired name, e.g., "New Folder"
+ * @returns The final folder path that was created, or null if creation failed
+ */
+function createFolder(parentPath: string, folderName: string): string | null {
+  let baseName = folderName;
+  let suffix = 1;
+
+  let targetPath = path.join(parentPath, baseName);
+  while (fs.existsSync(targetPath)) {
+    suffix += 1;
+    baseName = `${folderName} (${suffix})`;
+    targetPath = path.join(parentPath, baseName);
+  }
+
+  try {
+    fs.mkdirSync(targetPath);
+    console.log('[create-folder] Successfully created folder at:', targetPath);
+    return targetPath;
+  } catch (err) {
+    console.error('[create-folder] Error creating folder:', err);
+    return null;
+  }
+}
+
+/**
  * Registers all IPC handlers used by the renderer process.
  */
 export function registerIpcHandlers(): void {
@@ -109,14 +143,110 @@ export function registerIpcHandlers(): void {
       targetPath = path.join(process.cwd(), dirPath);
     }
 
-    const gitignorePath = path.join(process.cwd(), '.gitignore');
+    console.log('[list-directory] Processing directory:', targetPath);
+    
+    // Create ignore instance specific to the targetPath
     let ig = ignore();
-    if (fs.existsSync(gitignorePath)) {
-      const gitignoreContent = fs.readFileSync(gitignorePath, 'utf-8');
-      ig = ig.add(gitignoreContent.split('\n'));
+    
+    // For the main project directory, use .gitignore
+    if (targetPath.startsWith(process.cwd())) {
+      const gitignorePath = path.join(process.cwd(), '.gitignore');
+      if (fs.existsSync(gitignorePath)) {
+        console.log('[list-directory] Using .gitignore from project root');
+        const gitignoreContent = fs.readFileSync(gitignorePath, 'utf-8');
+        ig = ig.add(gitignoreContent.split('\n'));
+      }
+    } else {
+      // For external directories, check if they have their own .gitignore
+      const externalGitignorePath = path.join(targetPath, '.gitignore');
+      if (fs.existsSync(externalGitignorePath)) {
+        console.log('[list-directory] Using .gitignore from external directory');
+        const gitignoreContent = fs.readFileSync(externalGitignorePath, 'utf-8');
+        ig = ig.add(gitignoreContent.split('\n'));
+      } else {
+        // Default ignore patterns for external directories
+        console.log('[list-directory] Using default ignore patterns for external directory');
+        ig = ig.add([
+          'node_modules',
+          '.git',
+          '.DS_Store',
+          '*.log'
+        ]);
+      }
     }
 
-    const tree = readDirectoryRecursive(targetPath, ig);
+    // For external directories, we need to modify how we check if a path is ignored
+    const isProjectDir = targetPath.startsWith(process.cwd());
+    
+    // Customized directory reading function for the specific target
+    function readDirectoryForTarget(dirToRead: string, ignoreObj: ignore.Ignore): TreeNode[] {
+      let results: TreeNode[] = [];
+    
+      let dirEntries: string[];
+      try {
+        dirEntries = fs.readdirSync(dirToRead);
+      } catch (err) {
+        console.error('[list-directory] Failed to read dir:', dirToRead, err);
+        return results;
+      }
+    
+      // Sort entries
+      dirEntries.sort((a, b) => a.localeCompare(b));
+    
+      for (const entry of dirEntries) {
+        // Skip .git folder and .DS_Store files
+        if (entry === '.git' || entry === '.DS_Store') {
+          continue;
+        }
+    
+        const fullPath = path.join(dirToRead, entry);
+        
+        // Handle ignores differently for project vs external directories
+        let shouldIgnore = false;
+        if (isProjectDir) {
+          // For project directory, use relative path from project root
+          const relPath = path.relative(process.cwd(), fullPath);
+          shouldIgnore = ignoreObj.ignores(relPath);
+        } else {
+          // For external directories, use relative path from the target directory
+          const relPath = path.relative(targetPath, fullPath);
+          shouldIgnore = ignoreObj.ignores(relPath);
+        }
+        
+        if (shouldIgnore) {
+          continue;
+        }
+    
+        let stats: fs.Stats;
+        try {
+          stats = fs.statSync(fullPath);
+        } catch {
+          continue;
+        }
+    
+        if (stats.isDirectory()) {
+          results.push({
+            name: entry,
+            path: fullPath,
+            type: 'directory',
+            children: readDirectoryForTarget(fullPath, ignoreObj)
+          });
+        } else {
+          const ext = path.extname(entry).toLowerCase();
+          if (ALLOWED_EXTENSIONS.includes(ext)) {
+            results.push({
+              name: entry,
+              path: fullPath,
+              type: 'file'
+            });
+          }
+        }
+      }
+    
+      return results;
+    }
+
+    const tree = readDirectoryForTarget(targetPath, ig);
     const baseName = path.basename(targetPath);
 
     return {
@@ -139,11 +269,7 @@ export function registerIpcHandlers(): void {
     }
   });
 
-  /**
-   * export-xml
-   * Input: { defaultFileName: string, xmlContent: string }
-   * Output: boolean (true if saved successfully, false if canceled or error)
-   */
+  // export-xml
   ipcMain.handle('export-xml', async (_event, { defaultFileName, xmlContent }) => {
     try {
       const saveDialogOptions: Electron.SaveDialogOptions = {
@@ -171,11 +297,7 @@ export function registerIpcHandlers(): void {
     }
   });
 
-  /**
-   * import-xml
-   * Opens a file dialog for selecting an XML file, reads its content,
-   * and returns the string to the renderer. If canceled, returns null.
-   */
+  // import-xml
   ipcMain.handle('import-xml', async () => {
     try {
       const openDialogOptions: Electron.OpenDialogOptions = {
@@ -202,5 +324,58 @@ export function registerIpcHandlers(): void {
       console.error('[import-xml] Failed to import XML:', err);
       return null;
     }
+  });
+
+  /**
+   * export-file-map
+   * Opens a save dialog for saving an ASCII file map.
+   * Input: { defaultFileName: string, fileMapContent: string }
+   * Returns: boolean (true if saved, false if canceled)
+   */
+  ipcMain.handle('export-file-map', async (_event, { defaultFileName, fileMapContent }) => {
+    try {
+      const saveDialogOptions: Electron.SaveDialogOptions = {
+        title: 'Export File Map',
+        defaultPath: defaultFileName || 'file_map.txt',
+        filters: [
+          { name: 'Text Files', extensions: ['txt'] },
+          { name: 'All Files', extensions: ['*'] }
+        ]
+      };
+
+      const result = await dialog.showSaveDialog(saveDialogOptions);
+
+      if (result.canceled || !result.filePath) {
+        console.log('[export-file-map] Save dialog canceled');
+        return false;
+      }
+
+      fs.writeFileSync(result.filePath, fileMapContent, 'utf-8');
+      console.log('[export-file-map] Successfully saved file map to:', result.filePath);
+      return true;
+    } catch (err) {
+      console.error('[export-file-map] Failed to save file map:', err);
+      return false;
+    }
+  });
+
+  /**
+   * show-open-dialog
+   * Opens a dialog for selecting directories
+   * Input: options object for dialog.showOpenDialog 
+   * Returns: { canceled: boolean, filePaths: string[] } - The result from the dialog
+   */
+  ipcMain.handle('show-open-dialog', async (_event, options: Electron.OpenDialogOptions) => {
+    return dialog.showOpenDialog(options);
+  });
+
+  /**
+   * create-folder
+   * Creates a new folder with a unique name in the given parent directory.
+   * Input: { parentPath: string, folderName: string }
+   * Returns: string | null (path to created folder, or null if creation failed)
+   */
+  ipcMain.handle('create-folder', async (_event, { parentPath, folderName }: { parentPath: string; folderName: string }) => {
+    return createFolder(parentPath, folderName);
   });
 }

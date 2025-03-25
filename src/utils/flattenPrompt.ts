@@ -7,21 +7,12 @@
  *
  * Key Responsibilities:
  * 1) For text blocks, include the freeform text directly.
- * 2) For template blocks, include content as-is (placeholders are NOT replaced in MVP).
- * 3) For file blocks, wrap each file content in:
- *    <file_contents>
- *    File: /path/to/file
- *    ```language
- *    [file content]
- *    ```
- *    </file_contents>
- * 4) Separate each block with blank lines for readability.
+ * 2) For template blocks, include content as-is (placeholders not replaced in MVP).
+ * 3) For file blocks, now we first include the optional projectAsciiMap if present:
+ *    <file_map>...</file_map>
+ *    Then for each file, wrap file content in <file_contents> sections.
  *
- * @notes
- * - We keep template placeholders (e.g. {{variable}}) as-is for now.
- * - Future enhancements could replace placeholders with default or user-supplied variables.
- * - This function is used by the getFlattenedPrompt() method in PromptContext and 
- *   by any UI elements that display or copy the final prompt.
+ * The final output is a multiline string. Blocks are separated by blank lines.
  */
 
 import { Block, TextBlock, TemplateBlock, FilesBlock } from '../types/Block';
@@ -31,9 +22,7 @@ import { Block, TextBlock, TemplateBlock, FilesBlock } from '../types/Block';
  * @param blocks - An array of blocks in the order they appear in the prompt.
  * @returns A single multiline string representing the final prompt.
  *
- * Example usage:
- *   const promptString = flattenBlocks(blocks);
- *   console.log(promptString);
+ * If a FilesBlock has projectAsciiMap, we place it right before the actual file contents.
  */
 export function flattenBlocks(blocks: Block[]): string {
   const lines: string[] = [];
@@ -48,13 +37,20 @@ export function flattenBlocks(blocks: Block[]): string {
 
       case 'template': {
         const templateBlock = block as TemplateBlock;
-        // MVP approach: just push the template content as-is, placeholders included
+        // MVP approach: just push the template content as-is
         lines.push(templateBlock.content);
         break;
       }
 
       case 'files': {
         const filesBlock = block as FilesBlock;
+        // If we have a file map, insert it first
+        if (filesBlock.projectAsciiMap && filesBlock.projectAsciiMap.trim().length > 0) {
+          // Make sure it's separated nicely
+          lines.push(filesBlock.projectAsciiMap.trim());
+        }
+
+        // Then each file's content is included
         for (const fileObj of filesBlock.files) {
           // Example format:
           // <file_contents>
@@ -82,12 +78,11 @@ export function flattenBlocks(blocks: Block[]): string {
       }
 
       default:
-        // Fallback, should not happen if we've covered all block types
         lines.push(`(Unknown block type: ${block.type})`);
         break;
     }
   }
 
-  // Separate blocks with a blank line for readability
+  // Separate blocks with a blank line
   return lines.join('\n\n');
 }

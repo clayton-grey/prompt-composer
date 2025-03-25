@@ -1,4 +1,3 @@
-
 /**
  * @file preload.ts
  * @description
@@ -51,5 +50,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   openXml: async () => {
     return ipcRenderer.invoke('import-xml');
+  },
+  
+  /**
+   * showOpenDialog: Opens a dialog to select files/folders
+   */
+  showOpenDialog: (options: any) => ipcRenderer.invoke('show-open-dialog', options),
+  
+  /**
+   * createFolder: Creates a new folder in the parent directory
+   */
+  createFolder: (args: { parentPath: string; folderName: string }) => {
+    return ipcRenderer.invoke('create-folder', args);
   }
 });

@@ -43,5 +43,15 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
      */
     openXml: async () => {
         return electron_1.ipcRenderer.invoke('import-xml');
+    },
+    /**
+     * showOpenDialog: Opens a dialog to select files/folders
+     */
+    showOpenDialog: (options) => electron_1.ipcRenderer.invoke('show-open-dialog', options),
+    /**
+     * createFolder: Creates a new folder in the parent directory
+     */
+    createFolder: (args) => {
+        return electron_1.ipcRenderer.invoke('create-folder', args);
     }
 });

@@ -1,22 +1,23 @@
+
 /**
  * @file Block.ts
  * @description
  * Defines the TypeScript interfaces for different kinds of prompt blocks:
  * TextBlock, TemplateBlock, and FilesBlock. Each block includes a type,
  * label, and other properties. This file also exports a union type "Block"
- * that can represent any of these three block types. 
+ * that can represent any of these three block types.
  *
  * Key Interfaces:
  *  - BaseBlock: Common fields for all blocks
  *  - TextBlock: Simple text block
  *  - TemplateBlock: Text content with variable placeholders
- *  - FilesBlock: Embeds multiple files
+ *  - FilesBlock: Embeds multiple files + optional project ASCII map
  *  - Block: Union type of all block variants
  *
  * @notes
- *  - Additional fields or block types can be added in the future as needed.
- *  - Make sure to keep the block "type" property strictly typed so we can
- *    switch over it in the UI.
+ *  - We've added an optional `projectAsciiMap` to FilesBlock so we can
+ *    include the entire project file map at the start of the block
+ *    when flattening the prompt.
  */
 
 export interface BaseBlock {
@@ -70,6 +71,9 @@ export interface TemplateBlock extends BaseBlock {
 
 /**
  * Represents a block that includes one or more files, embedding their content.
+ * We also optionally store a "projectAsciiMap" string so we can include an
+ * ASCII representation of the entire project file structure at the start
+ * of this block when flattening.
  */
 export interface FilesBlock extends BaseBlock {
   type: 'files';
@@ -91,6 +95,20 @@ export interface FilesBlock extends BaseBlock {
      */
     language: string;
   }>;
+
+  /**
+   * Optional ASCII file map to be included at the start of this files block
+   * when the user copies or exports the final prompt.
+   *
+   * e.g.,
+   * <file_map>
+   * /Users/youruser/project
+   * ├── src
+   * │   └── index.js
+   * └── package.json
+   * </file_map>
+   */
+  projectAsciiMap?: string;
 }
 
 /**

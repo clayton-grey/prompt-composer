@@ -2,38 +2,58 @@
 /**
  * @file FileTree.tsx
  * @description
- * A React component that displays a project's file tree with tri-state checkboxes.
- * The user can expand/collapse directories and select/unselect files or folders.
- * Step 3 Changes:
- *  - Removed the "Add selected to prompt" button from this UI.
- *  - Removed the local "selected token usage" and the button at the bottom.
- *  - Each time file selections change, we call prompt.updateSelectedFiles(...) to store
- *    the selection in the PromptContext, which is responsible for usage calculations.
- *  - The usage is now displayed in the bottom of the sidebar (Sidebar.tsx), not here.
+ * A React component that displays multiple root folders (passed via props) in a
+ * tri-state selectable, collapsible tree structure. The user can add or remove
+ * root folders externally, and each folder can be fully or partially expanded.
  *
- * Tri-State Explanation:
- *  - "none": File/folder is not selected
- *  - "all": File/folder is fully selected
- *  - "partial": For directories only; some children are selected, others not
+ * Step 17A Changes:
+ *  1) No default project folder is included. We rely solely on the "folders" prop array.
+ *  2) Simplify the view: remove the old framing/borders around root nodes.
+ *  3) Restore new icons for folder open/closed, tri-state selection, collapse all,
+ *     and remove. We inline the provided SVGs in dedicated render helpers.
+ *  4) Partial truncation of file/folder names is handled with Tailwind classes
+ *     "truncate overflow-hidden whitespace-nowrap".
+ *  5) Tri-state logic remains, but we show icons instead of native checkboxes:
+ *     - none => "square" icon
+ *     - all => "square-check" icon (blue)
+ *     - partial => "square-minus" icon (blue)
+ *  6) Each root folder has a "collapse all" button (arrow-up-to-line) and a "remove"
+ *     button (circle-x).
+ *  7) Each directory node shows a folder or folder-open icon, clickable to expand/collapse.
  *
- * Data Flows:
- *  1) We load the tree from 'listDirectory' via IPC.
- *  2) nodeStates track user selections. We gather selected files and read them from disk.
- *  3) Instead of local usage, we send them to prompt.updateSelectedFiles(...) for global usage tracking.
+ * Implementation Details:
+ *  - We store each root folder's loaded tree data in local state as an object array:
+ *       folderTrees: Array<{ rootPath: string; node: TreeNode | null }>
+ *  - On mount or changes to "folders" prop, we load each folder's directory data
+ *    via electronAPI.listDirectory. We do partial error handling if loading fails.
+ *  - Tri-state node states are tracked in a single Record<string, NodeState>.
+ *    Node expansion states in expandedPaths, also a Record<string, boolean>.
+ *  - The "removeRootFolder()" function updates the parent's "folders" array via
+ *    onRemoveFolder callback (passed from the parent "Sidebar").
+ *  - The "collapseAll()" function for a root folder sets expansions to false for
+ *    every path in that subtree.
+ *  - We highlight selected (all) or partial states with the relevant icons, which
+ *    the user can click to toggle between 'none' and 'all'.
  *
- * Dependencies:
- *  - window.electronAPI for listDirectory, readFile
- *  - usePrompt from PromptContext for updateSelectedFiles
+ * Key Types:
+ *  - NodeState: 'none' | 'all' | 'partial'
+ *  - TreeNode: { name, path, type, children? }
+ *
+ * Edge Cases:
+ *  - If a folder is empty or .gitignore excludes everything, children = []
+ *  - If user tries removing a folder that doesn't exist in the folderTrees array,
+ *    we do a safe filter. 
+ *  - Large directories might cause performance issues. We rely on lazy expansions
+ *    or partial expansions. In the future, we could add lazy loading of subfolders.
  */
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { usePrompt } from '../../context/PromptContext';
 
-type NodeState = 'all' | 'none' | 'partial';
+/** NodeState indicates how a node is selected in tri-state logic. */
+type NodeState = 'none' | 'all' | 'partial';
 
-/**
- * Node in the file tree returned by the main process
- */
+/** A single node in the directory tree. */
 export interface TreeNode {
   name: string;
   path: string;
@@ -41,384 +61,553 @@ export interface TreeNode {
   children?: TreeNode[];
 }
 
-/**
- * The interface we expect back from "list-directory" in the main process.
- */
+/** The structure returned by the main process when listing a directory. */
 interface ListDirectoryResult {
   absolutePath: string;
   baseName: string;
   children: TreeNode[];
 }
 
+/** Props for FileTree. */
 interface FileTreeProps {
-  rootPath?: string;
+  /**
+   * An array of folder paths that the user has added. We treat each path as a separate
+   * root directory in the tree. No default path is included, so if this array is empty,
+   * the UI will show no folders.
+   */
+  folders: string[];
+
+  /**
+   * Callback invoked when the user wants to remove a root folder from the list.
+   * We'll pass the folder path that should be removed from the parent's array.
+   */
+  onRemoveFolder: (folderPath: string) => void;
 }
 
-declare global {
-  interface Window {
-    electronAPI: {
-      listDirectory: (path: string) => Promise<ListDirectoryResult>;
-      readFile: (path: string) => Promise<string>;
-    };
-  }
-}
-
-const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
+/**
+ * FileTree component that handles multiple root folders, each of which can be expanded
+ * or collapsed. The user can tri-state select files or directories. We store the selected
+ * file contents in global PromptContext (via updateSelectedFiles).
+ */
+const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   const { updateSelectedFiles } = usePrompt();
-  const [rootNode, setRootNode] = useState<TreeNode | null>(null);
 
-  // Track tri-state for each node by path
+  /**
+   * folderTrees stores the root-level data for each folder. If a folder is not yet
+   * loaded, node = null. Once loaded, node = the directory tree starting at that folder.
+   */
+  const [folderTrees, setFolderTrees] = useState<Array<{
+    rootPath: string;
+    node: TreeNode | null;
+    error?: string | null;
+  }>>([]);
+
+  /**
+   * nodeStates holds tri-state selection for each node path.
+   * expandedPaths holds boolean expansions for each node path.
+   */
   const [nodeStates, setNodeStates] = useState<Record<string, NodeState>>({});
+  const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
 
-  // Track expansions
-  const [expandedStates, setExpandedStates] = useState<Record<string, boolean>>({});
-
-  // For storing file contents of selected files
+  /**
+   * selectedFileContents is a mapping of file path => file content
+   * for all files whose nodeState is 'all'.
+   */
   const [selectedFileContents, setSelectedFileContents] = useState<Record<string, string>>({});
 
-  // We no longer store usage or show the "Add selected to prompt" button here.
-  // That logic is moved to PromptBuilder or the bottom of Sidebar.
-
-  const [error, setError] = useState<string | null>(null);
-  const checkboxRefs = useRef<Map<string, HTMLInputElement>>(new Map());
-  const parentMapRef = useRef<Map<string, TreeNode> | null>(null);
-
   /**
-   * On component mount, load the directory tree via IPC.
+   * loadFolderTree loads the directory tree for a single folder path
+   * via electronAPI.listDirectory. If successful, returns the root node,
+   * otherwise returns null.
    */
-  useEffect(() => {
+  const loadFolderTree = useCallback(async (folderPath: string): Promise<TreeNode | null> => {
     if (!window.electronAPI?.listDirectory) {
-      setError('No electronAPI.listDirectory function found.');
-      return;
+      console.warn('[FileTree] No electronAPI.listDirectory found.');
+      return null;
     }
-
-    window.electronAPI
-      .listDirectory(rootPath)
-      .then((result) => {
-        const newRootNode: TreeNode = {
-          name: result.baseName,
-          path: result.absolutePath,
-          type: 'directory',
-          children: result.children
-        };
-
-        const newNodeStates: Record<string, NodeState> = {};
-        const newExpandedStates: Record<string, boolean> = {};
-
-        // Initialize states to none/collapsed
-        function initNodeStates(node: TreeNode) {
-          newNodeStates[node.path] = 'none';
-          newExpandedStates[node.path] = false;
-          if (node.children) {
-            for (const child of node.children) {
-              initNodeStates(child);
-            }
-          }
-        }
-        initNodeStates(newRootNode);
-
-        // Build parent map for partial selection logic
-        const pm = new Map<string, TreeNode>();
-        function buildParentMap(parent: TreeNode, children: TreeNode[]) {
-          for (const c of children) {
-            pm.set(c.path, parent);
-            if (c.type === 'directory' && c.children) {
-              buildParentMap(c, c.children);
-            }
-          }
-        }
-        if (newRootNode.children) {
-          buildParentMap(newRootNode, newRootNode.children);
-        }
-        parentMapRef.current = pm;
-
-        setRootNode(newRootNode);
-        setNodeStates(newNodeStates);
-        setExpandedStates(newExpandedStates);
-        setError(null);
-      })
-      .catch((err) => {
-        console.error('[FileTree] Failed to list directory:', err);
-        setError(`Failed to list directory: ${String(err)}`);
-      });
-  }, [rootPath]);
+    try {
+      const result = (await window.electronAPI.listDirectory(folderPath)) as ListDirectoryResult;
+      const rootNode: TreeNode = {
+        name: result.baseName,
+        path: result.absolutePath,
+        type: 'directory',
+        children: result.children
+      };
+      return rootNode;
+    } catch (err) {
+      console.error('[FileTree] loadFolderTree error for folder:', folderPath, err);
+      return null;
+    }
+  }, []);
 
   /**
-   * After nodeStates changes, set the checkbox "indeterminate" property for partial states.
+   * Whenever "folders" changes from the parent, we refresh folderTrees
+   * to reflect any additions or removals. For new folders, we load them
+   * from disk. For removed folders, we remove them from folderTrees.
    */
   useEffect(() => {
-    Object.entries(nodeStates).forEach(([thePath, state]) => {
-      const checkbox = checkboxRefs.current.get(thePath);
-      if (checkbox) {
-        checkbox.indeterminate = state === 'partial';
+    // 1) Remove from folderTrees any root that no longer appears in "folders"
+    setFolderTrees((prev) => prev.filter((ft) => folders.includes(ft.rootPath)));
+
+    // 2) For any newly added folder that doesn't exist in folderTrees, load it
+    folders.forEach(async (fPath) => {
+      const existing = folderTrees.find((ft) => ft.rootPath === fPath);
+      if (!existing) {
+        // Insert a temporary entry with node=null while we load
+        setFolderTrees((prev) => [...prev, { rootPath: fPath, node: null, error: undefined }]);
+        // Now load the tree data
+        const node = await loadFolderTree(fPath);
+        if (!node) {
+          setFolderTrees((prev) =>
+            prev.map((item) =>
+              item.rootPath === fPath
+                ? { ...item, node: null, error: 'Failed to load directory tree' }
+                : item
+            )
+          );
+          return;
+        }
+        // Initialize expansions and states
+        // We'll expand the root by default
+        setExpandedPaths((prevExp) => ({
+          ...prevExp,
+          [node.path]: true
+        }));
+        setNodeStates((prevStates) => ({
+          ...prevStates,
+          [node.path]: 'none'
+        }));
+        // Insert into folderTrees
+        setFolderTrees((prev) =>
+          prev.map((item) =>
+            item.rootPath === fPath ? { ...item, node, error: null } : item
+          )
+        );
       }
     });
-  }, [nodeStates]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folders]);
 
   /**
-   * Re-scan which files are selected, read them from disk if not cached,
-   * remove them from the cache if unselected, then update the PromptContext.
+   * readFile reads the file content from disk using electronAPI.
+   * If it fails, returns an empty string (with a console error).
+   */
+  const readFile = useCallback(async (filePath: string): Promise<string> => {
+    if (!window.electronAPI?.readFile) {
+      console.warn('[FileTree] No electronAPI.readFile found.');
+      return '';
+    }
+    try {
+      const content = await window.electronAPI.readFile(filePath);
+      return content;
+    } catch (err) {
+      console.error('[FileTree] readFile error for file:', filePath, err);
+      return '';
+    }
+  }, []);
+
+  /**
+   * Once nodeStates changes, we gather all file paths that are 'all' and load
+   * or remove them from selectedFileContents. Then we call updateSelectedFiles
+   * in PromptContext for token usage.
    */
   useEffect(() => {
-    if (!rootNode) return;
-
-    // 1) Collect all file paths that are 'all'
-    const selectedPaths: string[] = [];
-    function gatherSelectedFiles(node: TreeNode) {
-      if (node.type === 'file' && nodeStates[node.path] === 'all') {
-        selectedPaths.push(node.path);
-      } else if (node.type === 'directory' && node.children) {
-        node.children.forEach(gatherSelectedFiles);
+    // 1) Find all file paths that are 'all'
+    const allPaths: string[] = [];
+    function collectAllFilePaths(node: TreeNode) {
+      const st = nodeStates[node.path];
+      if (node.type === 'file' && st === 'all') {
+        allPaths.push(node.path);
+      }
+      if (node.type === 'directory' && node.children) {
+        node.children.forEach(collectAllFilePaths);
       }
     }
-    gatherSelectedFiles(rootNode);
+    folderTrees.forEach((ft) => {
+      if (ft.node) collectAllFilePaths(ft.node);
+    });
 
-    // 2) Remove stale file paths from the cache
+    // 2) Remove stale paths from selectedFileContents
     setSelectedFileContents((prev) => {
       const updated: Record<string, string> = {};
-      for (const p of Object.keys(prev)) {
-        if (selectedPaths.includes(p)) {
-          updated[p] = prev[p];
+      for (const filePath of Object.keys(prev)) {
+        if (allPaths.includes(filePath)) {
+          // keep it
+          updated[filePath] = prev[filePath];
         }
       }
-
-      // 3) For newly selected file paths, read them from disk
-      const newPaths = selectedPaths.filter((p) => !(p in updated));
+      // 3) For newly added paths, read from disk
+      const newPaths = allPaths.filter((p) => !(p in updated));
       if (newPaths.length > 0) {
         Promise.all(
-          newPaths.map((filePath) =>
-            window.electronAPI
-              .readFile(filePath)
-              .then((content) => ({ path: filePath, content }))
-              .catch((err) => {
-                console.error('[FileTree] Error reading file:', filePath, err);
-                return null;
-              })
-          )
+          newPaths.map(async (fp) => {
+            const content = await readFile(fp);
+            return { path: fp, content };
+          })
         ).then((results) => {
-          const successfulReads = results.filter(Boolean) as {
-            path: string;
-            content: string;
-          }[];
-          if (successfulReads.length > 0) {
-            setSelectedFileContents((current) => {
-              const newContents = { ...current };
-              for (const { path, content } of successfulReads) {
-                newContents[path] = content;
-              }
-              return newContents;
+          setSelectedFileContents((oldSel) => {
+            const copy = { ...oldSel };
+            results.forEach((r) => {
+              copy[r.path] = r.content;
             });
-          }
+            return copy;
+          });
         });
       }
-
       return updated;
     });
-  }, [nodeStates, rootNode]);
+  }, [nodeStates, folderTrees, readFile]);
 
   /**
-   * Whenever selectedFileContents changes, update the PromptContext with them.
+   * Whenever selectedFileContents changes, we notify PromptContext so that
+   * token usage can be recalculated.
    */
   useEffect(() => {
     updateSelectedFiles(selectedFileContents);
   }, [selectedFileContents, updateSelectedFiles]);
 
   /**
-   * handleCheckboxChange toggles node state among 'all' / 'none'. For directories,
-   * we apply the newState to the entire subtree. Then we update ancestor states.
+   * toggleFolderExpand flips the expansion for a given directory node path.
    */
-  function handleCheckboxChange(node: TreeNode) {
-    setNodeStates((prev) => {
-      const updated = { ...prev };
-      const currentState = updated[node.path];
-      const newState: NodeState = currentState === 'all' ? 'none' : 'all';
-
-      if (node.type === 'directory' && node.children) {
-        setSubtreeState(node, newState, updated);
-      } else {
-        updated[node.path] = newState;
-      }
-
-      updateAncestorState(node, updated);
-      return updated;
-    });
-  }
-
-  /**
-   * setSubtreeState recursively sets all children to the same node state.
-   */
-  function setSubtreeState(node: TreeNode, newState: NodeState, updated: Record<string, NodeState>) {
-    updated[node.path] = newState;
-    if (node.children) {
-      for (const child of node.children) {
-        setSubtreeState(child, newState, updated);
-      }
-    }
-  }
-
-  /**
-   * updateAncestorState recomputes the parent's nodeState for partial/all/none.
-   */
-  function updateAncestorState(node: TreeNode, updated: Record<string, NodeState>) {
-    if (!parentMapRef.current) return;
-    let current = node;
-    while (true) {
-      const parent = parentMapRef.current.get(current.path);
-      if (!parent) break;
-
-      const siblings = parent.children || [];
-      let allAll = true;
-      let allNone = true;
-      for (const s of siblings) {
-        const sState = updated[s.path];
-        if (sState !== 'all') {
-          allAll = false;
-        }
-        if (sState !== 'none') {
-          allNone = false;
-        }
-      }
-
-      let parentState: NodeState = 'partial';
-      if (allAll) parentState = 'all';
-      if (allNone) parentState = 'none';
-
-      updated[parent.path] = parentState;
-      current = parent;
-    }
-  }
-
-  /**
-   * toggleExpand toggles a directory open/closed.
-   */
-  function toggleExpand(nodePath: string) {
-    setExpandedStates((prev) => ({
+  const toggleFolderExpand = (nodePath: string) => {
+    setExpandedPaths((prev) => ({
       ...prev,
       [nodePath]: !prev[nodePath]
     }));
-  }
+  };
 
   /**
-   * For "collapse all" from the root.
+   * collapseAll sets expandedPaths to false for all descendants of a given root.
    */
-  function collapseAllSubtree(node: TreeNode) {
-    setExpandedStates((prev) => {
-      const updated = { ...prev };
-      function recurse(n: TreeNode) {
-        updated[n.path] = false;
-        if (n.children) {
-          n.children.forEach(recurse);
-        }
+  const collapseAll = (rootNode: TreeNode) => {
+    const pathsToCollapse: string[] = [];
+    function gatherPaths(node: TreeNode) {
+      pathsToCollapse.push(node.path);
+      if (node.children) {
+        node.children.forEach(gatherPaths);
       }
-      recurse(node);
+    }
+    gatherPaths(rootNode);
+    setExpandedPaths((prev) => {
+      const updated = { ...prev };
+      pathsToCollapse.forEach((p) => {
+        updated[p] = false;
+      });
+      // Keep the root itself collapsed or maybe keep it expanded? 
+      // We'll collapse it as well to match "collapse all".
       return updated;
     });
-  }
+  };
 
   /**
-   * closeRoot clears the entire display. (rarely used, but for completeness).
+   * removeRootFolder calls onRemoveFolder with the rootPath, letting the parent
+   * update the "folders" prop so that this root is removed from the UI.
    */
-  function closeRoot() {
-    setRootNode(null);
-    setNodeStates({});
-    setExpandedStates({});
-    setSelectedFileContents({});
-    parentMapRef.current = null;
-  }
+  const removeRootFolder = (folderPath: string) => {
+    onRemoveFolder(folderPath);
+  };
 
   /**
-   * Renders the root node (the top-level directory). We show a collapse & close button.
+   * setNodeStateRecursive sets a node and all of its descendants to the given state.
    */
-  function renderRootNode(root: TreeNode) {
-    const expanded = expandedStates[root.path] || false;
-    const state = nodeStates[root.path] || 'none';
-
-    const onCollapseAll = () => {
-      setExpandedStates((prev) => ({ ...prev, [root.path]: true }));
-      collapseAllSubtree(root);
-    };
-
-    return (
-      <div className="ml-2" key={root.path}>
-        <span className="mr-1 cursor-pointer" onClick={() => toggleExpand(root.path)}>
-          {expanded ? '▾' : '▸'}
-        </span>
-
-        <input
-          ref={(el) => el && checkboxRefs.current.set(root.path, el)}
-          type="checkbox"
-          className="mr-1"
-          checked={state === 'all'}
-          onChange={() => handleCheckboxChange(root)}
-        />
-
-        <span className="cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-600 rounded px-1 inline-block">
-          {expanded ? '📂' : '📁'} {root.name}
-        </span>
-
-        <button
-          className="ml-2 text-xs border border-gray-500 rounded px-1 py-0.5 hover:bg-gray-200 dark:hover:bg-gray-700"
-          onClick={onCollapseAll}
-        >
-          Collapse All
-        </button>
-        <button
-          className="ml-1 text-xs border border-gray-500 rounded px-1 py-0.5 hover:bg-red-200 dark:hover:bg-red-600"
-          onClick={closeRoot}
-        >
-          Close
-        </button>
-
-        {expanded && root.children && <div className="mt-1">{root.children.map(renderNode)}</div>}
-      </div>
-    );
-  }
-
-  /**
-   * Renders a file or directory node below the root.
-   */
-  function renderNode(node: TreeNode) {
-    const expanded = expandedStates[node.path] || false;
-    const state = nodeStates[node.path] || 'none';
-
-    return (
-      <div key={node.path} className="ml-4">
-        {node.type === 'directory' ? (
-          <span className="mr-1 cursor-pointer" onClick={() => toggleExpand(node.path)}>
-            {expanded ? '▾' : '▸'}
-          </span>
-        ) : (
-          <span className="mr-1" />
-        )}
-
-        <input
-          ref={(el) => el && checkboxRefs.current.set(node.path, el)}
-          type="checkbox"
-          className="mr-1"
-          checked={state === 'all'}
-          onChange={() => handleCheckboxChange(node)}
-        />
-
-        <span className="cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-600 rounded px-1 inline-block">
-          {node.type === 'directory' ? (expanded ? '📂 ' : '📁 ') : '📄 '}
-          {node.name}
-        </span>
-
-        {node.type === 'directory' && expanded && node.children && (
-          <div className="mt-1">{node.children.map(renderNode)}</div>
-        )}
-      </div>
-    );
-  }
-
-  if (!rootNode) {
-    if (error) {
-      return <div className="text-red-500 text-sm p-2">Error: {error}</div>;
+  const setNodeStateRecursive = (startNode: TreeNode, newState: NodeState, updated: Record<string, NodeState>) => {
+    updated[startNode.path] = newState;
+    if (startNode.type === 'directory' && startNode.children) {
+      startNode.children.forEach((child) => setNodeStateRecursive(child, newState, updated));
     }
-    return <div className="p-2 text-gray-800 dark:text-gray-200">No folder loaded.</div>;
-  }
+  };
 
-  return <div className="flex flex-col h-full overflow-y-auto">{renderRootNode(rootNode)}</div>;
+  /**
+   * When a node is toggled from 'all' => 'none' or 'none'/'partial' => 'all',
+   * we apply the new state to the node's entire subtree. Then we update ancestors
+   * to reflect partial or full states as needed.
+   */
+  const toggleNodeSelection = (node: TreeNode) => {
+    setNodeStates((prev) => {
+      const updated = { ...prev };
+      const currentState = updated[node.path] || 'none';
+      const newState: NodeState = currentState === 'all' ? 'none' : 'all';
+      setNodeStateRecursive(node, newState, updated);
+      updateAncestorStates(node, updated);
+      return updated;
+    });
+  };
+
+  /**
+   * updateAncestorStates walks upward from a node to recalculate each parent's state
+   * based on its children. If all children are 'all', the parent is 'all'; if all are 'none',
+   * the parent is 'none'; otherwise 'partial'.
+   */
+  const updateAncestorStates = (node: TreeNode, updated: Record<string, NodeState>) => {
+    // Find the parent in folderTrees
+    function findParent(childPath: string): TreeNode | null {
+      // We search all nodes in all root trees for a node that has a child with childPath
+      for (const ft of folderTrees) {
+        if (!ft.node) continue;
+        const parent = searchParent(ft.node, childPath);
+        if (parent) return parent;
+      }
+      return null;
+    }
+    function searchParent(current: TreeNode, childPath: string): TreeNode | null {
+      if (current.children) {
+        for (const c of current.children) {
+          if (c.path === childPath) {
+            return current;
+          }
+          const deeper = searchParent(c, childPath);
+          if (deeper) return deeper;
+        }
+      }
+      return null;
+    }
+
+    const parentNode = findParent(node.path);
+    if (!parentNode) return; // No parent => root node => done
+
+    // Recompute parent's state
+    if (parentNode.children) {
+      const childStates = parentNode.children.map((c) => updated[c.path] || 'none');
+      const allAll = childStates.every((s) => s === 'all');
+      const allNone = childStates.every((s) => s === 'none');
+
+      let newParentState: NodeState;
+      if (allAll) newParentState = 'all';
+      else if (allNone) newParentState = 'none';
+      else newParentState = 'partial';
+
+      updated[parentNode.path] = newParentState;
+      // Then recursively update parent's parent
+      updateAncestorStates(parentNode, updated);
+    }
+  };
+
+  /**
+   * Renders the tri-state selection icon for a given node path. The user can click it to toggle.
+   */
+  const renderSelectionIcon = (nodePath: string, nodeState: NodeState, onClick: () => void) => {
+    if (nodeState === 'all') {
+      // Square Check
+      return (
+        <span onClick={onClick} className="cursor-pointer text-blue-500 mr-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
+               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+               className="lucide lucide-square-check">
+            <rect width="14" height="14" x="2" y="2" rx="2"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+        </span>
+      );
+    } else if (nodeState === 'partial') {
+      // Square Minus
+      return (
+        <span onClick={onClick} className="cursor-pointer text-blue-500 mr-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
+               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+               className="lucide lucide-square-minus">
+            <rect width="14" height="14" x="2" y="2" rx="2"/>
+            <path d="M8 12h8"/>
+          </svg>
+        </span>
+      );
+    } else {
+      // none => Square
+      return (
+        <span onClick={onClick} className="cursor-pointer text-gray-600 dark:text-gray-300 mr-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
+               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+               className="lucide lucide-square">
+            <rect width="14" height="14" x="2" y="2" rx="2"/>
+          </svg>
+        </span>
+      );
+    }
+  };
+
+  /**
+   * Renders a folder icon (closed or open) or nothing for files.
+   */
+  const renderFolderIcon = (isDir: boolean, isExpanded: boolean) => {
+    if (!isDir) {
+      return <span className="w-4 mr-1" />;
+    }
+    if (isExpanded) {
+      // folder-open
+      return (
+        <span className="mr-1 text-gray-600 dark:text-gray-200">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
+               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+               className="lucide lucide-folder-open">
+            <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>
+          </svg>
+        </span>
+      );
+    } else {
+      // folder
+      return (
+        <span className="mr-1 text-gray-600 dark:text-gray-200">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
+               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+               className="lucide lucide-folder">
+            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 
+                     7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+          </svg>
+        </span>
+      );
+    }
+  };
+
+  /**
+   * renderNode is a recursive function that renders a single node and all its children,
+   * with tri-state selection and clickable folder icons for expansion/collapse.
+   */
+  const renderNode = (node: TreeNode, depth: number = 0) => {
+    const isDir = node.type === 'directory';
+    const isExpanded = !!expandedPaths[node.path];
+    const nodeState = nodeStates[node.path] || 'none';
+
+    // Indent with some left padding
+    const paddingLeft = depth * 18;
+
+    return (
+      <div key={node.path}>
+        <div className="flex items-center text-sm py-1"
+             style={{ paddingLeft: `${paddingLeft}px` }}>
+          {/** Tri-state selection icon */}
+          {renderSelectionIcon(node.path, nodeState, () => toggleNodeSelection(node))}
+
+          {/** Folder or file icon */}
+          <span
+            onClick={() => isDir && toggleFolderExpand(node.path)}
+            className={`cursor-pointer flex items-center`}
+          >
+            {renderFolderIcon(isDir, isExpanded)}
+          </span>
+
+          {/** Node name (with truncation) */}
+          <span
+            className="truncate overflow-hidden whitespace-nowrap max-w-[140px] text-gray-800 dark:text-gray-100"
+            onClick={() => isDir && toggleFolderExpand(node.path)}
+          >
+            {node.name}
+          </span>
+        </div>
+
+        {isDir && isExpanded && node.children && node.children.length > 0 && (
+          <div>
+            {node.children.map((child) => renderNode(child, depth + 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  /**
+   * Renders a single root folder's UI: the root node name, plus collapse button,
+   * remove button, and its child nodes.
+   */
+  const renderRootFolder = (item: { rootPath: string; node: TreeNode | null; error?: string | null }) => {
+    const { rootPath, node, error } = item;
+
+    if (error) {
+      // Show an error message for this folder
+      return (
+        <div key={rootPath} className="text-red-600 text-sm mb-2">
+          <p>Failed to load folder: {rootPath}</p>
+        </div>
+      );
+    }
+    if (!node) {
+      // Still loading
+      return (
+        <div key={rootPath} className="text-gray-500 text-sm mb-2">
+          <p>Loading {rootPath}...</p>
+        </div>
+      );
+    }
+
+    const isExpanded = expandedPaths[node.path] || false;
+
+    // We'll show a small row with the root folder name, plus collapse & remove
+    const rootNodeState = nodeStates[node.path] || 'none';
+
+    return (
+      <div key={rootPath} className="mb-2">
+        {/* Root folder header row */}
+        <div className="flex items-center bg-transparent p-1">
+          {/* Tri-state selection for the root node */}
+          {renderSelectionIcon(node.path, rootNodeState, () => toggleNodeSelection(node))}
+
+          {/* Folder icon */}
+          <span
+            onClick={() => toggleFolderExpand(node.path)}
+            className="cursor-pointer flex items-center"
+          >
+            {renderFolderIcon(true, isExpanded)}
+          </span>
+
+          {/* Folder name with partial truncation */}
+          <span
+            className="truncate overflow-hidden whitespace-nowrap max-w-[140px] text-gray-800 dark:text-gray-100 font-semibold"
+            onClick={() => toggleFolderExpand(node.path)}
+          >
+            {node.name}
+          </span>
+
+          {/* Buttons for collapse-all and remove */}
+          <div className="flex items-center ml-2">
+            {/* Collapse All button */}
+            <button
+              className="mr-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
+              onClick={() => collapseAll(node)}
+              title="Collapse entire subtree"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
+                   stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                   className="lucide lucide-arrow-up-to-line">
+                <path d="M5 3h14"/>
+                <path d="m18 13-6-6-6 6"/>
+                <path d="M12 7v14"/>
+              </svg>
+            </button>
+
+            {/* Remove root button */}
+            <button
+              className="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
+              onClick={() => removeRootFolder(rootPath)}
+              title="Remove folder"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
+                   stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                   className="lucide lucide-circle-x">
+                <circle cx="9" cy="9" r="7"/>
+                <path d="m12 6-6 6"/>
+                <path d="m6 6 6 6"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Children if expanded */}
+        {isExpanded && node.children && node.children.length > 0 && (
+          <div className="pl-6">
+            {node.children.map((child) => renderNode(child, 1))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="w-full h-full text-xs text-gray-800 dark:text-gray-100">
+      {folderTrees.length === 0 && (
+        <div className="text-gray-500 italic">
+          No folders added. Click "Add Folder" above to include your project.
+        </div>
+      )}
+      {folderTrees.map((item) => renderRootFolder(item))}
+    </div>
+  );
 };
 
 export default FileTree;
