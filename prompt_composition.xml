@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<promptComposer version="1.0">
+  <settings>
+    <maxTokens>8000</maxTokens>
+    <model>gpt-4</model>
+  </settings>
+  <blocks>
+    <block id="1742912026704" type="text" label="Test 1">
+      <content>Test</content>
+    </block>
+    <block id="1742912035921" type="text" label="Test 2">
+      <content>testomg</content>
+    </block>
+  </blocks>
+</promptComposer>

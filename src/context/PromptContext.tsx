@@ -8,16 +8,9 @@
  * - Utility methods for adding, removing, and updating blocks
  * - Real-time token usage calculation for blocks
  * - Single file block enforcement
- * - Tracking user-selected files from the file tree (selectedFiles), plus a token usage preview
- * - A new getFlattenedPrompt() method that returns the final prompt string
- *
- * Step 3 changes:
- * - We introduced selectedFiles, selectedFilesTokenCount, and updateSelectedFiles() for FileTree selection.
- * Step 13 changes (Copy-to-Clipboard):
- * - We add getFlattenedPrompt(), calling flattenBlocks(blocks) from flattenPrompt.ts
- *
- * @notes
- *  - We keep template placeholders in the final prompt as-is in MVP.
+ * - Tracking user-selected files from the file tree
+ * - getFlattenedPrompt() for final prompt generation
+ * - importComposition() to replace the current composition with imported data
  */
 
 import React, {
@@ -34,49 +27,18 @@ import type { Block, FilesBlock } from '../types/Block';
 import { initEncoder, estimateTokens } from '../utils/tokenizer';
 import { flattenBlocks } from '../utils/flattenPrompt';
 
-/**
- * Defines prompt-wide settings such as the maximum token limit and the chosen model.
- */
 interface PromptSettings {
-  /**
-   * The maximum number of tokens allowed for this prompt.
-   * The bottom bar will display a warning if the total usage exceeds this value.
-   */
   maxTokens: number;
-
-  /**
-   * The name of the model for which token estimation is intended (e.g., 'gpt-4').
-   */
   model: string;
 }
 
-/**
- * Token usage structure, storing per-block usage and the total for the prompt blocks.
- */
 interface TokenUsage {
-  /**
-   * A mapping of block ID -> token usage count for that block.
-   */
   blockTokenUsage: Record<string, number>;
-
-  /**
-   * The total token count for all blocks combined.
-   */
   totalTokens: number;
 }
 
 /**
- * PromptContextType describes everything we expose from this context:
- * - blocks: the array of prompt blocks
- * - settings: user-defined (or default) settings
- * - addBlock, removeBlock, updateBlock, moveBlock: CRUD/reorder for blocks
- * - setSettings: update global prompt settings
- * - tokenUsage: computed usage for all blocks
- * - selectedFiles, selectedFilesTokenCount: user selection from FileTree
- * - updateSelectedFiles: sets the user's selected files
- * - getSelectedFileEntries: returns an array of { path, content, language }
- * - setSingleFileBlock: ensures only one file block
- * - getFlattenedPrompt: returns a single string that merges all blocks in order
+ * The PromptContextType declares the structure we expose in our context.
  */
 interface PromptContextType {
   blocks: Block[];
@@ -99,25 +61,19 @@ interface PromptContextType {
   selectedFilesTokenCount: number;
   updateSelectedFiles: (fileMap: Record<string, string>) => void;
   getSelectedFileEntries: () => Array<{ path: string; content: string; language: string }>;
+  getFlattenedPrompt: () => string;
 
   /**
-   * Returns a flattened prompt string by concatenating all blocks in order,
-   * formatting file blocks with <file_contents>, etc.
+   * importComposition - Overwrites the current composition with the given blocks & settings.
    */
-  getFlattenedPrompt: () => string;
+  importComposition: (newBlocks: Block[], newSettings: PromptSettings) => void;
 }
 
-/**
- * Default settings for the prompt if the user doesn't provide any custom values.
- */
 const defaultSettings: PromptSettings = {
   maxTokens: 8000,
   model: 'gpt-4'
 };
 
-/**
- * The initial context object, mostly placeholders.
- */
 const PromptContext = createContext<PromptContextType>({
   blocks: [],
   settings: defaultSettings,
@@ -136,13 +92,12 @@ const PromptContext = createContext<PromptContextType>({
   selectedFilesTokenCount: 0,
   updateSelectedFiles: () => {},
   getSelectedFileEntries: () => [],
-  getFlattenedPrompt: () => ''
+  getFlattenedPrompt: () => '',
+  importComposition: () => {}
 });
 
 /**
- * guessLanguageFromExtension:
- * Helper to guess a language for code fencing or labeling based on file extension.
- * This is reused when we convert selected file entries or create file blocks.
+ * A helper to guess the language from a file extension.
  */
 function guessLanguageFromExtension(ext: string): string {
   switch (ext.toLowerCase()) {
@@ -167,16 +122,6 @@ function guessLanguageFromExtension(ext: string): string {
   }
 }
 
-/**
- * PromptProvider: The React Context provider component that holds and manages:
- * - The array of Blocks
- * - The prompt settings
- * - The total token usage
- * - All CRUD/management methods
- * - Single-file-block enforcement
- * - Tracking user-selected files from the file tree
- * - The getFlattenedPrompt() method for final prompt
- */
 export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [settings, setSettingsState] = useState<PromptSettings>(defaultSettings);
@@ -188,39 +133,24 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   const [selectedFiles, setSelectedFiles] = useState<Record<string, string>>({});
   const [selectedFilesTokenCount, setSelectedFilesTokenCount] = useState<number>(0);
 
-  /**
-   * addBlock: Appends a new block to the blocks array.
-   */
   const addBlock = useCallback((block: Block) => {
     setBlocks((prev) => [...prev, block]);
   }, []);
 
-  /**
-   * removeBlock: Removes a block from the array by ID.
-   */
   const removeBlock = useCallback((blockId: string) => {
     setBlocks((prev) => prev.filter((b) => b.id !== blockId));
   }, []);
 
-  /**
-   * updateBlock: Replaces a block with the same ID in the array.
-   */
   const updateBlock = useCallback((updatedBlock: Block) => {
     setBlocks((prev) => {
       return prev.map((b) => (b.id === updatedBlock.id ? updatedBlock : b));
     });
   }, []);
 
-  /**
-   * setSettings: Replaces the entire settings object (maxTokens, model).
-   */
   const setSettings = useCallback((newSettings: PromptSettings) => {
     setSettingsState(newSettings);
   }, []);
 
-  /**
-   * moveBlock: Reorders blocks by removing the block at oldIndex and inserting at newIndex.
-   */
   const moveBlock = useCallback((oldIndex: number, newIndex: number) => {
     setBlocks((prev) => {
       if (oldIndex < 0 || oldIndex >= prev.length) return prev;
@@ -234,12 +164,11 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   }, []);
 
   /**
-   * addFileBlock: Creates a new file block for a single file. 
-   * If a file block already exists, we skip (only one file block allowed).
+   * addFileBlock: Creates a new file block with a single file. 
+   * If a file block already exists, skip creation.
    */
   const addFileBlock = useCallback(
     (filePath: string, fileContent: string, language: string) => {
-      // Check if there's already a file block
       const existingFileBlock = blocks.find((b) => b.type === 'files') as FilesBlock | undefined;
       if (existingFileBlock) {
         console.log(
@@ -268,8 +197,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   );
 
   /**
-   * setSingleFileBlock: ensures there's only ONE file block in the entire prompt flow.
-   * Overwrites the existing file block if present, or creates one if none exist.
+   * setSingleFileBlock: Overwrites or creates a single file block that includes all given file entries.
    */
   const setSingleFileBlock = useCallback(
     (
@@ -280,11 +208,9 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
       }[]
     ) => {
       setBlocks((prev) => {
-        // 1) Find if there's an existing file block
         const existingBlockIndex = prev.findIndex((b) => b.type === 'files');
-
         if (existingBlockIndex === -1) {
-          // No file block found, create one
+          // no file block found, create one
           const newBlock: FilesBlock = {
             id: uuidv4(),
             type: 'files',
@@ -297,7 +223,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
           };
           return [...prev, newBlock];
         } else {
-          // 2) Update the existing file block
+          // update existing
           const existingBlock = prev[existingBlockIndex] as FilesBlock;
           const updatedBlock: FilesBlock = {
             ...existingBlock,
@@ -307,8 +233,6 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
               language: f.language
             }))
           };
-
-          // 3) Remove duplicates if more than one file block
           const filteredBlocks = prev.filter((b) => b.type !== 'files');
           return [...filteredBlocks, updatedBlock];
         }
@@ -318,7 +242,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   );
 
   /**
-   * Recalculate token usage for blocks whenever blocks or the model changes.
+   * Whenever blocks or model changes, recalc the token usage.
    */
   useEffect(() => {
     initEncoder(settings.model);
@@ -337,7 +261,6 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
           blockText = block.content;
           break;
         case 'files': {
-          // Concat all file contents
           const filesConcatenated = (block as FilesBlock).files.map((f) => f.content).join('\n');
           blockText = filesConcatenated;
           break;
@@ -358,8 +281,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   }, [blocks, settings.model]);
 
   /**
-   * setSelectedFiles and compute usage for the selected files in the sidebar.
-   * This is for user preview only; it doesn't automatically update the prompt flow.
+   * updateSelectedFiles: Stores the user's selected files from the sidebar, with a separate usage count.
    */
   const updateSelectedFiles = useCallback((fileMap: Record<string, string>) => {
     setSelectedFiles(fileMap);
@@ -374,9 +296,6 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     setSelectedFilesTokenCount(total);
   }, []);
 
-  /**
-   * Builds an array of { path, content, language } from the user's selectedFiles.
-   */
   const getSelectedFileEntries = useCallback(() => {
     return Object.entries(selectedFiles).map(([filePath, content]) => {
       const ext = filePath.split('.').pop() || 'txt';
@@ -388,13 +307,20 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     });
   }, [selectedFiles]);
 
-  /**
-   * Step 13: Provide a function to flatten all blocks into a single string,
-   * using flattenPrompt.ts. This is used for "Copy Prompt".
-   */
   const getFlattenedPrompt = useCallback((): string => {
     return flattenBlocks(blocks);
   }, [blocks]);
+
+  /**
+   * importComposition: Replaces our current blocks/settings with the ones from the imported XML.
+   * This is called from the TopBar after we parse the XML.
+   */
+  const importComposition = useCallback((newBlocks: Block[], newSettings: PromptSettings) => {
+    // Overwrite blocks
+    setBlocks(newBlocks);
+    // Overwrite settings
+    setSettingsState(newSettings);
+  }, []);
 
   /**
    * For older code that might send "add-file-block" messages from main:
@@ -412,7 +338,6 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
       window.electronAPI.onMessage('add-file-block', handleAddFileBlock);
     }
 
-    // Cleanup
     return () => {
       if (
         window.electronAPI &&
@@ -438,7 +363,8 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     selectedFilesTokenCount,
     updateSelectedFiles,
     getSelectedFileEntries,
-    getFlattenedPrompt
+    getFlattenedPrompt,
+    importComposition
   };
 
   return (
@@ -448,9 +374,6 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   );
 };
 
-/**
- * Hook for consuming the PromptContext in React components.
- */
 export const usePrompt = (): PromptContextType => {
   return useContext(PromptContext);
 };

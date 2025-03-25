@@ -3,13 +3,17 @@
  * @file preload.ts
  * @description
  * Runs in the Electron main process before the renderer loads.
- * We define window.electronAPI with relevant methods (listDirectory, readFile, exportXml, etc.).
+ * We define window.electronAPI with relevant methods (listDirectory, readFile, exportXml, openXml, etc.).
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
 
 console.log('[Preload] This is the UPDATED preload.ts code! removeChannelListener is defined.');
 
+/**
+ * Exposes a set of APIs to the renderer via contextBridge.
+ * We add a new "openXml" method for the "import-xml" flow.
+ */
 contextBridge.exposeInMainWorld('electronAPI', {
   sendMessage: (channel: string, data: any) => {
     ipcRenderer.send(channel, data);
@@ -40,5 +44,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   exportXml: async (args: { defaultFileName?: string; xmlContent: string }) => {
     return ipcRenderer.invoke('export-xml', args);
+  },
+
+  /**
+   * openXml: Opens a file dialog for .xml, returns file content or null if canceled
+   */
+  openXml: async () => {
+    return ipcRenderer.invoke('import-xml');
   }
 });

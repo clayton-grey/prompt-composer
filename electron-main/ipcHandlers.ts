@@ -3,12 +3,14 @@
  * @file ipcHandlers.ts
  * @description
  * This file registers IPC handlers for interacting with the local file system
- * and other tasks, including "export-xml" for saving the XML file.
+ * and other tasks, including "export-xml" for saving the XML file and now
+ * "import-xml" for loading it.
  *
  * Key Responsibilities:
  *  - "list-directory": returns { absolutePath, baseName, children } for the given dirPath
  *  - "read-file": returns the content of a file as a string
  *  - "export-xml": opens a save dialog, writes the XML file if confirmed
+ *  - "import-xml": opens an open dialog for .xml, reads file content if confirmed, returns it
  *
  * Dependencies:
  *  - electron (ipcMain, dialog)
@@ -166,6 +168,39 @@ export function registerIpcHandlers(): void {
     } catch (err) {
       console.error('[export-xml] Failed to save XML:', err);
       return false;
+    }
+  });
+
+  /**
+   * import-xml
+   * Opens a file dialog for selecting an XML file, reads its content,
+   * and returns the string to the renderer. If canceled, returns null.
+   */
+  ipcMain.handle('import-xml', async () => {
+    try {
+      const openDialogOptions: Electron.OpenDialogOptions = {
+        title: 'Import Prompt Composition from XML',
+        filters: [
+          { name: 'XML Files', extensions: ['xml'] },
+          { name: 'All Files', extensions: ['*'] }
+        ],
+        properties: ['openFile']
+      };
+
+      const result = await dialog.showOpenDialog(openDialogOptions);
+
+      if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+        console.log('[import-xml] Open dialog canceled');
+        return null;
+      }
+
+      const filePath = result.filePaths[0];
+      const content = fs.readFileSync(filePath, 'utf-8');
+      console.log('[import-xml] Successfully read XML from:', filePath);
+      return content;
+    } catch (err) {
+      console.error('[import-xml] Failed to import XML:', err);
+      return null;
     }
   });
 }
