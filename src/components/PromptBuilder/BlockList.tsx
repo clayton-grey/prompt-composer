@@ -4,33 +4,40 @@
  * @description
  * Renders a list of blocks from the global prompt context, providing
  * reorder (move up/down) and deletion features. Each block is displayed
- * with a label, plus "Up", "Down", and "Delete" buttons. We also show
- * the content for text blocks to confirm they exist and are rendered.
+ * along with its editor (BlockEditor) so that users can directly edit
+ * text, templates, and file blocks inline.
  *
  * Key Responsibilities:
  *  - Display the blocks in the order they appear in the prompt context
  *  - Provide a way to reorder blocks using moveBlock()
  *  - Provide a way to remove blocks using removeBlock()
- *  - Show text block content if block.type === 'text'
+ *  - Render each block using <BlockEditor> so that blocks are editable inline
  *
  * @notes
- *  - If you still see no blocks, check console logs for errors or confirm
- *    that <PromptProvider> is wrapping your app in index.tsx.
+ *  - This file has been updated to remove the old "textBlockContent" snippet.
+ *    Now, we show the full <BlockEditor> for each block.
+ *  - The top row still displays the label, type, and the reorder/delete controls.
  */
 
 import React, { useEffect } from 'react';
 import { usePrompt } from '../../context/PromptContext';
 import type { Block } from '../../types/Block';
+import BlockEditor from './BlockEditor';
 
 interface BlockListProps {
+  /**
+   * Optional function to render custom content for each block.
+   * This is not currently used. Instead, we now always show the <BlockEditor>.
+   */
   renderBlockContent?: (block: Block) => JSX.Element;
 }
 
 /**
- * Renders a list of blocks from the prompt context with reorder & delete controls.
+ * Renders a list of blocks from the prompt context with reorder & delete controls,
+ * as well as the inline block editor for each block.
  */
 const BlockList: React.FC<BlockListProps> = ({ renderBlockContent }) => {
-  const { blocks, removeBlock, moveBlock } = usePrompt();
+  const { blocks, removeBlock, moveBlock, updateBlock } = usePrompt();
 
   /**
    * Moves a block up in the array if possible.
@@ -49,7 +56,7 @@ const BlockList: React.FC<BlockListProps> = ({ renderBlockContent }) => {
   };
 
   /**
-   * Removes a block from the array.
+   * Removes a block from the array by its ID.
    */
   const handleDelete = (blockId: string) => {
     removeBlock(blockId);
@@ -67,13 +74,6 @@ const BlockList: React.FC<BlockListProps> = ({ renderBlockContent }) => {
       {blocks.map((block, index) => {
         const isFirst = index === 0;
         const isLast = index === blocks.length - 1;
-
-        // Display text block content or fallback if no custom renderer
-        const textBlockContent = (block.type === 'text') ? (
-          <p className="mt-1 text-gray-700 dark:text-gray-200 text-sm">
-            {block.content}
-          </p>
-        ) : null;
 
         return (
           <div
@@ -123,18 +123,22 @@ const BlockList: React.FC<BlockListProps> = ({ renderBlockContent }) => {
               </div>
             </div>
 
-            {/* If a custom renderer is provided, use it; otherwise show text if text block */}
-            <div className="text-gray-700 dark:text-gray-200 text-sm mt-1">
-              {renderBlockContent
-                ? renderBlockContent(block)
-                : textBlockContent}
-            </div>
+            {/* Render the BlockEditor inline for each block. 
+                This is the key addition that lets the user edit text block content. */}
+            {renderBlockContent ? (
+              renderBlockContent(block)
+            ) : (
+              <BlockEditor
+                block={block}
+                onChange={(updatedBlock) => updateBlock(updatedBlock)}
+              />
+            )}
           </div>
         );
       })}
       {blocks.length === 0 && (
         <div className="text-gray-600 dark:text-gray-300 text-sm">
-          No blocks yet. Use the "Add Text Block" button above.
+          No blocks yet. Use the "Add Text Block" or "Add File Block" button above.
         </div>
       )}
     </div>

@@ -2,28 +2,36 @@
 /**
  * @file Sidebar.tsx
  * @description
- * The main sidebar component for displaying the project's file tree. In this step,
- * we integrate FileTree.tsx, which calls "listDirectory" via IPC and renders a
- * nested folder/file structure respecting .gitignore.
+ * The main sidebar component for displaying the project's file tree and
+ * now floating the "selected files token usage" at the bottom.
  *
- * Key Responsibilities:
- *  - Provide a container/wrapper for FileTree
- *  - Potentially provide additional controls or filters in future steps
- *
- * @notes
- *  - For now, we simply render <FileTree rootPath="." /> to list from project root
- *  - Additional filtering or searching can be added as needed
+ * Step 3 Changes:
+ *  1. Moved the "Selected files token usage" display here, at the bottom of the side bar,
+ *     referencing prompt.selectedFilesTokenCount from the context.
+ *  2. Removed any leftover references to the "Add selected to prompt" button, which has
+ *     been removed from FileTree.
  */
 
 import React from 'react';
 import FileTree from './Sidebar/FileTree';
+import { usePrompt } from '../context/PromptContext';
 
 const Sidebar: React.FC = () => {
+  const { selectedFilesTokenCount } = usePrompt();
+
   return (
-    <aside className="bg-gray-200 dark:bg-gray-700 w-64 p-2 overflow-y-auto">
-      <div className="text-gray-900 dark:text-gray-50 font-medium">
-        <p className="mb-2">Project Files</p>
+    <aside className="bg-gray-200 dark:bg-gray-700 w-64 flex flex-col h-full relative">
+      {/* Main area: File tree */}
+      <div className="flex-grow overflow-y-auto p-2">
+        <div className="text-gray-900 dark:text-gray-50 font-medium mb-2">
+          Project Files
+        </div>
         <FileTree rootPath="." />
+      </div>
+
+      {/* Bottom bar for selected file usage */}
+      <div className="p-2 text-sm bg-gray-300 dark:bg-gray-800 text-gray-800 dark:text-gray-100">
+        Selected files token usage (Preview): {selectedFilesTokenCount}
       </div>
     </aside>
   );

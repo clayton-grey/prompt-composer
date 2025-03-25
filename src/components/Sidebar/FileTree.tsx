@@ -1,95 +1,92 @@
+
 /**
  * @file FileTree.tsx
  * @description
- * A React component that displays a single "root folder" (from the main process)
- * with tri-state checkbox selection for subfolders/files. We also have:
- *  - Arrow expansion indicators
- *  - A "Collapse All" button
- *  - A "Close" button
- *  - Preservation of expansions and tri-state selection states
+ * A React component that displays a project's file tree with tri-state checkboxes.
+ * The user can expand/collapse directories and select/unselect files or folders.
+ * Step 3 Changes:
+ *  - Removed the "Add selected to prompt" button from this UI.
+ *  - Removed the local "selected token usage" and the button at the bottom.
+ *  - Each time file selections change, we call prompt.updateSelectedFiles(...) to store
+ *    the selection in the PromptContext, which is responsible for usage calculations.
+ *  - The usage is now displayed in the bottom of the sidebar (Sidebar.tsx), not here.
  *
- * Implementation Notes:
- *  - Instead of using Node.js path methods in the browser, we rely on the main process
- *    to return { absolutePath, baseName, children }. That way, we don't import "path".
- *  - The user can pass rootPath. We'll send it to the main process to get the structure.
- *  - The main process also calculates the root's "baseName", which we display as root.name.
+ * Tri-State Explanation:
+ *  - "none": File/folder is not selected
+ *  - "all": File/folder is fully selected
+ *  - "partial": For directories only; some children are selected, others not
+ *
+ * Data Flows:
+ *  1) We load the tree from 'listDirectory' via IPC.
+ *  2) nodeStates track user selections. We gather selected files and read them from disk.
+ *  3) Instead of local usage, we send them to prompt.updateSelectedFiles(...) for global usage tracking.
+ *
+ * Dependencies:
+ *  - window.electronAPI for listDirectory, readFile
+ *  - usePrompt from PromptContext for updateSelectedFiles
  */
 
 import React, { useEffect, useState, useRef } from 'react';
+import { usePrompt } from '../../context/PromptContext';
+
+type NodeState = 'all' | 'none' | 'partial';
 
 /**
- * The shape of each file/folder node in the tree. 
- * Matches what we get from the main process, plus we also define a convenience
- * interface for "root node" usage.
+ * Node in the file tree returned by the main process
  */
 export interface TreeNode {
-  name: string;          // e.g. 'src'
-  path: string;          // absolute path
+  name: string;
+  path: string;
   type: 'file' | 'directory';
   children?: TreeNode[];
 }
 
 /**
- * For tri-state checkboxes: "all", "none", or "partial"
- */
-type NodeState = 'all' | 'none' | 'partial';
-
-/**
  * The interface we expect back from "list-directory" in the main process.
  */
 interface ListDirectoryResult {
-  absolutePath: string;       // full absolute path, used as root.path
-  baseName: string;           // the last segment of the path
-  children: TreeNode[];       // subfolders/files
+  absolutePath: string;
+  baseName: string;
+  children: TreeNode[];
 }
 
-/**
- * Props for the FileTree:
- *  - rootPath: The path to load as the "root folder". Defaults to '.'
- */
 interface FileTreeProps {
   rootPath?: string;
 }
 
-// Define the electronAPI type
 declare global {
   interface Window {
     electronAPI: {
       listDirectory: (path: string) => Promise<ListDirectoryResult>;
       readFile: (path: string) => Promise<string>;
-      sendMessage: (message: string, data: any) => void;
     };
   }
 }
 
 const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
-  /**
-   * rootNode represents the directory itself (with name, path, children).
-   * If null, there's nothing displayed (e.g. user clicked Close).
-   */
+  const { updateSelectedFiles } = usePrompt();
   const [rootNode, setRootNode] = useState<TreeNode | null>(null);
 
-  /**
-   * nodeStates and expandedStates track selection and expansion states, 
-   * keyed by node.path.
-   */
+  // Track tri-state for each node by path
   const [nodeStates, setNodeStates] = useState<Record<string, NodeState>>({});
+
+  // Track expansions
   const [expandedStates, setExpandedStates] = useState<Record<string, boolean>>({});
 
-  /**
-   * parentMapRef: Used to identify a node's parent, for partial selection logic.
-   */
+  // For storing file contents of selected files
+  const [selectedFileContents, setSelectedFileContents] = useState<Record<string, string>>({});
+
+  // We no longer store usage or show the "Add selected to prompt" button here.
+  // That logic is moved to PromptBuilder or the bottom of Sidebar.
+
+  const [error, setError] = useState<string | null>(null);
+  const checkboxRefs = useRef<Map<string, HTMLInputElement>>(new Map());
   const parentMapRef = useRef<Map<string, TreeNode> | null>(null);
 
   /**
-   * Track any error messages (e.g., if listDirectory fails).
+   * On component mount, load the directory tree via IPC.
    */
-  const [error, setError] = useState<string | null>(null);
-
-  const checkboxRefs = useRef<Map<string, HTMLInputElement>>(new Map());
-
   useEffect(() => {
-    // If no electronAPI, fail gracefully
     if (!window.electronAPI?.listDirectory) {
       setError('No electronAPI.listDirectory function found.');
       return;
@@ -97,8 +94,7 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
 
     window.electronAPI
       .listDirectory(rootPath)
-      .then((result: ListDirectoryResult) => {
-        // Construct the root node
+      .then((result) => {
         const newRootNode: TreeNode = {
           name: result.baseName,
           path: result.absolutePath,
@@ -106,14 +102,13 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
           children: result.children
         };
 
-        // Build default expansions/states
         const newNodeStates: Record<string, NodeState> = {};
         const newExpandedStates: Record<string, boolean> = {};
 
-        // Recursively set each node's initial state
+        // Initialize states to none/collapsed
         function initNodeStates(node: TreeNode) {
           newNodeStates[node.path] = 'none';
-          newExpandedStates[node.path] = false; // collapsed by default
+          newExpandedStates[node.path] = false;
           if (node.children) {
             for (const child of node.children) {
               initNodeStates(child);
@@ -122,7 +117,7 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
         }
         initNodeStates(newRootNode);
 
-        // Build the parent map
+        // Build parent map for partial selection logic
         const pm = new Map<string, TreeNode>();
         function buildParentMap(parent: TreeNode, children: TreeNode[]) {
           for (const c of children) {
@@ -148,10 +143,12 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
       });
   }, [rootPath]);
 
-  // Effect to handle checkbox indeterminate states
+  /**
+   * After nodeStates changes, set the checkbox "indeterminate" property for partial states.
+   */
   useEffect(() => {
-    Object.entries(nodeStates).forEach(([path, state]) => {
-      const checkbox = checkboxRefs.current.get(path);
+    Object.entries(nodeStates).forEach(([thePath, state]) => {
+      const checkbox = checkboxRefs.current.get(thePath);
       if (checkbox) {
         checkbox.indeterminate = state === 'partial';
       }
@@ -159,47 +156,96 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
   }, [nodeStates]);
 
   /**
-   * Collapses the entire subtree of a node (sets expanded=false).
-   * We use this for the "Collapse All" button on the root node.
+   * Re-scan which files are selected, read them from disk if not cached,
+   * remove them from the cache if unselected, then update the PromptContext.
    */
-  function collapseAllSubtree(node: TreeNode) {
-    setExpandedStates((prev) => {
-      const updated = { ...prev };
-      function recurse(n: TreeNode) {
-        updated[n.path] = false;
-        if (n.children) {
-          for (const child of n.children) {
-            recurse(child);
-          }
+  useEffect(() => {
+    if (!rootNode) return;
+
+    // 1) Collect all file paths that are 'all'
+    const selectedPaths: string[] = [];
+    function gatherSelectedFiles(node: TreeNode) {
+      if (node.type === 'file' && nodeStates[node.path] === 'all') {
+        selectedPaths.push(node.path);
+      } else if (node.type === 'directory' && node.children) {
+        node.children.forEach(gatherSelectedFiles);
+      }
+    }
+    gatherSelectedFiles(rootNode);
+
+    // 2) Remove stale file paths from the cache
+    setSelectedFileContents((prev) => {
+      const updated: Record<string, string> = {};
+      for (const p of Object.keys(prev)) {
+        if (selectedPaths.includes(p)) {
+          updated[p] = prev[p];
         }
       }
-      recurse(node);
+
+      // 3) For newly selected file paths, read them from disk
+      const newPaths = selectedPaths.filter((p) => !(p in updated));
+      if (newPaths.length > 0) {
+        Promise.all(
+          newPaths.map((filePath) =>
+            window.electronAPI
+              .readFile(filePath)
+              .then((content) => ({ path: filePath, content }))
+              .catch((err) => {
+                console.error('[FileTree] Error reading file:', filePath, err);
+                return null;
+              })
+          )
+        ).then((results) => {
+          const successfulReads = results.filter(Boolean) as {
+            path: string;
+            content: string;
+          }[];
+          if (successfulReads.length > 0) {
+            setSelectedFileContents((current) => {
+              const newContents = { ...current };
+              for (const { path, content } of successfulReads) {
+                newContents[path] = content;
+              }
+              return newContents;
+            });
+          }
+        });
+      }
+
+      return updated;
+    });
+  }, [nodeStates, rootNode]);
+
+  /**
+   * Whenever selectedFileContents changes, update the PromptContext with them.
+   */
+  useEffect(() => {
+    updateSelectedFiles(selectedFileContents);
+  }, [selectedFileContents, updateSelectedFiles]);
+
+  /**
+   * handleCheckboxChange toggles node state among 'all' / 'none'. For directories,
+   * we apply the newState to the entire subtree. Then we update ancestor states.
+   */
+  function handleCheckboxChange(node: TreeNode) {
+    setNodeStates((prev) => {
+      const updated = { ...prev };
+      const currentState = updated[node.path];
+      const newState: NodeState = currentState === 'all' ? 'none' : 'all';
+
+      if (node.type === 'directory' && node.children) {
+        setSubtreeState(node, newState, updated);
+      } else {
+        updated[node.path] = newState;
+      }
+
+      updateAncestorState(node, updated);
       return updated;
     });
   }
 
   /**
-   * Removes the root from the view (like the user closed it).
-   */
-  function closeRoot() {
-    setRootNode(null);
-    setNodeStates({});
-    setExpandedStates({});
-    parentMapRef.current = null;
-  }
-
-  /**
-   * Toggles a node's expansion state (arrow click).
-   */
-  function toggleExpand(nodePath: string) {
-    setExpandedStates((prev) => ({
-      ...prev,
-      [nodePath]: !prev[nodePath]
-    }));
-  }
-
-  /**
-   * Sets all nodes in a subtree to newState. For directories, recursively modifies children.
+   * setSubtreeState recursively sets all children to the same node state.
    */
   function setSubtreeState(node: TreeNode, newState: NodeState, updated: Record<string, NodeState>) {
     updated[node.path] = newState;
@@ -211,15 +257,14 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
   }
 
   /**
-   * Recomputes ancestors' states to see if they become all, none, or partial.
+   * updateAncestorState recomputes the parent's nodeState for partial/all/none.
    */
   function updateAncestorState(node: TreeNode, updated: Record<string, NodeState>) {
     if (!parentMapRef.current) return;
-
     let current = node;
     while (true) {
       const parent = parentMapRef.current.get(current.path);
-      if (!parent) break; // no more parents, reached the root
+      if (!parent) break;
 
       const siblings = parent.children || [];
       let allAll = true;
@@ -244,72 +289,61 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
   }
 
   /**
-   * Handles user clicking a checkbox. We toggle all->none or none->all (partial->all).
+   * toggleExpand toggles a directory open/closed.
    */
-  function handleCheckboxChange(node: TreeNode) {
-    if (node.type === 'file') {
-      // For files, read the content and add it to the prompt
-      window.electronAPI.readFile(node.path)
-        .then((content: string) => {
-          console.log('[FileTree] Read file content:', {
-            path: node.path,
-            contentLength: content.length
-          });
-          // Get the language based on file extension
-          const ext = node.path.split('.').pop()?.toLowerCase() || '';
-          const language = ext;
-          // Add the file block to the prompt
-          window.electronAPI.sendMessage('add-file-block', {
-            path: node.path,
-            content,
-            language
-          });
-        })
-        .catch((err) => {
-          console.error('[FileTree] Failed to read file:', node.path, err);
-        });
-    }
+  function toggleExpand(nodePath: string) {
+    setExpandedStates((prev) => ({
+      ...prev,
+      [nodePath]: !prev[nodePath]
+    }));
+  }
 
-    setNodeStates((prev) => {
+  /**
+   * For "collapse all" from the root.
+   */
+  function collapseAllSubtree(node: TreeNode) {
+    setExpandedStates((prev) => {
       const updated = { ...prev };
-      const currentState = updated[node.path];
-      const newState: NodeState = currentState === 'all' ? 'none' : 'all';
-
-      if (node.type === 'directory') {
-        setSubtreeState(node, newState, updated);
-      } else {
-        updated[node.path] = newState;
+      function recurse(n: TreeNode) {
+        updated[n.path] = false;
+        if (n.children) {
+          n.children.forEach(recurse);
+        }
       }
-
-      updateAncestorState(node, updated);
+      recurse(node);
       return updated;
     });
   }
 
   /**
-   * Renders the root directory's top-level UI with "Collapse All" and "Close" buttons.
+   * closeRoot clears the entire display. (rarely used, but for completeness).
+   */
+  function closeRoot() {
+    setRootNode(null);
+    setNodeStates({});
+    setExpandedStates({});
+    setSelectedFileContents({});
+    parentMapRef.current = null;
+  }
+
+  /**
+   * Renders the root node (the top-level directory). We show a collapse & close button.
    */
   function renderRootNode(root: TreeNode) {
     const expanded = expandedStates[root.path] || false;
     const state = nodeStates[root.path] || 'none';
 
     const onCollapseAll = () => {
-      // Expand the root first to ensure children are visible, then collapse them all
       setExpandedStates((prev) => ({ ...prev, [root.path]: true }));
       collapseAllSubtree(root);
     };
 
     return (
       <div className="ml-2" key={root.path}>
-        {/* ARROW for the root folder */}
-        <span
-          className="mr-1 cursor-pointer"
-          onClick={() => toggleExpand(root.path)}
-        >
+        <span className="mr-1 cursor-pointer" onClick={() => toggleExpand(root.path)}>
           {expanded ? '▾' : '▸'}
         </span>
 
-        {/* Tri-state checkbox */}
         <input
           ref={(el) => el && checkboxRefs.current.set(root.path, el)}
           type="checkbox"
@@ -318,13 +352,10 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
           onChange={() => handleCheckboxChange(root)}
         />
 
-        {/* Folder icon & name */}
         <span className="cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-600 rounded px-1 inline-block">
-          {expanded ? '📂' : '📁'}
-          &nbsp;{root.name}
+          {expanded ? '📂' : '📁'} {root.name}
         </span>
 
-        {/* Buttons */}
         <button
           className="ml-2 text-xs border border-gray-500 rounded px-1 py-0.5 hover:bg-gray-200 dark:hover:bg-gray-700"
           onClick={onCollapseAll}
@@ -338,42 +369,28 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
           Close
         </button>
 
-        {/* Children (subfolders/files) */}
-        {expanded && root.children && (
-          <div className="mt-1">
-            {root.children.map((child) => renderNode(child))}
-          </div>
-        )}
+        {expanded && root.children && <div className="mt-1">{root.children.map(renderNode)}</div>}
       </div>
     );
   }
 
   /**
-   * Renders a single node in the tree (non-root). 
-   *  - arrow if directory
-   *  - tri-state checkbox
-   *  - expansion if directory & expanded
+   * Renders a file or directory node below the root.
    */
-  function renderNode(node: TreeNode): JSX.Element {
+  function renderNode(node: TreeNode) {
     const expanded = expandedStates[node.path] || false;
     const state = nodeStates[node.path] || 'none';
 
     return (
       <div key={node.path} className="ml-4">
-        {/* Arrow (directory only) */}
         {node.type === 'directory' ? (
-          <span
-            className="mr-1 cursor-pointer"
-            onClick={() => toggleExpand(node.path)}
-          >
+          <span className="mr-1 cursor-pointer" onClick={() => toggleExpand(node.path)}>
             {expanded ? '▾' : '▸'}
           </span>
         ) : (
-          /* If it's a file, just align properly */
           <span className="mr-1" />
         )}
 
-        {/* Tri-state checkbox */}
         <input
           ref={(el) => el && checkboxRefs.current.set(node.path, el)}
           type="checkbox"
@@ -382,23 +399,18 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
           onChange={() => handleCheckboxChange(node)}
         />
 
-        {/* Icon & name */}
         <span className="cursor-pointer hover:bg-gray-300 dark:hover:bg-gray-600 rounded px-1 inline-block">
-          {node.type === 'directory' ? (expanded ? '📂' : '📁') : '📄'}
-          &nbsp;{node.name}
+          {node.type === 'directory' ? (expanded ? '📂 ' : '📁 ') : '📄 '}
+          {node.name}
         </span>
 
-        {/* Children (if directory and expanded) */}
         {node.type === 'directory' && expanded && node.children && (
-          <div className="mt-1">
-            {node.children.map((child) => renderNode(child))}
-          </div>
+          <div className="mt-1">{node.children.map(renderNode)}</div>
         )}
       </div>
     );
   }
 
-  // If rootNode is null, user closed or not loaded. If there's an error, display it; otherwise "No folder loaded".
   if (!rootNode) {
     if (error) {
       return <div className="text-red-500 text-sm p-2">Error: {error}</div>;
@@ -406,12 +418,7 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
     return <div className="p-2 text-gray-800 dark:text-gray-200">No folder loaded.</div>;
   }
 
-  // Render the root node
-  return (
-    <div className="overflow-y-auto">
-      {renderRootNode(rootNode)}
-    </div>
-  );
+  return <div className="flex flex-col h-full overflow-y-auto">{renderRootNode(rootNode)}</div>;
 };
 
 export default FileTree;
