@@ -2,128 +2,63 @@
 /**
  * @file PromptBuilder.tsx
  * @description
- * The main container for listing and editing prompt blocks. This component
- * renders the current list of blocks from the PromptContext and provides a UI
- * to add new blocks of different types (text, template, files).
- *
+ * High-level component that coordinates the prompt-building UI:
+ *  - Displays a button to add new blocks
+ *  - Renders the BlockList for reordering and deleting
+ * 
  * Key Responsibilities:
- *  - Display the list of blocks
- *  - Provide an interface for adding new blocks
- *  - Pass individual block data and update handlers to child components
+ *  - Provide an interface for creating new blocks (e.g. "Add Block" button)
+ *  - Show the current blocks with reorder/delete (BlockList)
  *
  * @notes
- *  - We do NOT handle block reordering or deletion in this step; that is Step 7.
- *  - For now, we simply render each block in order.
- *  - The actual editing UI for each block is delegated to BlockEditor.tsx.
+ *  - This file uses the PromptContext for block data (addBlock).
+ *  - We rely on "uuid" for unique block IDs.
+ *  - If you do not see new blocks, verify the console logs and that
+ *    the "uuid" library is installed.
  */
 
-import React, { useState } from 'react';
+import React from 'react';
+import { v4 as uuidv4 } from 'uuid'; // Ensure uuid is installed: npm install uuid
 import { usePrompt } from '../../context/PromptContext';
 import { Block } from '../../types/Block';
-import BlockEditor from './BlockEditor';
+import BlockList from './BlockList';
 
 const PromptBuilder: React.FC = () => {
-  /**
-   * Our global state containing the array of prompt blocks and methods
-   * to add or update them.
-   */
-  const { blocks, addBlock, updateBlock } = usePrompt();
+  const { addBlock } = usePrompt();
 
   /**
-   * Local UI state to handle the dropdown or selection of which block type
-   * to create. 
+   * Creates a new text block with placeholder content.
+   * We log to the console for debugging. If you do not see logs,
+   * ensure that the dev console is open and no errors block execution.
    */
-  const [showBlockTypeMenu, setShowBlockTypeMenu] = useState(false);
-
-  /**
-   * Handle adding a new block by creating an initial data structure for the
-   * given type. This uses the 'addBlock' method from our PromptContext.
-   * 
-   * @param type The type of block to create ('text', 'template', or 'files').
-   */
-  const handleAddBlock = (type: Block['type']) => {
+  const handleAddBlock = () => {
     const newBlock: Block = {
-      id: `block_${Math.random().toString(36).slice(2)}`,
-      type,
-      label: `New ${type.charAt(0).toUpperCase() + type.slice(1)} Block`
-    };
+      id: uuidv4(),
+      type: 'text',
+      label: 'New Text Block',
+      content: 'Your text goes here...'
+    } as Block;
 
-    // Populate unique fields depending on type
-    if (type === 'text') {
-      newBlock['content'] = '';
-    } else if (type === 'template') {
-      newBlock['content'] = '';
-      newBlock['variables'] = [];
-    } else if (type === 'files') {
-      newBlock['files'] = [];
-    }
-
+    console.log('[PromptBuilder] Adding new block:', newBlock);
     addBlock(newBlock);
-    setShowBlockTypeMenu(false);
-  };
-
-  /**
-   * Renders a dropdown menu for selecting which type of block to create.
-   */
-  const renderAddBlockMenu = () => {
-    if (!showBlockTypeMenu) {
-      return null;
-    }
-
-    return (
-      <div className="absolute mt-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded shadow p-2 z-10">
-        <button
-          className="block w-full text-left px-2 py-1 text-sm text-gray-700 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600"
-          onClick={() => handleAddBlock('text')}
-        >
-          Text Block
-        </button>
-        <button
-          className="block w-full text-left px-2 py-1 text-sm text-gray-700 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600"
-          onClick={() => handleAddBlock('template')}
-        >
-          Template Block
-        </button>
-        <button
-          className="block w-full text-left px-2 py-1 text-sm text-gray-700 dark:text-gray-100 hover:bg-gray-200 dark:hover:bg-gray-600"
-          onClick={() => handleAddBlock('files')}
-        >
-          Files Block
-        </button>
-      </div>
-    );
-  };
-
-  /**
-   * Renders the list of blocks using the BlockEditor component. 
-   * The 'updateBlock' method from context is passed to handle changes.
-   */
-  const renderBlocks = () => {
-    return blocks.map((block) => (
-      <div key={block.id} className="mb-4">
-        <BlockEditor
-          block={block}
-          onChange={(updated) => updateBlock(updated)}
-        />
-      </div>
-    ));
   };
 
   return (
-    <div className="relative">
-      {/* A button to show/hide the block creation menu */}
-      <div className="mb-4">
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
+          Prompt Builder
+        </h2>
         <button
-          className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded"
-          onClick={() => setShowBlockTypeMenu((prev) => !prev)}
+          onClick={handleAddBlock}
+          className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded text-sm"
         >
-          + Add Block
+          + Add Text Block
         </button>
-        {renderAddBlockMenu()}
       </div>
 
-      {/* List out existing blocks */}
-      {renderBlocks()}
+      {/* The list of blocks, with reorder & delete */}
+      <BlockList />
     </div>
   );
 };
