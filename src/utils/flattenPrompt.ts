@@ -7,12 +7,21 @@
  *
  * Key Responsibilities:
  * 1) For text blocks, include the freeform text directly.
- * 2) For template blocks, include content as-is (placeholders not replaced in MVP).
- * 3) For file blocks, now we first include the optional projectAsciiMap if present:
- *    <file_map>...</file_map>
- *    Then for each file, wrap file content in <file_contents> sections.
+ * 2) For template blocks, include content as-is (placeholders not replaced).
+ * 3) For file blocks:
+ *    - If includeProjectMap is true, insert the projectAsciiMap first.
+ *    - Then embed each file's content in <file_contents> sections.
  *
- * The final output is a multiline string. Blocks are separated by blank lines.
+ * Step 17B Changes:
+ *  - We now conditionally check `block.includeProjectMap` to decide if we push
+ *    the ASCII map lines into the final output. If false, we skip them.
+ *  - We still always embed the file contents (the user can handle skipping them
+ *    by removing them in the UI, but typically we keep them).
+ *
+ * @notes
+ *  - The UI no longer shows raw file content for editing, but it's still embedded.
+ *  - This function does not strip out any files. If a user toggles "Include File Map"
+ *    off, we just skip the map, not the actual files.
  */
 
 import { Block, TextBlock, TemplateBlock, FilesBlock } from '../types/Block';
@@ -22,7 +31,8 @@ import { Block, TextBlock, TemplateBlock, FilesBlock } from '../types/Block';
  * @param blocks - An array of blocks in the order they appear in the prompt.
  * @returns A single multiline string representing the final prompt.
  *
- * If a FilesBlock has projectAsciiMap, we place it right before the actual file contents.
+ * Implementation details:
+ *  - Blocks are separated by a blank line in the final output.
  */
 export function flattenBlocks(blocks: Block[]): string {
   const lines: string[] = [];
@@ -44,9 +54,9 @@ export function flattenBlocks(blocks: Block[]): string {
 
       case 'files': {
         const filesBlock = block as FilesBlock;
-        // If we have a file map, insert it first
-        if (filesBlock.projectAsciiMap && filesBlock.projectAsciiMap.trim().length > 0) {
-          // Make sure it's separated nicely
+        // Conditionally include the projectAsciiMap
+        const shouldIncludeMap = filesBlock.includeProjectMap ?? true;
+        if (shouldIncludeMap && filesBlock.projectAsciiMap) {
           lines.push(filesBlock.projectAsciiMap.trim());
         }
 

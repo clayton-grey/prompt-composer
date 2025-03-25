@@ -11,8 +11,14 @@
  * - Tracking user-selected files from the file tree
  * - getFlattenedPrompt() for final prompt generation
  * - importComposition() to replace the current composition with imported data
- * - Now also fetches/attaches the project ASCII file map to the file block
- *   so that it's included at the start of the final prompt output.
+ *
+ * Changes for Step 17B:
+ *  - When creating or updating a new FilesBlock in addFileBlock() or setSingleFileBlock(),
+ *    we set `includeProjectMap: true` by default, so the user can uncheck it in the UI.
+ *
+ * Notes:
+ *  - We do not remove the actual file references or content. The user won't see them
+ *    in the FileBlockEditor, but they're still embedded in the final prompt.
  */
 
 import React, {
@@ -156,9 +162,14 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     });
   }, []);
 
+  /**
+   * addFileBlock: Creates a single file block if none exist, or logs a message if
+   * one already exists. (MVP approach from earlier steps.)
+   *
+   * For Step 17B, we default `includeProjectMap: true`.
+   */
   const addFileBlock = useCallback(
     (filePath: string, fileContent: string, language: string) => {
-      // If a files block already exists, we skip (assuming we only want one).
       const existingFileBlock = blocks.find((b) => b.type === 'files') as FilesBlock | undefined;
       if (existingFileBlock) {
         console.log(
@@ -171,7 +182,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
       const newBlock: FilesBlock = {
         id: uuidv4(),
         type: 'files',
-        label: `File Block: ${fileName}`,
+        label: 'File Block',
         files: [
           {
             path: filePath,
@@ -179,12 +190,12 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
             language
           }
         ],
-        projectAsciiMap: '' // We'll fill it below
+        projectAsciiMap: '',
+        includeProjectMap: true
       };
 
       setBlocks((prev) => [...prev, newBlock]);
 
-      // If we want the entire project map in this block, we can do so asynchronously:
       generateProjectAsciiMap('.')
         .then((mapStr) => {
           setBlocks((prevBlocks) => {
@@ -208,13 +219,11 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   );
 
   /**
-   * setSingleFileBlock: Overwrites or creates a single file block that includes all given file entries.
-   * Also fetches and attaches the ASCII file map to the block so that when
-   * we flatten the prompt, the ASCII map is included at the top.
+   * setSingleFileBlock: Overwrites or creates a file block that includes all given file entries.
+   * For Step 17B, we also default `includeProjectMap: true`.
    */
   const setSingleFileBlock = useCallback(
     (fileEntries: { path: string; content: string; language: string }[]) => {
-      // Build a new or updated file block
       setBlocks((prev) => {
         const existingBlockIndex = prev.findIndex((b) => b.type === 'files');
         if (existingBlockIndex === -1) {
@@ -228,10 +237,10 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
               content: f.content,
               language: f.language
             })),
-            projectAsciiMap: ''
+            projectAsciiMap: '',
+            includeProjectMap: true
           };
 
-          // We'll do an async update for projectAsciiMap
           generateProjectAsciiMap('.')
             .then((mapStr) => {
               setBlocks((prevBlocks) => {
@@ -257,24 +266,23 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
           const existingBlock = prev[existingBlockIndex] as FilesBlock;
           const updatedBlock: FilesBlock = {
             ...existingBlock,
+            label: 'File Block',
             files: fileEntries.map((f) => ({
               path: f.path,
               content: f.content,
               language: f.language
             })),
-            // We'll re-fetch the project map
-            projectAsciiMap: ''
+            projectAsciiMap: '',
+            includeProjectMap: true
           };
 
-          // Perform the async fetch
           generateProjectAsciiMap('.')
             .then((mapStr) => {
               setBlocks((prevBlocks) => {
                 return prevBlocks.map((b) => {
                   if (b.id === updatedBlock.id && b.type === 'files') {
-                    const fb = b as FilesBlock;
                     return {
-                      ...fb,
+                      ...updatedBlock,
                       projectAsciiMap: mapStr
                     };
                   }
@@ -286,7 +294,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
               console.error('[PromptContext] Failed to generate project ASCII map:', err);
             });
 
-          // Rebuild the block array
+          // Remove old file blocks, add updated one
           const filteredBlocks = prev.filter((b) => b.type !== 'files');
           return [...filteredBlocks, updatedBlock];
         }
@@ -296,7 +304,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   );
 
   /**
-   * Whenever blocks or model changes, recalc the token usage.
+   * Recalculate token usage whenever blocks or the model changes.
    */
   useEffect(() => {
     initEncoder(settings.model);
@@ -316,8 +324,9 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
           break;
         case 'files': {
           const fb = block as FilesBlock;
-          // If a file map is stored, we want to count it too
-          const mapText = fb.projectAsciiMap || '';
+          // If a file map is stored and we're including it, add that text to the count
+          const shouldIncludeMap = fb.includeProjectMap ?? true;
+          const mapText = shouldIncludeMap && fb.projectAsciiMap ? fb.projectAsciiMap : '';
           const filesConcatenated = fb.files.map((f) => f.content).join('\n');
           blockText = mapText + '\n' + filesConcatenated;
           break;
@@ -337,6 +346,9 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     });
   }, [blocks, settings.model]);
 
+  /**
+   * Update selectedFiles for manual token counting from the Sidebar tri-state logic.
+   */
   const updateSelectedFiles = useCallback((fileMap: Record<string, string>) => {
     setSelectedFiles(fileMap);
 
@@ -350,6 +362,9 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     setSelectedFilesTokenCount(total);
   }, []);
 
+  /**
+   * Convert the selectedFiles map into an array of file entries for potential block usage.
+   */
   const getSelectedFileEntries = useCallback(() => {
     return Object.entries(selectedFiles).map(([filePath, content]) => {
       const ext = filePath.split('.').pop() || 'txt';
@@ -362,8 +377,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   }, [selectedFiles]);
 
   /**
-   * Flattened prompt is generated by flattenBlocks. We now have the "projectAsciiMap"
-   * in any FilesBlock, which flattenBlocks will place at the start of the block.
+   * Returns the final flattened prompt string.
    */
   const getFlattenedPrompt = useCallback((): string => {
     return flattenBlocks(blocks);
@@ -378,7 +392,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   }, []);
 
   /**
-   * For older code that might send "add-file-block" messages from main:
+   * Handle "add-file-block" messages from the main process
    */
   useEffect(() => {
     function handleAddFileBlock(

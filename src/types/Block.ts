@@ -12,12 +12,16 @@
  *  - TextBlock: Simple text block
  *  - TemplateBlock: Text content with variable placeholders
  *  - FilesBlock: Embeds multiple files + optional project ASCII map
- *  - Block: Union type of all block variants
+ *
+ * Changes for Step 17B:
+ *  - Added `includeProjectMap?: boolean;` to FilesBlock interface
+ *    to let user toggle inclusion of the project map in the final output.
  *
  * @notes
- *  - We've added an optional `projectAsciiMap` to FilesBlock so we can
- *    include the entire project file map at the start of the block
- *    when flattening the prompt.
+ *  - We now rely on `includeProjectMap` to conditionally include `projectAsciiMap`
+ *    in the final flattened prompt (see flattenPrompt).
+ *  - "Do not need to include the raw text" in the UI means we won't show file contents
+ *    in the FileBlockEditor anymore; the data is still present for final output.
  */
 
 export interface BaseBlock {
@@ -71,13 +75,15 @@ export interface TemplateBlock extends BaseBlock {
 
 /**
  * Represents a block that includes one or more files, embedding their content.
- * We also optionally store a "projectAsciiMap" string so we can include an
- * ASCII representation of the entire project file structure at the start
- * of this block when flattening.
+ * Also optionally includes a project ASCII map if `includeProjectMap` is true.
  */
 export interface FilesBlock extends BaseBlock {
   type: 'files';
 
+  /**
+   * The file references. Even though we do not display raw text in the UI after Step 17B,
+   * the data is retained here for final prompt output.
+   */
   files: Array<{
     /**
      * The path to the file on disk.
@@ -90,8 +96,7 @@ export interface FilesBlock extends BaseBlock {
     content: string;
 
     /**
-     * The file's language or format (e.g., 'python', 'javascript').
-     * Mainly for syntax highlighting or referencing in the final output.
+     * The file's language or format (e.g. 'python', 'javascript').
      */
     language: string;
   }>;
@@ -109,6 +114,12 @@ export interface FilesBlock extends BaseBlock {
    * </file_map>
    */
   projectAsciiMap?: string;
+
+  /**
+   * Whether or not to include the ASCII file map in the final output.
+   * Defaults to true in the app logic, but the user can toggle off in the UI.
+   */
+  includeProjectMap?: boolean;
 }
 
 /**

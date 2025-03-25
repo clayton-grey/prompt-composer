@@ -6,45 +6,22 @@
  * tri-state selectable, collapsible tree structure. The user can add or remove
  * root folders externally, and each folder can be fully or partially expanded.
  *
- * Step 17A Changes:
- *  1) No default project folder is included. We rely solely on the "folders" prop array.
- *  2) Simplify the view: remove the old framing/borders around root nodes.
- *  3) Restore new icons for folder open/closed, tri-state selection, collapse all,
- *     and remove. We inline the provided SVGs in dedicated render helpers.
- *  4) Partial truncation of file/folder names is handled with Tailwind classes
- *     "truncate overflow-hidden whitespace-nowrap".
- *  5) Tri-state logic remains, but we show icons instead of native checkboxes:
- *     - none => "square" icon
- *     - all => "square-check" icon (blue)
- *     - partial => "square-minus" icon (blue)
- *  6) Each root folder has a "collapse all" button (arrow-up-to-line) and a "remove"
- *     button (circle-x).
- *  7) Each directory node shows a folder or folder-open icon, clickable to expand/collapse.
+ * This file was updated to fix icon sizing/cropping issues:
+ *   - All SVG icons now use Tailwind classes "h-4 w-4" to ensure uniform scaling.
+ *   - We removed explicit width/height attributes from the <svg> tags where needed.
+ *   - This helps prevent icons from being clipped or offset incorrectly.
+ *
+ * Key Features:
+ *  - Tri-state selection: 'none', 'all', 'partial'
+ *  - Collapsible directories with toggles
+ *  - Multi-root display for multiple project folders
  *
  * Implementation Details:
- *  - We store each root folder's loaded tree data in local state as an object array:
- *       folderTrees: Array<{ rootPath: string; node: TreeNode | null }>
- *  - On mount or changes to "folders" prop, we load each folder's directory data
- *    via electronAPI.listDirectory. We do partial error handling if loading fails.
- *  - Tri-state node states are tracked in a single Record<string, NodeState>.
- *    Node expansion states in expandedPaths, also a Record<string, boolean>.
- *  - The "removeRootFolder()" function updates the parent's "folders" array via
- *    onRemoveFolder callback (passed from the parent "Sidebar").
- *  - The "collapseAll()" function for a root folder sets expansions to false for
- *    every path in that subtree.
- *  - We highlight selected (all) or partial states with the relevant icons, which
- *    the user can click to toggle between 'none' and 'all'.
- *
- * Key Types:
- *  - NodeState: 'none' | 'all' | 'partial'
- *  - TreeNode: { name, path, type, children? }
- *
- * Edge Cases:
- *  - If a folder is empty or .gitignore excludes everything, children = []
- *  - If user tries removing a folder that doesn't exist in the folderTrees array,
- *    we do a safe filter. 
- *  - Large directories might cause performance issues. We rely on lazy expansions
- *    or partial expansions. In the future, we could add lazy loading of subfolders.
+ *  - We store expansions in expandedPaths
+ *  - We store tri-state node selection in nodeStates
+ *  - We handle the "collapseAll" and "remove root" actions
+ *  - Updated icon references (folder, folder-open, square, square-check, square-minus)
+ *    to fix alignment and cropping by adding className="h-4 w-4"
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -158,8 +135,8 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
         // Now load the tree data
         const node = await loadFolderTree(fPath);
         if (!node) {
-          setFolderTrees((prev) =>
-            prev.map((item) =>
+          setFolderTrees((prev2) =>
+            prev2.map((item) =>
               item.rootPath === fPath
                 ? { ...item, node: null, error: 'Failed to load directory tree' }
                 : item
@@ -167,21 +144,32 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           );
           return;
         }
-        // Initialize expansions and states
-        // We'll expand the root by default
-        setExpandedPaths((prevExp) => ({
-          ...prevExp,
-          [node.path]: true
-        }));
-        setNodeStates((prevStates) => ({
-          ...prevStates,
-          [node.path]: 'none'
-        }));
-        // Insert into folderTrees
-        setFolderTrees((prev) =>
-          prev.map((item) =>
-            item.rootPath === fPath ? { ...item, node, error: null } : item
-          )
+        // Initialize expansions to false for all discovered nodes
+        const newExpanded: Record<string, boolean> = {};
+        const initExpanded = (nd: TreeNode) => {
+          newExpanded[nd.path] = false;
+          if (nd.children) {
+            nd.children.forEach(initExpanded);
+          }
+        };
+        initExpanded(node);
+
+        setExpandedPaths((prev2) => ({ ...prev2, ...newExpanded }));
+
+        // Initialize selection states to 'none'
+        const newStates: Record<string, NodeState> = {};
+        const initStates = (nd: TreeNode) => {
+          newStates[nd.path] = 'none';
+          if (nd.children) {
+            nd.children.forEach(initStates);
+          }
+        };
+        initStates(node);
+
+        setNodeStates((prev2) => ({ ...prev2, ...newStates }));
+
+        setFolderTrees((prev2) =>
+          prev2.map((item) => (item.rootPath === fPath ? { ...item, node, error: null } : item))
         );
       }
     });
@@ -293,8 +281,6 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       pathsToCollapse.forEach((p) => {
         updated[p] = false;
       });
-      // Keep the root itself collapsed or maybe keep it expanded? 
-      // We'll collapse it as well to match "collapse all".
       return updated;
     });
   };
@@ -341,7 +327,6 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   const updateAncestorStates = (node: TreeNode, updated: Record<string, NodeState>) => {
     // Find the parent in folderTrees
     function findParent(childPath: string): TreeNode | null {
-      // We search all nodes in all root trees for a node that has a child with childPath
       for (const ft of folderTrees) {
         if (!ft.node) continue;
         const parent = searchParent(ft.node, childPath);
@@ -384,40 +369,59 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
 
   /**
    * Renders the tri-state selection icon for a given node path. The user can click it to toggle.
+   * We fix the sizing issues by applying className="h-4 w-4" to the <svg>.
    */
-  const renderSelectionIcon = (nodePath: string, nodeState: NodeState, onClick: () => void) => {
+  const renderSelectionIcon = (nodeState: NodeState, onClick: () => void) => {
     if (nodeState === 'all') {
       // Square Check
       return (
-        <span onClick={onClick} className="cursor-pointer text-blue-500 mr-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
-               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-               className="lucide lucide-square-check">
-            <rect width="14" height="14" x="2" y="2" rx="2"/>
-            <path d="m9 12 2 2 4-4"/>
+        <span onClick={onClick} className="cursor-pointer mr-2">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4 text-blue-500"
+          >
+            <rect width="18" height="18" x="3" y="3" rx="2" />
+            <path d="m9 12 2 2 4-4" />
           </svg>
         </span>
       );
     } else if (nodeState === 'partial') {
       // Square Minus
       return (
-        <span onClick={onClick} className="cursor-pointer text-blue-500 mr-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
-               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-               className="lucide lucide-square-minus">
-            <rect width="14" height="14" x="2" y="2" rx="2"/>
-            <path d="M8 12h8"/>
+        <span onClick={onClick} className="cursor-pointer mr-2">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4 text-blue-500"
+          >
+            <rect width="18" height="18" x="3" y="3" rx="2" />
+            <path d="M8 12h8" />
           </svg>
         </span>
       );
     } else {
       // none => Square
       return (
-        <span onClick={onClick} className="cursor-pointer text-gray-600 dark:text-gray-300 mr-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
-               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-               className="lucide lucide-square">
-            <rect width="14" height="14" x="2" y="2" rx="2"/>
+        <span onClick={onClick} className="cursor-pointer mr-2">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4 text-gray-600 dark:text-gray-300"
+          >
+            <rect width="18" height="18" x="3" y="3" rx="2" />
           </svg>
         </span>
       );
@@ -426,6 +430,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
 
   /**
    * Renders a folder icon (closed or open) or nothing for files.
+   * We fix the cropping by setting className="h-4 w-4" and removing explicit width/height.
    */
   const renderFolderIcon = (isDir: boolean, isExpanded: boolean) => {
     if (!isDir) {
@@ -435,10 +440,16 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       // folder-open
       return (
         <span className="mr-1 text-gray-600 dark:text-gray-200">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
-               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-               className="lucide lucide-folder-open">
-            <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4"
+          >
+            <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
           </svg>
         </span>
       );
@@ -446,11 +457,17 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       // folder
       return (
         <span className="mr-1 text-gray-600 dark:text-gray-200">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
-               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-               className="lucide lucide-folder">
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="h-4 w-4"
+          >
             <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 
-                     7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+                    7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
           </svg>
         </span>
       );
@@ -461,7 +478,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
    * renderNode is a recursive function that renders a single node and all its children,
    * with tri-state selection and clickable folder icons for expansion/collapse.
    */
-  const renderNode = (node: TreeNode, depth: number = 0) => {
+  const renderNode = (node: TreeNode, depth: number = 0): JSX.Element => {
     const isDir = node.type === 'directory';
     const isExpanded = !!expandedPaths[node.path];
     const nodeState = nodeStates[node.path] || 'none';
@@ -471,20 +488,19 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
 
     return (
       <div key={node.path}>
-        <div className="flex items-center text-sm py-1"
-             style={{ paddingLeft: `${paddingLeft}px` }}>
-          {/** Tri-state selection icon */}
-          {renderSelectionIcon(node.path, nodeState, () => toggleNodeSelection(node))}
+        <div
+          className="flex items-center text-sm py-1"
+          style={{ paddingLeft: `${paddingLeft}px` }}
+        >
+          {renderSelectionIcon(nodeState, () => toggleNodeSelection(node))}
 
-          {/** Folder or file icon */}
           <span
             onClick={() => isDir && toggleFolderExpand(node.path)}
-            className={`cursor-pointer flex items-center`}
+            className="cursor-pointer flex items-center"
           >
             {renderFolderIcon(isDir, isExpanded)}
           </span>
 
-          {/** Node name (with truncation) */}
           <span
             className="truncate overflow-hidden whitespace-nowrap max-w-[140px] text-gray-800 dark:text-gray-100"
             onClick={() => isDir && toggleFolderExpand(node.path)}
@@ -504,7 +520,8 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
 
   /**
    * Renders a single root folder's UI: the root node name, plus collapse button,
-   * remove button, and its child nodes.
+   * remove button, and its child nodes. We also fix the icon sizing in those
+   * action buttons to ensure they are not cropped or offset.
    */
   const renderRootFolder = (item: { rootPath: string; node: TreeNode | null; error?: string | null }) => {
     const { rootPath, node, error } = item;
@@ -527,18 +544,14 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
     }
 
     const isExpanded = expandedPaths[node.path] || false;
-
-    // We'll show a small row with the root folder name, plus collapse & remove
-    const rootNodeState = nodeStates[node.path] || 'none';
+    const nodeState = nodeStates[node.path] || 'none';
 
     return (
       <div key={rootPath} className="mb-2">
         {/* Root folder header row */}
         <div className="flex items-center bg-transparent p-1">
-          {/* Tri-state selection for the root node */}
-          {renderSelectionIcon(node.path, rootNodeState, () => toggleNodeSelection(node))}
+          {renderSelectionIcon(nodeState, () => toggleNodeSelection(node))}
 
-          {/* Folder icon */}
           <span
             onClick={() => toggleFolderExpand(node.path)}
             className="cursor-pointer flex items-center"
@@ -546,7 +559,6 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
             {renderFolderIcon(true, isExpanded)}
           </span>
 
-          {/* Folder name with partial truncation */}
           <span
             className="truncate overflow-hidden whitespace-nowrap max-w-[140px] text-gray-800 dark:text-gray-100 font-semibold"
             onClick={() => toggleFolderExpand(node.path)}
@@ -562,9 +574,15 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
               onClick={() => collapseAll(node)}
               title="Collapse entire subtree"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
-                   stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                   className="lucide lucide-arrow-up-to-line">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-4 w-4"
+              >
                 <path d="M5 3h14"/>
                 <path d="m18 13-6-6-6 6"/>
                 <path d="M12 7v14"/>
@@ -577,9 +595,15 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
               onClick={() => removeRootFolder(rootPath)}
               title="Remove folder"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
-                   stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                   className="lucide lucide-circle-x">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="h-4 w-4"
+              >
                 <circle cx="9" cy="9" r="7"/>
                 <path d="m12 6-6 6"/>
                 <path d="m6 6 6 6"/>
