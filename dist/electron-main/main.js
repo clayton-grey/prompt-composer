@@ -51,6 +51,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
 const path_1 = __importDefault(require("path"));
 const process = __importStar(require("process"));
+const ipcHandlers_1 = require("./ipcHandlers");
 let mainWindow = null;
 /**
  * Creates the main application window with specified settings.
@@ -76,7 +77,7 @@ function createWindow() {
     }
     else {
         // In production, load from the Vite-built dist directory
-        const indexHtmlPath = path_1.default.join(__dirname, '..', '..', 'dist', 'index.html');
+        const indexHtmlPath = path_1.default.join(__dirname, '..', 'index.html');
         console.log('Loading production file from:', indexHtmlPath);
         mainWindow.loadFile(indexHtmlPath).catch(err => {
             console.error('Failed to load index.html:', err);
@@ -89,7 +90,10 @@ function createWindow() {
 }
 // Electron `ready` event listener
 electron_1.app.whenReady().then(() => {
+    // Initialize the main window
     createWindow();
+    // Register all IPC handlers for file ops
+    (0, ipcHandlers_1.registerIpcHandlers)();
     // On macOS, it's common to recreate a window when the doc icon is clicked
     // and there are no other windows open.
     electron_1.app.on('activate', () => {

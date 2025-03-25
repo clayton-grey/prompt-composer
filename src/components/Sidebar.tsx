@@ -1,36 +1,29 @@
+
 /**
  * @file Sidebar.tsx
  * @description
- * A sidebar component for displaying the project file tree or other navigation.
- * In future steps, it will show folders/files and respect .gitignore. Currently,
- * it's just a placeholder for layout demonstration.
+ * The main sidebar component for displaying the project's file tree. In this step,
+ * we integrate FileTree.tsx, which calls "listDirectory" via IPC and renders a
+ * nested folder/file structure respecting .gitignore.
  *
  * Key Responsibilities:
- *  - Provide a collapsible or fixed area where files can be shown
- *  - Serve as a site-wide navigation if needed
+ *  - Provide a container/wrapper for FileTree
+ *  - Potentially provide additional controls or filters in future steps
  *
  * @notes
- *  - In Step 4, we only focus on layout. File listing logic will come later.
+ *  - For now, we simply render <FileTree rootPath="." /> to list from project root
+ *  - Additional filtering or searching can be added as needed
  */
 
 import React from 'react';
+import FileTree from './Sidebar/FileTree';
 
 const Sidebar: React.FC = () => {
   return (
     <aside className="bg-gray-200 dark:bg-gray-700 w-64 p-2 overflow-y-auto">
       <div className="text-gray-900 dark:text-gray-50 font-medium">
-        <p className="mb-2">Project Sidebar</p>
-        <ul className="space-y-1">
-          <li className="text-sm">
-            {/* Placeholder items - Real file tree will be implemented later */}
-            <span className="block px-2 py-1 rounded hover:bg-gray-300 dark:hover:bg-gray-600 cursor-pointer">
-              File/Folder 1
-            </span>
-            <span className="block px-2 py-1 rounded hover:bg-gray-300 dark:hover:bg-gray-600 cursor-pointer">
-              File/Folder 2
-            </span>
-          </li>
-        </ul>
+        <p className="mb-2">Project Files</p>
+        <FileTree rootPath="." />
       </div>
     </aside>
   );

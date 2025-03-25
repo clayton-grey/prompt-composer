@@ -24,6 +24,7 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import * as process from 'process';
+import { registerIpcHandlers } from './ipcHandlers';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -51,7 +52,7 @@ function createWindow(): void {
     mainWindow.webContents.openDevTools();
   } else {
     // In production, load from the Vite-built dist directory
-    const indexHtmlPath = path.join(__dirname, '..', '..', 'dist', 'index.html');
+    const indexHtmlPath = path.join(__dirname, '..', 'index.html');
     console.log('Loading production file from:', indexHtmlPath);
     mainWindow.loadFile(indexHtmlPath).catch(err => {
       console.error('Failed to load index.html:', err);
@@ -66,7 +67,11 @@ function createWindow(): void {
 
 // Electron `ready` event listener
 app.whenReady().then(() => {
+  // Initialize the main window
   createWindow();
+
+  // Register all IPC handlers for file ops
+  registerIpcHandlers();
 
   // On macOS, it's common to recreate a window when the doc icon is clicked
   // and there are no other windows open.
