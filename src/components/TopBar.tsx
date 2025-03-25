@@ -5,23 +5,28 @@
  * A simple top bar for the Prompt Composer that includes:
  *  - Copy Prompt button
  *  - Export XML button
- *  - Import XML button (added in Step 15)
+ *  - Import XML button
+ *  - NEW: Theme toggle button (light/dark) using ThemeContext
  *
  * Implementation:
  *  1) handleCopy: copies the flattened prompt to clipboard
  *  2) handleExportXML: calls exportToXML, then electronAPI.exportXml
  *  3) handleImportXML: calls electronAPI.openXml, parse with importFromXML, updates context
+ *  4) toggleDarkMode: flips the darkMode boolean from ThemeContext
  *
  * @notes
- *  - We rely on the PromptContext to provide getFlattenedPrompt, blocks, settings, importComposition, etc.
+ *  - The theme toggle is a simple button that calls toggleDarkMode.
+ *  - The label changes based on current mode for user clarity.
  */
 
 import React from 'react';
 import { usePrompt } from '../context/PromptContext';
 import { exportToXML, importFromXML } from '../utils/xmlParser';
+import { useTheme } from '../context/ThemeContext';
 
 const TopBar: React.FC = () => {
   const { getFlattenedPrompt, blocks, settings, importComposition } = usePrompt();
+  const { darkMode, toggleDarkMode } = useTheme();
 
   const handleCopy = async () => {
     try {
@@ -88,6 +93,13 @@ const TopBar: React.FC = () => {
     }
   };
 
+  /**
+   * Toggles the dark/light theme by flipping darkMode
+   */
+  const handleThemeToggle = () => {
+    toggleDarkMode();
+  };
+
   return (
     <header className="w-full h-14 bg-white dark:bg-gray-800 flex items-center px-4 shadow">
       <h1 className="text-xl font-semibold text-gray-800 dark:text-gray-100">
@@ -110,12 +122,20 @@ const TopBar: React.FC = () => {
           Export XML
         </button>
 
-        {/* Import XML Button (Step 15) */}
+        {/* Import XML Button */}
         <button
           onClick={handleImportXML}
           className="px-3 py-1 text-sm rounded bg-yellow-500 hover:bg-yellow-600 text-black"
         >
           Import XML
+        </button>
+
+        {/* Dark/Light Mode Toggle */}
+        <button
+          onClick={handleThemeToggle}
+          className="px-3 py-1 text-sm rounded bg-gray-500 hover:bg-gray-600 text-white"
+        >
+          {darkMode ? 'Light Mode' : 'Dark Mode'}
         </button>
       </div>
     </header>
