@@ -1,30 +1,26 @@
+
 /**
  * @file MainContent.tsx
  * @description
- * The main content area of Prompt Composer. For now, it's just a placeholder
- * demonstrating layout. In future steps, we'll integrate the Prompt Builder
- * components (Block Editors, etc.) here.
+ * The main content area of Prompt Composer. In Step 6, we update this file to
+ * include the actual PromptBuilder interface rather than a placeholder.
  *
  * Key Responsibilities:
- *  - Provide space where prompt blocks, text editors, and file block previews
- *    will appear
+ *  - Render the PromptBuilder component (the block-based UI)
+ *  - Provide a scrolling area for the prompt editing workflow
  *
  * @notes
- *  - Step 4 focuses on layout only; the real functionality will follow in
- *    subsequent steps.
+ *  - We remove the previous placeholder text. Now it hosts the real builder.
+ *  - The PromptBuilder handles the core logic for adding blocks.
  */
 
 import React from 'react';
+import PromptBuilder from './PromptBuilder/PromptBuilder';
 
 const MainContent: React.FC = () => {
   return (
     <main className="flex-grow bg-gray-100 dark:bg-gray-800 p-4 overflow-auto">
-      <div className="text-gray-800 dark:text-gray-100">
-        <h2 className="text-lg font-semibold mb-2">Main Content Area</h2>
-        <p className="text-sm">
-          This is where prompt blocks and editing interfaces will go.
-        </p>
-      </div>
+      <PromptBuilder />
     </main>
   );
 };
