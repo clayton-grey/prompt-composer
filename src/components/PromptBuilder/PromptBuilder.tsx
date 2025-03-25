@@ -11,56 +11,68 @@
  *  - Show the current blocks with reorder/delete (BlockList)
  *
  * @notes
- *  - This file uses the PromptContext for block data (addBlock).
- *  - We rely on "uuid" for unique block IDs.
- *  - If you do not see new blocks, verify the console logs and that
- *    the "uuid" library is installed.
+ *  - We have removed the electron showOpenDialog usage per the user's request.
+ *    The "Add File Block" button now logs a message or does a placeholder.
  */
 
 import React from 'react';
-import { v4 as uuidv4 } from 'uuid'; // Ensure uuid is installed: npm install uuid
-import { usePrompt } from '../../context/PromptContext';
 import { Block } from '../../types/Block';
 import BlockList from './BlockList';
+import { usePrompt } from '../../context/PromptContext';
 
-const PromptBuilder: React.FC = () => {
+export const PromptBuilder: React.FC = () => {
   const { addBlock } = usePrompt();
 
-  /**
-   * Creates a new text block with placeholder content.
-   * We log to the console for debugging. If you do not see logs,
-   * ensure that the dev console is open and no errors block execution.
-   */
-  const handleAddBlock = () => {
+  const handleAddTextBlock = () => {
     const newBlock: Block = {
-      id: uuidv4(),
+      id: Date.now().toString(),
       type: 'text',
       label: 'New Text Block',
-      content: 'Your text goes here...'
-    } as Block;
-
-    console.log('[PromptBuilder] Adding new block:', newBlock);
+      content: ''
+    };
     addBlock(newBlock);
   };
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
-          Prompt Builder
-        </h2>
-        <button
-          onClick={handleAddBlock}
-          className="bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded text-sm"
-        >
-          + Add Text Block
-        </button>
-      </div>
+  /**
+   * handleAddFileBlock:
+   * We removed any code referencing the electronAPI.showOpenDialog.
+   * If user wants to add file logic, they'd do it some other way.
+   */
+  const handleAddFileBlock = () => {
+    console.log('[PromptBuilder] handleAddFileBlock called. The "openDialog" logic is removed.');
+    // If needed, we can do some default file block or a manual path prompt
+    // For now, we just add a placeholder block or do nothing.
+    /*
+    const newFileBlock: Block = {
+      id: Date.now().toString(),
+      type: 'files',
+      label: 'Placeholder File Block',
+      files: []
+    };
+    addBlock(newFileBlock);
+    */
+  };
 
-      {/* The list of blocks, with reorder & delete */}
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex justify-between items-center p-4 border-b">
+        <h2 className="text-lg font-semibold">Prompt Builder</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={handleAddTextBlock}
+            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+          >
+            Add Text Block
+          </button>
+          <button
+            onClick={handleAddFileBlock}
+            className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+          >
+            Add File Block
+          </button>
+        </div>
+      </div>
       <BlockList />
     </div>
   );
 };
-
-export default PromptBuilder;

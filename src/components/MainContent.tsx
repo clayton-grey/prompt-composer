@@ -1,4 +1,3 @@
-
 /**
  * @file MainContent.tsx
  * @description
@@ -15,7 +14,7 @@
  */
 
 import React from 'react';
-import PromptBuilder from './PromptBuilder/PromptBuilder';
+import { PromptBuilder } from './PromptBuilder/PromptBuilder';
 
 const MainContent: React.FC = () => {
   return (

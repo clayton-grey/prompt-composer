@@ -1,19 +1,27 @@
+
 {
   "compilerOptions": {
+    // Output ES2020 code using CommonJS modules
     "target": "ES2020",
     "module": "CommonJS",
     "moduleResolution": "Node",
+    
+    // Strictness & interop
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
+
+    // We do not want double subfolders in dist/electron-main
+    // So let's ensure rootDir & outDir are correct:
+    // The "rootDir" should be the electron-main folder itself,
+    // so that .ts -> .js files go directly in dist/electron-main.
+    "rootDir": "./electron-main",
     "outDir": "./dist/electron-main",
-    "baseUrl": ".",
-    "paths": {
-      "*": ["node_modules/*"]
-    },
-    "sourceMap": true
+
+    // Turn off source maps or leave them on
+    "sourceMap": false
   },
   "include": ["electron-main/**/*"],
   "exclude": ["node_modules", "dist"]
-} 
+}

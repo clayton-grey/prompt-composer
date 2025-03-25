@@ -17,6 +17,10 @@
  *      children: Array<{ name, path, type, children? }>
  *    }
  *
+ * IPC Handler: "read-file"
+ *  - Input: filePath (absolute path)
+ *  - Returns: string (file content)
+ *
  * @dependencies
  *  - electron (ipcMain)
  *  - fs, path (Node.js)
@@ -65,7 +69,6 @@ function readDirectoryRecursive(
 ): TreeNode[] {
   let results: TreeNode[] = [];
 
-  // Read the directory contents
   let dirEntries: string[];
   try {
     dirEntries = fs.readdirSync(dirPath);
@@ -91,7 +94,6 @@ function readDirectoryRecursive(
       continue;
     }
 
-    // Attempt to stat the path
     let stats: fs.Stats;
     try {
       stats = fs.statSync(fullPath);
@@ -99,7 +101,6 @@ function readDirectoryRecursive(
       continue; // skip if can't stat
     }
 
-    // Directory?
     if (stats.isDirectory()) {
       results.push({
         name: entry,
@@ -108,7 +109,6 @@ function readDirectoryRecursive(
         children: readDirectoryRecursive(fullPath, ig)
       });
     } else {
-      // It's a file - check extension
       const ext = path.extname(entry).toLowerCase();
       if (ALLOWED_EXTENSIONS.includes(ext)) {
         results.push({
@@ -127,16 +127,15 @@ function readDirectoryRecursive(
  * Registers all IPC handlers needed for file system operations.
  * Currently:
  *   "list-directory": returns { absolutePath, baseName, children } for the given dirPath
+ *   "read-file": returns the content of a file as a string
  */
 export function registerIpcHandlers(): void {
   ipcMain.handle('list-directory', async (_event, dirPath: string) => {
-    // Convert the dirPath to an absolute path
     let targetPath = dirPath;
     if (!path.isAbsolute(dirPath)) {
       targetPath = path.join(process.cwd(), dirPath);
     }
 
-    // Prepare .gitignore
     const gitignorePath = path.join(process.cwd(), '.gitignore');
     let ig = ignore();
     if (fs.existsSync(gitignorePath)) {
@@ -144,16 +143,27 @@ export function registerIpcHandlers(): void {
       ig = ig.add(gitignoreContent.split('\n'));
     }
 
-    // Recursively read the directory
     const tree = readDirectoryRecursive(targetPath, ig);
-
-    // Return the absolute path and baseName so the front-end won't need Node 'path'
     const baseName = path.basename(targetPath);
 
     return {
       absolutePath: targetPath,
-      baseName: baseName,
+      baseName,
       children: tree
     };
   });
+
+  ipcMain.handle('read-file', async (_event, filePath: string) => {
+    try {
+      console.log('[read-file] Reading file:', filePath);
+      const content = fs.readFileSync(filePath, 'utf-8');
+      console.log('[read-file] Content length:', content.length);
+      return content;
+    } catch (err) {
+      console.error('[read-file] Failed to read file:', filePath, err);
+      throw err;
+    }
+  });
+
+  // The "show-open-dialog" handler is removed per user request (outside the spec).
 }

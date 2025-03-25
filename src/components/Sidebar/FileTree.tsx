@@ -56,6 +56,8 @@ declare global {
   interface Window {
     electronAPI: {
       listDirectory: (path: string) => Promise<ListDirectoryResult>;
+      readFile: (path: string) => Promise<string>;
+      sendMessage: (message: string, data: any) => void;
     };
   }
 }
@@ -245,6 +247,29 @@ const FileTree: React.FC<FileTreeProps> = ({ rootPath = '.' }) => {
    * Handles user clicking a checkbox. We toggle all->none or none->all (partial->all).
    */
   function handleCheckboxChange(node: TreeNode) {
+    if (node.type === 'file') {
+      // For files, read the content and add it to the prompt
+      window.electronAPI.readFile(node.path)
+        .then((content: string) => {
+          console.log('[FileTree] Read file content:', {
+            path: node.path,
+            contentLength: content.length
+          });
+          // Get the language based on file extension
+          const ext = node.path.split('.').pop()?.toLowerCase() || '';
+          const language = ext;
+          // Add the file block to the prompt
+          window.electronAPI.sendMessage('add-file-block', {
+            path: node.path,
+            content,
+            language
+          });
+        })
+        .catch((err) => {
+          console.error('[FileTree] Failed to read file:', node.path, err);
+        });
+    }
+
     setNodeStates((prev) => {
       const updated = { ...prev };
       const currentState = updated[node.path];

@@ -40,6 +40,7 @@ const electron_1 = require("electron");
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const ignore_1 = __importDefault(require("ignore"));
+const electron_2 = require("electron");
 /**
  * Allowed file extensions for text-based files.
  * We can expand this list if needed.
@@ -57,6 +58,7 @@ const ALLOWED_EXTENSIONS = [
  */
 function readDirectoryRecursive(dirPath, ig) {
     let results = [];
+    // Read the directory contents
     let dirEntries;
     try {
         dirEntries = fs_1.default.readdirSync(dirPath);
@@ -78,6 +80,7 @@ function readDirectoryRecursive(dirPath, ig) {
         if (ig.ignores(relPath)) {
             continue;
         }
+        // Attempt to stat the path
         let stats;
         try {
             stats = fs_1.default.statSync(fullPath);
@@ -85,6 +88,7 @@ function readDirectoryRecursive(dirPath, ig) {
         catch {
             continue; // skip if can't stat
         }
+        // Directory?
         if (stats.isDirectory()) {
             results.push({
                 name: entry,
@@ -94,6 +98,7 @@ function readDirectoryRecursive(dirPath, ig) {
             });
         }
         else {
+            // It's a file - check extension
             const ext = path_1.default.extname(entry).toLowerCase();
             if (ALLOWED_EXTENSIONS.includes(ext)) {
                 results.push({
@@ -114,21 +119,25 @@ function readDirectoryRecursive(dirPath, ig) {
  */
 function registerIpcHandlers() {
     electron_1.ipcMain.handle('list-directory', async (_event, dirPath) => {
+        // Convert the dirPath to an absolute path
         let targetPath = dirPath;
         if (!path_1.default.isAbsolute(dirPath)) {
             targetPath = path_1.default.join(process.cwd(), dirPath);
         }
+        // Prepare .gitignore
         const gitignorePath = path_1.default.join(process.cwd(), '.gitignore');
         let ig = (0, ignore_1.default)();
         if (fs_1.default.existsSync(gitignorePath)) {
             const gitignoreContent = fs_1.default.readFileSync(gitignorePath, 'utf-8');
             ig = ig.add(gitignoreContent.split('\n'));
         }
+        // Recursively read the directory
         const tree = readDirectoryRecursive(targetPath, ig);
+        // Return the absolute path and baseName so the front-end won't need Node 'path'
         const baseName = path_1.default.basename(targetPath);
         return {
             absolutePath: targetPath,
-            baseName,
+            baseName: baseName,
             children: tree
         };
     });
@@ -144,6 +153,17 @@ function registerIpcHandlers() {
             throw err;
         }
     });
-    // The "show-open-dialog" handler is removed per user request (outside the spec).
+    // Show a file picker dialog
+    electron_1.ipcMain.handle('show-open-dialog', async (_event, options) => {
+        try {
+            const result = await electron_2.dialog.showOpenDialog(options);
+            console.log('[ipcHandlers] File dialog result:', result);
+            return result;
+        }
+        catch (error) {
+            console.error('[ipcHandlers] Failed to show file dialog:', error);
+            throw error;
+        }
+    });
 }
 exports.registerIpcHandlers = registerIpcHandlers;
