@@ -4,15 +4,13 @@
  * @description
  * A simple top bar for the Prompt Composer that includes:
  *  - Copy Prompt button
- *  - Export XML button
- *  - Import XML button
- *  - Theme toggle (light/dark)
+ *  - Export XML
+ *  - Import XML
+ *  - Theme toggle
  *
- * Implementation:
- *  1) handleCopy: copies the flattened prompt to clipboard
- *  2) handleExportXML: serializes the entire composition to XML and saves via electron
- *  3) handleImportXML: now calls importAndValidateFromXML to skip invalid file references
- *  4) handleThemeToggle: flips darkMode
+ * Key change for Step 5:
+ *  - The "handleCopy" function must now await the async `getFlattenedPrompt()`
+ *    because flattening can involve reading from .prompt-composer folder.
  */
 
 import React from 'react';
@@ -25,11 +23,12 @@ const TopBar: React.FC = () => {
   const { darkMode, toggleDarkMode } = useTheme();
 
   /**
-   * Copies the flattened prompt to clipboard
+   * Copies the flattened prompt (async) to clipboard.
    */
   const handleCopy = async () => {
     try {
-      const promptString = getFlattenedPrompt();
+      // Now we have to await it because it could fetch files from .prompt-composer
+      const promptString = await getFlattenedPrompt();
       await navigator.clipboard.writeText(promptString);
       console.log('[TopBar] Prompt copied to clipboard!');
     } catch (err) {
@@ -38,7 +37,7 @@ const TopBar: React.FC = () => {
   };
 
   /**
-   * Exports the entire composition (blocks, settings) to an XML file.
+   * Exports the entire composition to an XML file.
    */
   const handleExportXML = async () => {
     try {
@@ -69,8 +68,7 @@ const TopBar: React.FC = () => {
   };
 
   /**
-   * Imports a composition from an XML file, using importAndValidateFromXML to 
-   * skip missing/invalid file references. Then updates the context.
+   * Imports a composition from an XML file (with validation).
    */
   const handleImportXML = async () => {
     try {
@@ -79,8 +77,6 @@ const TopBar: React.FC = () => {
         console.log('[TopBar] No XML content returned (user canceled or error).');
         return;
       }
-
-      // parse the XML with validation
       const data = await importAndValidateFromXML(content);
       importComposition(data.blocks, data.settings);
 
@@ -101,6 +97,7 @@ const TopBar: React.FC = () => {
       </h1>
 
       <div className="ml-auto flex items-center gap-3">
+        {/* Copy Prompt (async) */}
         <button
           onClick={handleCopy}
           className="px-3 py-1 text-sm rounded bg-blue-500 hover:bg-blue-600 text-white"

@@ -2,17 +2,20 @@
 /**
  * @file preload.ts
  * @description
- * Runs in the Electron main process before the renderer loads.
- * We define window.electronAPI with relevant methods (listDirectory, readFile, exportXml, openXml, etc.).
+ * Runs in the Electron preload script context. We define window.electronAPI with relevant
+ * methods. We have now added `readPromptComposerFile` to support reading templates from
+ * the `.prompt-composer` folder in the user’s project.
+ *
+ * Note: Because this is the 'preload' script, it must not rely on Node integration. Instead,
+ * we communicate with the main process via IPC calls (`ipcRenderer.invoke`, etc.).
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
-console.log('[Preload] This is the UPDATED preload.ts code! removeChannelListener is defined.');
-/**
- * Exposes a set of APIs to the renderer via contextBridge.
- * We add a new "openXml" method for the "import-xml" flow.
- */
+console.log('[Preload] Preload script initialized. Exposing electronAPI...');
 electron_1.contextBridge.exposeInMainWorld('electronAPI', {
+    /**
+     * Basic message sending
+     */
     sendMessage: (channel, data) => {
         electron_1.ipcRenderer.send(channel, data);
     },
@@ -53,5 +56,18 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
      */
     createFolder: (args) => {
         return electron_1.ipcRenderer.invoke('create-folder', args);
+    },
+    /**
+     * Verify file existence on disk
+     */
+    verifyFileExistence: (filePath) => {
+        return electron_1.ipcRenderer.invoke('verify-file-existence', filePath);
+    },
+    /**
+     * Reads a file from the .prompt-composer folder.
+     * If the file does not exist, returns null.
+     */
+    readPromptComposerFile: async (relativeFilename) => {
+        return electron_1.ipcRenderer.invoke('read-prompt-composer-file', relativeFilename);
     }
 });

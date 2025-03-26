@@ -257,8 +257,31 @@ function registerIpcHandlers() {
     electron_1.ipcMain.handle('read-prompt-composer-file', async (_event, relativeFilename) => {
         try {
             const projectRoot = process.cwd();
+            console.log(`[read-prompt-composer-file] Project root: ${projectRoot}`);
             const promptComposerFolder = path_1.default.join(projectRoot, '.prompt-composer');
+            console.log(`[read-prompt-composer-file] Looking in folder: ${promptComposerFolder}`);
+            // Check if the .prompt-composer directory exists
+            try {
+                const folderStats = await fs_1.default.promises.stat(promptComposerFolder);
+                if (!folderStats.isDirectory()) {
+                    console.error(`[read-prompt-composer-file] .prompt-composer is not a directory at: ${promptComposerFolder}`);
+                    return null;
+                }
+            }
+            catch (folderErr) {
+                console.error(`[read-prompt-composer-file] .prompt-composer directory not found at: ${promptComposerFolder}`, folderErr);
+                return null;
+            }
+            // Log directory contents for debugging
+            try {
+                const files = await fs_1.default.promises.readdir(promptComposerFolder);
+                console.log(`[read-prompt-composer-file] Files in .prompt-composer: ${files.join(', ')}`);
+            }
+            catch (readErr) {
+                console.error(`[read-prompt-composer-file] Failed to read directory contents: ${promptComposerFolder}`, readErr);
+            }
             const targetPath = path_1.default.join(promptComposerFolder, relativeFilename);
+            console.log(`[read-prompt-composer-file] Looking for file: ${targetPath}`);
             // Check if file exists
             const stats = await fs_1.default.promises.stat(targetPath);
             if (!stats.isFile()) {
@@ -268,11 +291,12 @@ function registerIpcHandlers() {
             }
             // If it is a file, read and return content
             const content = await fs_1.default.promises.readFile(targetPath, 'utf-8');
+            console.log(`[read-prompt-composer-file] Successfully read file: ${relativeFilename} (${content.length} bytes)`);
             return content;
         }
         catch (err) {
             // If anything fails, we return null
-            console.warn('[read-prompt-composer-file] Could not read file:', relativeFilename, err);
+            console.warn(`[read-prompt-composer-file] Could not read file: ${relativeFilename}`, err);
             return null;
         }
     });

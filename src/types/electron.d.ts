@@ -2,9 +2,12 @@
 /**
  * @file electron.d.ts
  * @description
- * Type definitions for the electron API that is exposed to the renderer process
- * via the preload script. We update this file to include verifyFileExistence 
- * for XML import validation.
+ * Type definitions for the Electron API that is exposed to the renderer process
+ * via the preload script. We now add a `readPromptComposerFile` method for loading
+ * template files from the `.prompt-composer` folder.
+ *
+ * Exports:
+ * - ElectronAPI interface: Methods available on window.electronAPI
  */
 
 export interface ListDirectoryResult {
@@ -36,7 +39,7 @@ interface ElectronAPI {
   listDirectory: (dirPath: string) => Promise<any>;
 
   /**
-   * Read the contents of a file
+   * Read the contents of a file from disk
    */
   readFile: (filePath: string) => Promise<string>;
 
@@ -54,6 +57,22 @@ interface ElectronAPI {
    * Verify if the specified file path exists on the local disk.
    */
   verifyFileExistence: (filePath: string) => Promise<boolean>;
+
+  /**
+   * Opens a dialog to export an XML file, returns true if successful
+   */
+  exportXml: (args: { defaultFileName?: string; xmlContent: string }) => Promise<boolean>;
+
+  /**
+   * Opens a dialog to import an XML file, returns the file content or null
+   */
+  openXml: () => Promise<string | null>;
+
+  /**
+   * Reads a file from the `.prompt-composer` folder using the given relative filename.
+   * Returns the file content as a string if found, or null if not found.
+   */
+  readPromptComposerFile: (relativeFilename: string) => Promise<string | null>;
 }
 
 // Add electronAPI to Window interface
@@ -63,5 +82,4 @@ declare global {
   }
 }
 
-// Re-export the global as a module
 export {};

@@ -1,19 +1,23 @@
+
 /**
  * @file preload.ts
  * @description
- * Runs in the Electron main process before the renderer loads.
- * We define window.electronAPI with relevant methods (listDirectory, readFile, exportXml, openXml, etc.).
+ * Runs in the Electron preload script context. We define window.electronAPI with relevant
+ * methods. We have now added `readPromptComposerFile` to support reading templates from
+ * the `.prompt-composer` folder in the user’s project.
+ *
+ * Note: Because this is the 'preload' script, it must not rely on Node integration. Instead,
+ * we communicate with the main process via IPC calls (`ipcRenderer.invoke`, etc.).
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
 
-console.log('[Preload] This is the UPDATED preload.ts code! removeChannelListener is defined.');
+console.log('[Preload] Preload script initialized. Exposing electronAPI...');
 
-/**
- * Exposes a set of APIs to the renderer via contextBridge.
- * We add a new "openXml" method for the "import-xml" flow.
- */
 contextBridge.exposeInMainWorld('electronAPI', {
+  /**
+   * Basic message sending
+   */
   sendMessage: (channel: string, data: any) => {
     ipcRenderer.send(channel, data);
   },
@@ -51,16 +55,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openXml: async () => {
     return ipcRenderer.invoke('import-xml');
   },
-  
+
   /**
    * showOpenDialog: Opens a dialog to select files/folders
    */
   showOpenDialog: (options: any) => ipcRenderer.invoke('show-open-dialog', options),
-  
+
   /**
    * createFolder: Creates a new folder in the parent directory
    */
   createFolder: (args: { parentPath: string; folderName: string }) => {
     return ipcRenderer.invoke('create-folder', args);
+  },
+
+  /**
+   * Verify file existence on disk
+   */
+  verifyFileExistence: (filePath: string) => {
+    return ipcRenderer.invoke('verify-file-existence', filePath);
+  },
+
+  /**
+   * Reads a file from the .prompt-composer folder. 
+   * If the file does not exist, returns null.
+   */
+  readPromptComposerFile: async (relativeFilename: string) => {
+    return ipcRenderer.invoke('read-prompt-composer-file', relativeFilename);
   }
 });
