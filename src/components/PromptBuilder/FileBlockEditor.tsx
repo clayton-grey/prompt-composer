@@ -1,4 +1,3 @@
-
 /**
  * @file FileBlockEditor.tsx
  * @description
@@ -11,7 +10,7 @@
  *     still exists in the block for final prompt flattening, but it's hidden
  *     from the user.
  *
- * Key Responsibilities after Step 17B:
+ * Key Responsibilities:
  *  - Render a heading "File Block"
  *  - Render a single toggle to update `block.includeProjectMap`.
  *
@@ -36,9 +35,19 @@ const FileBlockEditor: React.FC<FileBlockEditorProps> = ({ block, onChange }) =>
    * Toggle whether we include the project map in the final output.
    */
   const handleToggleIncludeMap = (e: ChangeEvent<HTMLInputElement>) => {
+    const newValue = e.target.checked;
+    console.log(`[FileBlockEditor] Toggling includeProjectMap to: ${newValue}`);
+    console.log(`[FileBlockEditor] Files block has ${block.files.length} files`);
+    
+    if (block.projectAsciiMap) {
+      console.log(`[FileBlockEditor] ASCII map length: ${block.projectAsciiMap.length} chars`);
+    } else {
+      console.log('[FileBlockEditor] No ASCII map is present');
+    }
+    
     const updated = {
       ...block,
-      includeProjectMap: e.target.checked
+      includeProjectMap: newValue
     };
     onChange(updated);
   };

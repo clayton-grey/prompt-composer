@@ -1,4 +1,3 @@
-
 /**
  * @file FileTree.tsx
  * @description
@@ -137,18 +136,29 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
     // We'll define a callback for toggling this node
     const onClick = (e: React.MouseEvent) => {
       e.stopPropagation();
+      console.log(`[FileTree] Toggling selection for ${nodePath} (${nodeType})`);
+      console.log(`[FileTree] Current state: ${st}`);
+      
       const foundFolder = folderTrees.find((ft) => {
         // see if ft.node has the same absolute path or if nodePath is inside that root
         return ft.node && nodePath.startsWith(ft.node.path);
       });
+      
       // foundFolder might not be correct if there are multiple roots, 
       // but typically node belongs to one root
       // We'll rely on context's toggleNodeSelection needing the actual TreeNode. 
       // We can do a BFS/DFS to find the node in that folder's tree:
-      if (!foundFolder || !foundFolder.node) return;
+      if (!foundFolder || !foundFolder.node) {
+        console.error(`[FileTree] Could not find folder for node ${nodePath}`);
+        return;
+      }
+      
       const node = findNodeByPath(foundFolder.node, nodePath);
       if (node) {
+        console.log(`[FileTree] Found node, toggling selection: ${node.path} (${node.type})`);
         toggleNodeSelection(node);
+      } else {
+        console.error(`[FileTree] Could not find node with path ${nodePath}`);
       }
     };
 
