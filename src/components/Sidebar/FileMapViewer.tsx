@@ -2,119 +2,84 @@
 /**
  * @file FileMapViewer.tsx
  * @description
- * A React component for displaying and exporting a formatted, ASCII-style map
- * of the project's file structure. Mirrors the file/folder hierarchy displayed by
- * FileTree, but produces a single multiline string representation similar to how
- * "tree" commands or visual file browsers present directories.
+ * A React component for displaying (and optionally exporting) an ASCII-style map
+ * of the project's file structure. Formerly, it directly called electronAPI.listDirectory.
+ * Now, it calls getDirectoryListing from the ProjectContext to leverage caching.
  *
- * Key Responsibilities:
- *  1. Load the folder structure via Electron IPC (listDirectory).
- *  2. Recursively build an ASCII representation, with lines like:
- *       ├── dist
- *       │   ├── assets
- *       ...
- *       └── ...
- *  3. Wrap the final ASCII output in <file_map> ... </file_map>.
- *  4. Provide "Copy File Map" and "Export File Map" features so the user can:
- *       - Copy the ASCII text to clipboard for direct usage.
- *       - Export it to a file (like a .txt) via a standard file save dialog.
+ * Key Changes in Step 3 (File & Directory Handling):
+ *  1) Instead of window.electronAPI.listDirectory, we use getDirectoryListing(rootPath).
+ *  2) We store that in local state as rootNode, and build the ASCII output from it.
+ *  3) This ensures no repeated calls if multiple components request the same directory.
  *
- * Expand/Collapse Behavior:
- *  - Each directory node has a small toggle icon (▸ or ▾).
- *  - The ASCII output is always the fully expanded view to remain consistent.
- *    However, the UI can be collapsed so the user sees fewer lines visually.
- *
- * Usage Example:
- *   <FileMapViewer rootPath="." />
- *
- * Dependencies:
- *  - React for UI
- *  - window.electronAPI.listDirectory to load tree data
- *  - window.electronAPI.exportFileMap to save the ASCII output
- *
- * Edge Cases & Assumptions:
- *  - If rootPath doesn't exist or is unreadable, we display an error.
- *  - We only show text-based files (matching ALLOWED_EXTENSIONS in ipcHandlers).
- *  - The ASCII generation does not attempt to handle infinite recursion (e.g., symlinks).
+ * Expand/Collapse in the UI is local to this component; the ASCII generation is 
+ * always for the fully expanded tree. The user can copy or export the ASCII text.
  */
 
 import React, { useEffect, useState } from 'react';
-
-interface TreeNode {
-  name: string;
-  path: string;
-  type: 'file' | 'directory';
-  children?: TreeNode[];
-}
-
-/**
- * The interface we get back from 'list-directory'.
- */
-interface ListDirectoryResult {
-  absolutePath: string;
-  baseName: string;
-  children: TreeNode[];
-}
+import { useProject, DirectoryListing, TreeNode } from '../../context/ProjectContext';
 
 interface FileMapViewerProps {
   /**
    * The path at which to begin reading the directory structure.
-   * Defaults to '.', i.e., the current working directory of the Electron app.
+   * Defaults to '.' if not specified.
    */
   rootPath?: string;
 }
 
 /**
- * FileMapViewer Component
- * @description
- * Renders a collapsible directory tree (similar to FileTree) but also provides
- * an ASCII representation of the entire tree that the user can copy or export.
+ * FileMapViewer component. Shows a collapsible directory tree for reference, 
+ * and can generate a fully expanded ASCII representation that can be copied 
+ * or exported to a file. 
  */
 const FileMapViewer: React.FC<FileMapViewerProps> = ({ rootPath = '.' }) => {
+  const { getDirectoryListing } = useProject();
+
   const [rootNode, setRootNode] = useState<TreeNode | null>(null);
   const [expandedStates, setExpandedStates] = useState<Record<string, boolean>>({});
   const [asciiTree, setAsciiTree] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * On mount or whenever rootPath changes, we load the directory listing from context.
+   */
   useEffect(() => {
-    if (!window.electronAPI?.listDirectory) {
-      setError('Missing electronAPI.listDirectory');
-      return;
+    async function loadData() {
+      const listing = await getDirectoryListing(rootPath);
+      if (!listing) {
+        setError(`Failed to load directory for path: ${rootPath}`);
+        setRootNode(null);
+        return;
+      }
+      setError(null);
+
+      // Create a new root node from the listing
+      const newRoot: TreeNode = {
+        name: listing.baseName,
+        path: listing.absolutePath,
+        type: 'directory',
+        children: listing.children
+      };
+
+      // Initialize expansions to false for all discovered nodes
+      const newExpanded: Record<string, boolean> = {};
+      const initExpanded = (node: TreeNode) => {
+        newExpanded[node.path] = false;
+        if (node.children) {
+          node.children.forEach(initExpanded);
+        }
+      };
+      initExpanded(newRoot);
+
+      setRootNode(newRoot);
+      setExpandedStates(newExpanded);
+      setAsciiTree(''); // Clear any old ASCII results
     }
 
-    window.electronAPI
-      .listDirectory(rootPath)
-      .then((result: ListDirectoryResult) => {
-        // Create a new root node from the result
-        const newRoot: TreeNode = {
-          name: result.baseName,
-          path: result.absolutePath,
-          type: 'directory',
-          children: result.children
-        };
-
-        // Initialize expansions to false for all discovered nodes
-        const newExpanded: Record<string, boolean> = {};
-        const initExpanded = (node: TreeNode) => {
-          newExpanded[node.path] = false;
-          if (node.children) {
-            node.children.forEach(initExpanded);
-          }
-        };
-        initExpanded(newRoot);
-
-        setRootNode(newRoot);
-        setExpandedStates(newExpanded);
-        setError(null);
-      })
-      .catch((err) => {
-        setError(`Failed to list directory: ${String(err)}`);
-        console.error('[FileMapViewer] Error listing directory:', err);
-      });
-  }, [rootPath]);
+    loadData();
+  }, [rootPath, getDirectoryListing]);
 
   /**
-   * Toggles the expansion state of a directory node by path.
+   * Toggles expansion for a folder node.
    */
   const toggleExpand = (nodePath: string) => {
     setExpandedStates((prev) => ({
@@ -124,81 +89,54 @@ const FileMapViewer: React.FC<FileMapViewerProps> = ({ rootPath = '.' }) => {
   };
 
   /**
-   * Recursively generate ASCII lines for a given node.
-   * We pass "prefix" to handle indentation with lines like:
-   *    ├── or └── or │
-   *
-   * @param node The current TreeNode to render
-   * @param prefix The ASCII characters used for indentation
-   * @param isLast Indicates if this node is the last child in its parent's list
-   * @returns A string array of lines for this node and its children
+   * Recursively build ASCII lines from a node.
    */
-  const buildAsciiLines = (
-    node: TreeNode,
-    prefix: string = '',
-    isLast: boolean = true
-  ): string[] => {
+  function buildAsciiLines(node: TreeNode, prefix: string = '', isLast: boolean = true): string[] {
     const lines: string[] = [];
-
-    // Choose the node marker based on isLast
     const nodeMarker = isLast ? '└── ' : '├── ';
-
-    // For directories, we add "folder" style icons
-    const label = node.type === 'directory' ? node.name : node.name;
-
-    // Build the line for this node
+    const label = node.name;
     lines.push(`${prefix}${nodeMarker}${label}`);
 
-    // If directory, handle children
     if (node.type === 'directory' && node.children) {
-      // For the child prefix, if we're not the last item, we pass "│   ", else "    "
       const childPrefix = prefix + (isLast ? '    ' : '│   ');
-
       node.children.forEach((child, idx) => {
         const childIsLast = idx === node.children!.length - 1;
-        const subtree = buildAsciiLines(child, childPrefix, childIsLast);
-        lines.push(...subtree);
+        lines.push(...buildAsciiLines(child, childPrefix, childIsLast));
       });
     }
-
     return lines;
-  };
+  }
 
   /**
-   * Build the ASCII tree for the entire rootNode
-   * and store it in asciiTree state. Wrap with <file_map> ... </file_map> tags.
+   * Build the ASCII tree for rootNode, store it in asciiTree.
    */
   const generateAsciiTree = () => {
     if (!rootNode) return;
-
     const lines: string[] = [];
     lines.push('<file_map>');
     lines.push(rootNode.path);
 
-    // For children
-    if (rootNode.children) {
+    if (rootNode.children && rootNode.children.length > 0) {
       rootNode.children.forEach((child, idx) => {
         const isLast = idx === rootNode.children!.length - 1;
         const subtreeLines = buildAsciiLines(child, '', isLast);
-        // We indent these lines by 0 spaces from the root
-        subtreeLines.forEach((line) => lines.push(line));
+        lines.push(...subtreeLines);
       });
     }
     lines.push('</file_map>');
 
-    const finalText = lines.join('\n');
-    setAsciiTree(finalText);
+    setAsciiTree(lines.join('\n'));
   };
 
   /**
-   * Copy the asciiTree content to the clipboard.
+   * Copy the asciiTree to clipboard
    */
   const handleCopy = async () => {
+    if (!asciiTree) {
+      console.warn('[FileMapViewer] ASCII tree is empty. Generate it first.');
+      return;
+    }
     try {
-      if (!asciiTree) {
-        console.warn('[FileMapViewer] ASCII tree is empty. Generate it first.');
-        return;
-      }
       await navigator.clipboard.writeText(asciiTree);
       console.log('[FileMapViewer] Copied file map to clipboard.');
     } catch (err) {
@@ -207,7 +145,7 @@ const FileMapViewer: React.FC<FileMapViewerProps> = ({ rootPath = '.' }) => {
   };
 
   /**
-   * Exports the asciiTree content to a file via a new IPC method "export-file-map".
+   * Exports asciiTree to a file via electronAPI.exportFileMap
    */
   const handleExport = async () => {
     if (!asciiTree) {
@@ -215,7 +153,7 @@ const FileMapViewer: React.FC<FileMapViewerProps> = ({ rootPath = '.' }) => {
       return;
     }
     if (!window.electronAPI?.exportFileMap) {
-      console.warn('[FileMapViewer] Missing electronAPI.exportFileMap');
+      console.warn('[FileMapViewer] Missing electronAPI.exportFileMap method.');
       return;
     }
     try {
@@ -224,10 +162,8 @@ const FileMapViewer: React.FC<FileMapViewerProps> = ({ rootPath = '.' }) => {
         defaultFileName,
         fileMapContent: asciiTree
       });
-      if (result) {
-        console.log('[FileMapViewer] Successfully exported file map.');
-      } else {
-        console.log('[FileMapViewer] Export canceled or failed.');
+      if (!result) {
+        console.log('[FileMapViewer] User canceled or failed to export file map.');
       }
     } catch (err) {
       console.error('[FileMapViewer] Error exporting file map:', err);
@@ -235,31 +171,25 @@ const FileMapViewer: React.FC<FileMapViewerProps> = ({ rootPath = '.' }) => {
   };
 
   /**
-   * Renders the collapsible directory structure in the UI
-   * (just for viewing, not necessarily ASCII).
-   * We do not edit or select files here; it's purely a read-only tree for reference.
+   * Renders the collapsible directory structure in the UI 
+   * (distinct from the ASCII representation).
    */
   const renderTree = (node: TreeNode, indent: number = 0): JSX.Element => {
     const isExpanded = expandedStates[node.path] || false;
     const hasChildren = node.type === 'directory' && node.children && node.children.length > 0;
     const toggleIcon = hasChildren ? (isExpanded ? '▾' : '▸') : ' ';
 
-    const label = node.name + (node.type === 'directory' ? '/' : '');
-    const indentStyle = { marginLeft: indent * 16 }; // 16px per indent level
+    const indentStyle = { marginLeft: indent * 16 };
 
     return (
       <div key={node.path}>
         <div
           className="flex items-center cursor-pointer"
           style={indentStyle}
-          onClick={() => {
-            if (hasChildren) {
-              toggleExpand(node.path);
-            }
-          }}
+          onClick={() => hasChildren && toggleExpand(node.path)}
         >
           <span className="mr-1">{toggleIcon}</span>
-          <span className="text-gray-700 dark:text-gray-100">{label}</span>
+          <span className="text-gray-700 dark:text-gray-100">{node.name}{node.type === 'directory' ? '/' : ''}</span>
         </div>
         {hasChildren && isExpanded && (
           <div className="pl-4">
@@ -278,7 +208,7 @@ const FileMapViewer: React.FC<FileMapViewerProps> = ({ rootPath = '.' }) => {
 
       {error && (
         <div className="text-xs text-red-500 mb-2">
-          Failed to load file map: {error}
+          {error}
         </div>
       )}
 
@@ -288,19 +218,16 @@ const FileMapViewer: React.FC<FileMapViewerProps> = ({ rootPath = '.' }) => {
         </div>
       ) : (
         <>
-          {/* Collapsible Tree UI */}
-          <div className="mb-2">
-            <div className="text-xs">
-              <div className="font-medium">
-                Root: <span className="italic">{rootNode.path}</span>
-              </div>
-              <div className="mt-1">
-                {renderTree(rootNode, 0)}
-              </div>
+          <div className="text-xs mb-2">
+            <div className="font-medium">
+              Root: <span className="italic">{rootNode.path}</span>
+            </div>
+            <div className="mt-1">
+              {renderTree(rootNode, 0)}
             </div>
           </div>
 
-          {/* Generate ASCII Button */}
+          {/* Controls for ASCII generation */}
           <div className="flex gap-2 mb-2">
             <button
               onClick={generateAsciiTree}
@@ -322,7 +249,6 @@ const FileMapViewer: React.FC<FileMapViewerProps> = ({ rootPath = '.' }) => {
             </button>
           </div>
 
-          {/* ASCII Output */}
           {asciiTree && (
             <div className="border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 rounded p-2 max-h-48 overflow-auto text-xs text-gray-800 dark:text-gray-100">
               <pre>{asciiTree}</pre>

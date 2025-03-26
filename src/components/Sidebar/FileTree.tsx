@@ -4,80 +4,59 @@
  * @description
  * A React component that displays multiple root folders (passed via props) in a
  * tri-state selectable, collapsible tree structure. The user can add or remove
- * root folders externally, and each folder can be fully or partially expanded.
+ * root folders externally, and each folder can be expanded or collapsed.
  *
- * This file was updated to fix icon sizing/cropping issues:
- *   - All SVG icons now use Tailwind classes "h-4 w-4" to ensure uniform scaling.
- *   - We removed explicit width/height attributes from the <svg> tags where needed.
- *   - This helps prevent icons from being clipped or offset incorrectly.
+ * This file has been updated to remove direct IPC calls (window.electronAPI.listDirectory).
+ * Instead, it now uses the ProjectContext (via useProject()) to retrieve the directory data 
+ * from a shared in-memory cache. This prevents repeated calls for the same folder.
  *
- * Key Features:
- *  - Tri-state selection: 'none', 'all', 'partial'
- *  - Collapsible directories with toggles
- *  - Multi-root display for multiple project folders
- *
- * Implementation Details:
- *  - We store expansions in expandedPaths
- *  - We store tri-state node selection in nodeStates
- *  - We handle the "collapseAll" and "remove root" actions
- *  - Updated icon references (folder, folder-open, square, square-check, square-minus)
- *    to fix alignment and cropping by adding className="h-4 w-4"
+ * Key Changes in Step 3 (File & Directory Handling):
+ *  - We replaced the loadFolderTree function that used electronAPI with 
+ *    a simple call to project.getDirectoryListing(folderPath). 
+ *  - We keep the tri-state selection logic the same, but the directory data 
+ *    is fetched from context instead of direct electron calls.
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { usePrompt } from '../../context/PromptContext';
+import { useProject, DirectoryListing, TreeNode } from '../../context/ProjectContext';
 
-/** NodeState indicates how a node is selected in tri-state logic. */
 type NodeState = 'none' | 'all' | 'partial';
 
-/** A single node in the directory tree. */
-export interface TreeNode {
-  name: string;
-  path: string;
-  type: 'file' | 'directory';
-  children?: TreeNode[];
-}
-
-/** The structure returned by the main process when listing a directory. */
-interface ListDirectoryResult {
-  absolutePath: string;
-  baseName: string;
-  children: TreeNode[];
-}
-
-/** Props for FileTree. */
 interface FileTreeProps {
   /**
-   * An array of folder paths that the user has added. We treat each path as a separate
-   * root directory in the tree. No default path is included, so if this array is empty,
-   * the UI will show no folders.
+   * An array of folder paths that the user has added. Each path is treated
+   * as a separate root directory in the tree.
    */
   folders: string[];
 
   /**
-   * Callback invoked when the user wants to remove a root folder from the list.
-   * We'll pass the folder path that should be removed from the parent's array.
+   * Callback invoked when the user removes a folder from the UI.
    */
   onRemoveFolder: (folderPath: string) => void;
 }
 
+interface FolderTreeState {
+  rootPath: string;
+  node: TreeNode | null;
+  error?: string | null;
+}
+
 /**
- * FileTree component that handles multiple root folders, each of which can be expanded
- * or collapsed. The user can tri-state select files or directories. We store the selected
- * file contents in global PromptContext (via updateSelectedFiles).
+ * The FileTree component uses tri-state selection logic for each node:
+ *  - 'none' => not selected
+ *  - 'all'  => fully selected
+ *  - 'partial' => partially selected
  */
 const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   const { updateSelectedFiles } = usePrompt();
+  const { getDirectoryListing } = useProject();
 
   /**
-   * folderTrees stores the root-level data for each folder. If a folder is not yet
-   * loaded, node = null. Once loaded, node = the directory tree starting at that folder.
+   * folderTrees stores the root-level data for each folder. If node = null, 
+   * we haven't finished loading or it failed. 
    */
-  const [folderTrees, setFolderTrees] = useState<Array<{
-    rootPath: string;
-    node: TreeNode | null;
-    error?: string | null;
-  }>>([]);
+  const [folderTrees, setFolderTrees] = useState<FolderTreeState[]>([]);
 
   /**
    * nodeStates holds tri-state selection for each node path.
@@ -93,47 +72,49 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   const [selectedFileContents, setSelectedFileContents] = useState<Record<string, string>>({});
 
   /**
-   * loadFolderTree loads the directory tree for a single folder path
-   * via electronAPI.listDirectory. If successful, returns the root node,
-   * otherwise returns null.
+   * Removes a root folder from the FileTree. 
+   * We call the parent callback so the folder is removed from "folders" prop.
    */
-  const loadFolderTree = useCallback(async (folderPath: string): Promise<TreeNode | null> => {
-    if (!window.electronAPI?.listDirectory) {
-      console.warn('[FileTree] No electronAPI.listDirectory found.');
-      return null;
-    }
-    try {
-      const result = (await window.electronAPI.listDirectory(folderPath)) as ListDirectoryResult;
-      const rootNode: TreeNode = {
-        name: result.baseName,
-        path: result.absolutePath,
-        type: 'directory',
-        children: result.children
-      };
-      return rootNode;
-    } catch (err) {
-      console.error('[FileTree] loadFolderTree error for folder:', folderPath, err);
-      return null;
-    }
-  }, []);
+  const removeRootFolder = useCallback((folderPath: string) => {
+    onRemoveFolder(folderPath);
+  }, [onRemoveFolder]);
 
   /**
-   * Whenever "folders" changes from the parent, we refresh folderTrees
-   * to reflect any additions or removals. For new folders, we load them
-   * from disk. For removed folders, we remove them from folderTrees.
+   * retrieveFolderTree uses ProjectContext to fetch the DirectoryListing 
+   * for a given folder path. We do not store errors in context; we handle them locally.
+   */
+  const retrieveFolderTree = useCallback(async (folderPath: string) => {
+    const listing = await getDirectoryListing(folderPath);
+    if (!listing) {
+      return null;
+    }
+    // Convert DirectoryListing to a root TreeNode
+    const rootNode: TreeNode = {
+      name: listing.baseName,
+      path: listing.absolutePath,
+      type: 'directory',
+      children: listing.children
+    };
+    return rootNode;
+  }, [getDirectoryListing]);
+
+  /**
+   * Whenever the "folders" prop changes (user adds or removes a folder), we handle:
+   *  1) Removing states for any folder no longer in the array
+   *  2) Creating a new entry for newly added folders and loading them 
    */
   useEffect(() => {
-    // 1) Remove from folderTrees any root that no longer appears in "folders"
+    // 1) Filter out any folderTrees that no longer appear in "folders"
     setFolderTrees((prev) => prev.filter((ft) => folders.includes(ft.rootPath)));
 
-    // 2) For any newly added folder that doesn't exist in folderTrees, load it
+    // 2) For newly added folders, load from context if we don't already have them
     folders.forEach(async (fPath) => {
       const existing = folderTrees.find((ft) => ft.rootPath === fPath);
       if (!existing) {
-        // Insert a temporary entry with node=null while we load
-        setFolderTrees((prev) => [...prev, { rootPath: fPath, node: null, error: undefined }]);
-        // Now load the tree data
-        const node = await loadFolderTree(fPath);
+        // Add a placeholder with node=null
+        setFolderTrees((prev) => [...prev, { rootPath: fPath, node: null }]);
+        // Attempt to retrieve the data from ProjectContext
+        const node = await retrieveFolderTree(fPath);
         if (!node) {
           setFolderTrees((prev2) =>
             prev2.map((item) =>
@@ -144,28 +125,19 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           );
           return;
         }
-        // Initialize expansions to false for all discovered nodes
+        // If we successfully got a node, we set expansions and states
         const newExpanded: Record<string, boolean> = {};
-        const initExpanded = (nd: TreeNode) => {
-          newExpanded[nd.path] = false;
-          if (nd.children) {
-            nd.children.forEach(initExpanded);
-          }
-        };
-        initExpanded(node);
-
-        setExpandedPaths((prev2) => ({ ...prev2, ...newExpanded }));
-
-        // Initialize selection states to 'none'
         const newStates: Record<string, NodeState> = {};
-        const initStates = (nd: TreeNode) => {
+        const initData = (nd: TreeNode) => {
+          newExpanded[nd.path] = false;
           newStates[nd.path] = 'none';
           if (nd.children) {
-            nd.children.forEach(initStates);
+            nd.children.forEach(initData);
           }
         };
-        initStates(node);
+        initData(node);
 
+        setExpandedPaths((prev2) => ({ ...prev2, ...newExpanded }));
         setNodeStates((prev2) => ({ ...prev2, ...newStates }));
 
         setFolderTrees((prev2) =>
@@ -177,8 +149,10 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }, [folders]);
 
   /**
-   * readFile reads the file content from disk using electronAPI.
-   * If it fails, returns an empty string (with a console error).
+   * readFile is used when a node is set to 'all' to load the file's content from disk
+   * via electronAPI. We haven't cached file contents in ProjectContext yet, 
+   * so we still call electronAPI directly here. That is acceptable for the 
+   * purpose of caching directory structures only. 
    */
   const readFile = useCallback(async (filePath: string): Promise<string> => {
     if (!window.electronAPI?.readFile) {
@@ -195,13 +169,14 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }, []);
 
   /**
-   * Once nodeStates changes, we gather all file paths that are 'all' and load
-   * or remove them from selectedFileContents. Then we call updateSelectedFiles
+   * Once nodeStates changes, gather all file paths whose state is 'all', 
+   * load or remove them from selectedFileContents, then call updateSelectedFiles 
    * in PromptContext for token usage.
    */
   useEffect(() => {
-    // 1) Find all file paths that are 'all'
     const allPaths: string[] = [];
+
+    // Recursively traverse the entire tree for each root
     function collectAllFilePaths(node: TreeNode) {
       const st = nodeStates[node.path];
       if (node.type === 'file' && st === 'all') {
@@ -211,20 +186,23 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
         node.children.forEach(collectAllFilePaths);
       }
     }
+
     folderTrees.forEach((ft) => {
-      if (ft.node) collectAllFilePaths(ft.node);
+      if (ft.node) {
+        collectAllFilePaths(ft.node);
+      }
     });
 
-    // 2) Remove stale paths from selectedFileContents
+    // Remove stale paths from selectedFileContents
     setSelectedFileContents((prev) => {
       const updated: Record<string, string> = {};
+      // Keep existing entries if still in allPaths
       for (const filePath of Object.keys(prev)) {
         if (allPaths.includes(filePath)) {
-          // keep it
           updated[filePath] = prev[filePath];
         }
       }
-      // 3) For newly added paths, read from disk
+      // For newly added paths, read from disk
       const newPaths = allPaths.filter((p) => !(p in updated));
       if (newPaths.length > 0) {
         Promise.all(
@@ -247,15 +225,15 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }, [nodeStates, folderTrees, readFile]);
 
   /**
-   * Whenever selectedFileContents changes, we notify PromptContext so that
-   * token usage can be recalculated.
+   * Whenever selectedFileContents changes, call updateSelectedFiles in PromptContext
+   * so that the new set of files can be considered for token usage.
    */
   useEffect(() => {
     updateSelectedFiles(selectedFileContents);
   }, [selectedFileContents, updateSelectedFiles]);
 
   /**
-   * toggleFolderExpand flips the expansion for a given directory node path.
+   * Toggles a directory node's expansion state.
    */
   const toggleFolderExpand = (nodePath: string) => {
     setExpandedPaths((prev) => ({
@@ -265,14 +243,14 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   };
 
   /**
-   * collapseAll sets expandedPaths to false for all descendants of a given root.
+   * collapseAll sets expandedPaths to false for every node in the subtree.
    */
-  const collapseAll = (rootNode: TreeNode) => {
+  const collapseAll = useCallback((rootNode: TreeNode) => {
     const pathsToCollapse: string[] = [];
-    function gatherPaths(node: TreeNode) {
-      pathsToCollapse.push(node.path);
-      if (node.children) {
-        node.children.forEach(gatherPaths);
+    function gatherPaths(n: TreeNode) {
+      pathsToCollapse.push(n.path);
+      if (n.children) {
+        n.children.forEach(gatherPaths);
       }
     }
     gatherPaths(rootNode);
@@ -283,18 +261,10 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       });
       return updated;
     });
-  };
+  }, []);
 
   /**
-   * removeRootFolder calls onRemoveFolder with the rootPath, letting the parent
-   * update the "folders" prop so that this root is removed from the UI.
-   */
-  const removeRootFolder = (folderPath: string) => {
-    onRemoveFolder(folderPath);
-  };
-
-  /**
-   * setNodeStateRecursive sets a node and all of its descendants to the given state.
+   * setNodeStateRecursive sets the entire subtree of 'startNode' to newState
    */
   const setNodeStateRecursive = (startNode: TreeNode, newState: NodeState, updated: Record<string, NodeState>) => {
     updated[startNode.path] = newState;
@@ -304,9 +274,9 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   };
 
   /**
-   * When a node is toggled from 'all' => 'none' or 'none'/'partial' => 'all',
-   * we apply the new state to the node's entire subtree. Then we update ancestors
-   * to reflect partial or full states as needed.
+   * toggleNodeSelection flips a node's selection state from 'none' to 'all' 
+   * or from 'all' to 'none'. We do not currently handle partial toggles directly,
+   * partial states occur only if children differ.
    */
   const toggleNodeSelection = (node: TreeNode) => {
     setNodeStates((prev) => {
@@ -320,12 +290,11 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   };
 
   /**
-   * updateAncestorStates walks upward from a node to recalculate each parent's state
-   * based on its children. If all children are 'all', the parent is 'all'; if all are 'none',
-   * the parent is 'none'; otherwise 'partial'.
+   * updateAncestorStates traverses upwards from a node to recalc parent's nodeState.
+   * If all children are 'all', parent is 'all'. If all children are 'none', parent is 'none'. 
+   * Otherwise it's 'partial'. 
    */
   const updateAncestorStates = (node: TreeNode, updated: Record<string, NodeState>) => {
-    // Find the parent in folderTrees
     function findParent(childPath: string): TreeNode | null {
       for (const ft of folderTrees) {
         if (!ft.node) continue;
@@ -337,9 +306,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
     function searchParent(current: TreeNode, childPath: string): TreeNode | null {
       if (current.children) {
         for (const c of current.children) {
-          if (c.path === childPath) {
-            return current;
-          }
+          if (c.path === childPath) return current;
           const deeper = searchParent(c, childPath);
           if (deeper) return deeper;
         }
@@ -348,142 +315,94 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
     }
 
     const parentNode = findParent(node.path);
-    if (!parentNode) return; // No parent => root node => done
+    if (!parentNode) return;
 
-    // Recompute parent's state
     if (parentNode.children) {
       const childStates = parentNode.children.map((c) => updated[c.path] || 'none');
       const allAll = childStates.every((s) => s === 'all');
       const allNone = childStates.every((s) => s === 'none');
-
-      let newParentState: NodeState;
-      if (allAll) newParentState = 'all';
-      else if (allNone) newParentState = 'none';
-      else newParentState = 'partial';
-
+      let newParentState: NodeState = 'partial';
+      if (allAll) {
+        newParentState = 'all';
+      } else if (allNone) {
+        newParentState = 'none';
+      }
       updated[parentNode.path] = newParentState;
-      // Then recursively update parent's parent
       updateAncestorStates(parentNode, updated);
     }
   };
 
   /**
-   * Renders the tri-state selection icon for a given node path. The user can click it to toggle.
-   * We fix the sizing issues by applying className="h-4 w-4" to the <svg>.
+   * Renders a tri-state icon for a node, allowing toggling with a click.
    */
   const renderSelectionIcon = (nodeState: NodeState, onClick: () => void) => {
     if (nodeState === 'all') {
-      // Square Check
+      // checked
       return (
         <span onClick={onClick} className="cursor-pointer mr-2">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="h-4 w-4 text-blue-500"
-          >
-            <rect width="18" height="18" x="3" y="3" rx="2" />
+          <svg viewBox="0 0 24 24" className="h-4 w-4 text-blue-500" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
             <path d="m9 12 2 2 4-4" />
           </svg>
         </span>
       );
     } else if (nodeState === 'partial') {
-      // Square Minus
+      // partial
       return (
         <span onClick={onClick} className="cursor-pointer mr-2">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="h-4 w-4 text-blue-500"
-          >
-            <rect width="18" height="18" x="3" y="3" rx="2" />
+          <svg viewBox="0 0 24 24" className="h-4 w-4 text-blue-500" fill="none" stroke="currentColor" strokeWidth="2">
+            <rect x="3" y="3" width="18" height="18" rx="2" />
             <path d="M8 12h8" />
           </svg>
         </span>
       );
-    } else {
-      // none => Square
-      return (
-        <span onClick={onClick} className="cursor-pointer mr-2">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="h-4 w-4 text-gray-600 dark:text-gray-300"
-          >
-            <rect width="18" height="18" x="3" y="3" rx="2" />
-          </svg>
-        </span>
-      );
     }
+    // none
+    return (
+      <span onClick={onClick} className="cursor-pointer mr-2">
+        <svg viewBox="0 0 24 24" className="h-4 w-4 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+        </svg>
+      </span>
+    );
   };
 
   /**
-   * Renders a folder icon (closed or open) or nothing for files.
-   * We fix the cropping by setting className="h-4 w-4" and removing explicit width/height.
+   * Renders a folder icon (open or closed) or empty space for a file.
    */
   const renderFolderIcon = (isDir: boolean, isExpanded: boolean) => {
     if (!isDir) {
       return <span className="w-4 mr-1" />;
     }
     if (isExpanded) {
-      // folder-open
+      // open folder
       return (
         <span className="mr-1 text-gray-600 dark:text-gray-200">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="h-4 w-4"
-          >
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
           </svg>
         </span>
       );
-    } else {
-      // folder
-      return (
-        <span className="mr-1 text-gray-600 dark:text-gray-200">
-          <svg
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="h-4 w-4"
-          >
-            <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 
-                    7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
-          </svg>
-        </span>
-      );
     }
+    // closed folder
+    return (
+      <span className="mr-1 text-gray-600 dark:text-gray-200">
+        <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 
+                  7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+        </svg>
+      </span>
+    );
   };
 
   /**
-   * renderNode is a recursive function that renders a single node and all its children,
-   * with tri-state selection and clickable folder icons for expansion/collapse.
+   * Renders a single node (directory or file). If directory and expanded, 
+   * we recursively render children.
    */
   const renderNode = (node: TreeNode, depth: number = 0): JSX.Element => {
     const isDir = node.type === 'directory';
     const isExpanded = !!expandedPaths[node.path];
     const nodeState = nodeStates[node.path] || 'none';
-
-    // Indent with some left padding
     const paddingLeft = depth * 18;
 
     return (
@@ -493,14 +412,12 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           style={{ paddingLeft: `${paddingLeft}px` }}
         >
           {renderSelectionIcon(nodeState, () => toggleNodeSelection(node))}
-
           <span
             onClick={() => isDir && toggleFolderExpand(node.path)}
             className="cursor-pointer flex items-center"
           >
             {renderFolderIcon(isDir, isExpanded)}
           </span>
-
           <span
             className="truncate overflow-hidden whitespace-nowrap max-w-[140px] text-gray-800 dark:text-gray-100"
             onClick={() => isDir && toggleFolderExpand(node.path)}
@@ -508,7 +425,6 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
             {node.name}
           </span>
         </div>
-
         {isDir && isExpanded && node.children && node.children.length > 0 && (
           <div>
             {node.children.map((child) => renderNode(child, depth + 1))}
@@ -519,15 +435,12 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   };
 
   /**
-   * Renders a single root folder's UI: the root node name, plus collapse button,
-   * remove button, and its child nodes. We also fix the icon sizing in those
-   * action buttons to ensure they are not cropped or offset.
+   * Renders one root folder. The root folder is displayed similarly, but 
+   * with a "collapse all" and "remove folder" button in the header row.
    */
-  const renderRootFolder = (item: { rootPath: string; node: TreeNode | null; error?: string | null }) => {
+  const renderRootFolder = (item: FolderTreeState) => {
     const { rootPath, node, error } = item;
-
     if (error) {
-      // Show an error message for this folder
       return (
         <div key={rootPath} className="text-red-600 text-sm mb-2">
           <p>Failed to load folder: {rootPath}</p>
@@ -535,7 +448,6 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       );
     }
     if (!node) {
-      // Still loading
       return (
         <div key={rootPath} className="text-gray-500 text-sm mb-2">
           <p>Loading {rootPath}...</p>
@@ -548,7 +460,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
 
     return (
       <div key={rootPath} className="mb-2">
-        {/* Root folder header row */}
+        {/* Root folder row */}
         <div className="flex items-center bg-transparent p-1">
           {renderSelectionIcon(nodeState, () => toggleNodeSelection(node))}
 
@@ -566,9 +478,8 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
             {node.name}
           </span>
 
-          {/* Buttons for collapse-all and remove */}
+          {/* Buttons: collapse-all & remove */}
           <div className="flex items-center ml-2">
-            {/* Collapse All button */}
             <button
               className="mr-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
               onClick={() => collapseAll(node)}
@@ -576,12 +487,10 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
             >
               <svg
                 viewBox="0 0 24 24"
+                className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-4 w-4"
               >
                 <path d="M5 3h14"/>
                 <path d="m18 13-6-6-6 6"/>
@@ -589,7 +498,6 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
               </svg>
             </button>
 
-            {/* Remove root button */}
             <button
               className="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
               onClick={() => removeRootFolder(rootPath)}
@@ -597,12 +505,10 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
             >
               <svg
                 viewBox="0 0 24 24"
+                className="h-4 w-4"
                 fill="none"
                 stroke="currentColor"
                 strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-4 w-4"
               >
                 <circle cx="9" cy="9" r="7"/>
                 <path d="m12 6-6 6"/>
@@ -612,7 +518,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           </div>
         </div>
 
-        {/* Children if expanded */}
+        {/* If expanded, render children */}
         {isExpanded && node.children && node.children.length > 0 && (
           <div className="pl-6">
             {node.children.map((child) => renderNode(child, 1))}

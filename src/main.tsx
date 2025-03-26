@@ -2,16 +2,13 @@
 /**
  * @file main.tsx
  * @description
- * This is the actual entry point that Vite/Electron loads (via index.html).
- * We render the <App/> inside both <PromptProvider> and <ThemeProvider>.
- *
- * Key Responsibilities:
- *  - Create the React root and render the <App/> within both contexts
- *  - Provide global context (blocks array, theme toggle, etc.) so that
- *    the entire app has consistent data & theme state.
- *
- * @notes
- *  - We add <ThemeProvider> around <PromptProvider> to support dark mode toggling.
+ * Entry point that Vite/Electron loads (via index.html). We render the <App/>
+ * inside the ThemeProvider, ProjectProvider, and PromptProvider. 
+ * 
+ * Step 3 (File & Directory Handling) requires we wrap <PromptProvider> in 
+ * <ProjectProvider> to cache directory listing data. That ensures components 
+ * like FileTree or FileMapViewer can fetch from the ProjectContext instead 
+ * of calling electronAPI directly.
  */
 
 import React from 'react';
@@ -19,17 +16,20 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 
-// Import the PromptProvider from the context
-import { PromptProvider } from './context/PromptContext';
-// Import the ThemeProvider for dark/light mode
+// Providers
 import { ThemeProvider } from './context/ThemeContext';
+import { PromptProvider } from './context/PromptContext';
+import { ProjectProvider } from './context/ProjectContext';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider>
-      <PromptProvider>
-        <App />
-      </PromptProvider>
+      {/* The ProjectProvider caches directory data for FileTree / FileMapViewer */}
+      <ProjectProvider>
+        <PromptProvider>
+          <App />
+        </PromptProvider>
+      </ProjectProvider>
     </ThemeProvider>
   </React.StrictMode>
 );

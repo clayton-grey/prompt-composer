@@ -1,12 +1,8 @@
 /**
  * @file ipcHandlers.ts
  * @description
- * Consolidated directory reading logic to avoid duplication for project vs. external directories.
- *
- * Step 1: Consolidate Directory Reading Logic
- *  - Created a single helper: readDirectoryTree()
- *  - Removed readDirectoryRecursive() and readDirectoryForTarget()
- *  - Now we handle project vs. external logic inside readDirectoryTree()
+ * Consolidated directory reading logic (step 1) + Asynchronous FS operations (step 2).
+ * We now use `fs.promises` (readdir, stat, readFile) instead of synchronous calls.
  */
 
 import { ipcMain, dialog } from 'electron';
@@ -14,7 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import ignore from 'ignore';
 
-// Allowed file extensions for text-based files
+/** Allowed file extensions for text-based files */
 const ALLOWED_EXTENSIONS = [
   '.txt', '.md', '.js', '.ts', '.tsx', '.jsx', '.json', '.py', '.css', '.html', '.sql'
 ];
@@ -26,22 +22,62 @@ interface TreeNode {
   children?: TreeNode[];
 }
 
-// --- STEP 1 REFRACTOR ---
-// New single function to recursively read a directory, applying either project-root or external `.gitignore` logic.
-function readDirectoryTree(
+/**
+ * Creates an ignore object based on .gitignore or default patterns.
+ * We'll make this async for consistency, although reading .gitignore is minor.
+ */
+async function createIgnoreForPath(
+  targetPath: string,
+  projectRoot: string
+): Promise<{ ig: ignore.Ignore; isProjectDir: boolean }> {
+  let ig = ignore();
+  const isProjectDir = targetPath.startsWith(projectRoot);
+
+  if (isProjectDir) {
+    const gitignorePath = path.join(projectRoot, '.gitignore');
+    try {
+      const gitignoreContent = await fs.promises.readFile(gitignorePath, 'utf-8');
+      ig = ig.add(gitignoreContent.split('\n'));
+    } catch {
+      // If .gitignore doesn't exist or fails, just skip.
+    }
+  } else {
+    const externalGitignorePath = path.join(targetPath, '.gitignore');
+    try {
+      const gitignoreContent = await fs.promises.readFile(externalGitignorePath, 'utf-8');
+      ig = ig.add(gitignoreContent.split('\n'));
+    } catch {
+      // If .gitignore doesn't exist, apply default ignore patterns
+      ig = ig.add([
+        'node_modules',
+        '.git',
+        '.DS_Store',
+        '*.log'
+      ]);
+    }
+  }
+
+  return { ig, isProjectDir };
+}
+
+/**
+ * Recursively reads a directory, applying .gitignore-like filters (via 'ignore').
+ * Uses asynchronous fs.promises APIs to avoid blocking the main thread.
+ */
+async function readDirectoryTree(
   dirPath: string,
   ig: ignore.Ignore,
   isProjectDir: boolean,
   projectRoot: string
-): TreeNode[] {
+): Promise<TreeNode[]> {
   const results: TreeNode[] = [];
 
-  let entries: string[];
+  let entries: string[] = [];
   try {
-    entries = fs.readdirSync(dirPath);
+    entries = await fs.promises.readdir(dirPath);
   } catch (err) {
-    console.error('[list-directory] Failed to read dir:', dirPath, err);
-    return results;
+    console.error('[list-directory] Failed to read dir (async):', dirPath, err);
+    return results; // Return empty on failure
   }
 
   // Sort for consistent ordering
@@ -53,13 +89,10 @@ function readDirectoryTree(
     }
     const fullPath = path.join(dirPath, entry);
 
-    // Distinguish path to ignore-check by isProjectDir
-    let relPath = '';
-    if (isProjectDir) {
-      relPath = path.relative(projectRoot, fullPath);
-    } else {
-      relPath = path.relative(dirPath, fullPath); 
-    }
+    // Distinguish path to ignore-check
+    const relPath = isProjectDir
+      ? path.relative(projectRoot, fullPath)
+      : path.relative(dirPath, fullPath);
 
     if (ig.ignores(relPath)) {
       continue;
@@ -67,17 +100,19 @@ function readDirectoryTree(
 
     let stats: fs.Stats;
     try {
-      stats = fs.statSync(fullPath);
+      stats = await fs.promises.stat(fullPath);
     } catch {
+      // If we fail to stat, skip this entry
       continue;
     }
 
     if (stats.isDirectory()) {
+      const children = await readDirectoryTree(fullPath, ig, isProjectDir, projectRoot);
       results.push({
         name: entry,
         path: fullPath,
         type: 'directory',
-        children: readDirectoryTree(fullPath, ig, isProjectDir, projectRoot)
+        children
       });
     } else {
       const ext = path.extname(entry).toLowerCase();
@@ -94,68 +129,39 @@ function readDirectoryTree(
   return results;
 }
 
-// The consolidated function used by 'list-directory'.
-function createIgnoreForPath(targetPath: string, projectRoot: string) {
-  let ig = ignore();
-
-  // If we’re dealing with the project root or subfolders of it, we want the root-level .gitignore
-  // Otherwise, we look for an external .gitignore or apply default ignores.
-  const isProjectDir = targetPath.startsWith(projectRoot);
-
-  if (isProjectDir) {
-    const gitignorePath = path.join(projectRoot, '.gitignore');
-    if (fs.existsSync(gitignorePath)) {
-      const gitignoreContent = fs.readFileSync(gitignorePath, 'utf-8');
-      ig = ig.add(gitignoreContent.split('\n'));
-    }
-  } else {
-    const externalGitignorePath = path.join(targetPath, '.gitignore');
-    if (fs.existsSync(externalGitignorePath)) {
-      const gitignoreContent = fs.readFileSync(externalGitignorePath, 'utf-8');
-      ig = ig.add(gitignoreContent.split('\n'));
-    } else {
-      // Default patterns for external directories
-      ig = ig.add([
-        'node_modules',
-        '.git',
-        '.DS_Store',
-        '*.log'
-      ]);
-    }
-  }
-
-  return { ig, isProjectDir };
-}
-
-
 export function registerIpcHandlers(): void {
-  // list-directory
+  // list-directory (async)
   ipcMain.handle('list-directory', async (_event, dirPath: string) => {
-    let targetPath = dirPath;
-    if (!path.isAbsolute(dirPath)) {
-      targetPath = path.join(process.cwd(), dirPath);
+    try {
+      let targetPath = dirPath;
+      if (!path.isAbsolute(dirPath)) {
+        targetPath = path.join(process.cwd(), dirPath);
+      }
+
+      console.log('[list-directory] Processing directory (async):', targetPath);
+
+      const projectRoot = process.cwd();
+      const { ig, isProjectDir } = await createIgnoreForPath(targetPath, projectRoot);
+
+      const tree = await readDirectoryTree(targetPath, ig, isProjectDir, projectRoot);
+      const baseName = path.basename(targetPath);
+
+      return {
+        absolutePath: targetPath,
+        baseName,
+        children: tree
+      };
+    } catch (err) {
+      console.error('[list-directory] Async error:', err);
+      throw err; // Let the renderer handle this error
     }
-
-    console.log('[list-directory] Processing directory:', targetPath);
-
-    const projectRoot = process.cwd();
-    const { ig, isProjectDir } = createIgnoreForPath(targetPath, projectRoot);
-
-    const tree = readDirectoryTree(targetPath, ig, isProjectDir, projectRoot);
-    const baseName = path.basename(targetPath);
-
-    return {
-      absolutePath: targetPath,
-      baseName,
-      children: tree
-    };
   });
 
-  // read-file
+  // read-file (still synchronous or we can easily adapt to async)
   ipcMain.handle('read-file', async (_event, filePath: string) => {
     try {
       console.log('[read-file] Reading file:', filePath);
-      const content = fs.readFileSync(filePath, 'utf-8');
+      const content = await fs.promises.readFile(filePath, 'utf-8');
       console.log('[read-file] Content length:', content.length);
       return content;
     } catch (err) {
@@ -183,7 +189,7 @@ export function registerIpcHandlers(): void {
         return false;
       }
 
-      fs.writeFileSync(result.filePath, xmlContent, 'utf-8');
+      await fs.promises.writeFile(result.filePath, xmlContent, 'utf-8');
       console.log('[export-xml] Successfully saved XML to:', result.filePath);
       return true;
     } catch (err) {
@@ -212,7 +218,7 @@ export function registerIpcHandlers(): void {
       }
 
       const filePath = result.filePaths[0];
-      const content = fs.readFileSync(filePath, 'utf-8');
+      const content = await fs.promises.readFile(filePath, 'utf-8');
       console.log('[import-xml] Successfully read XML from:', filePath);
       return content;
     } catch (err) {
@@ -240,7 +246,7 @@ export function registerIpcHandlers(): void {
         return false;
       }
 
-      fs.writeFileSync(result.filePath, fileMapContent, 'utf-8');
+      await fs.promises.writeFile(result.filePath, fileMapContent, 'utf-8');
       console.log('[export-file-map] Successfully saved file map to:', result.filePath);
       return true;
     } catch (err) {
@@ -251,7 +257,7 @@ export function registerIpcHandlers(): void {
 
   /**
    * show-open-dialog
-   * Opens a dialog for selecting directories
+   * Opens a dialog for selecting directories.
    */
   ipcMain.handle('show-open-dialog', async (_event, options: Electron.OpenDialogOptions) => {
     return dialog.showOpenDialog(options);
@@ -266,14 +272,22 @@ export function registerIpcHandlers(): void {
     let suffix = 1;
     let targetPath = path.join(parentPath, baseName);
 
-    while (fs.existsSync(targetPath)) {
-      suffix += 1;
-      baseName = `${folderName} (${suffix})`;
-      targetPath = path.join(parentPath, baseName);
+    while (true) {
+      try {
+        const exists = await fs.promises.stat(targetPath);
+        if (exists && exists.isDirectory()) {
+          suffix += 1;
+          baseName = `${folderName} (${suffix})`;
+          targetPath = path.join(parentPath, baseName);
+        }
+      } catch {
+        // stat threw an error => it doesn't exist, so we can mkdir
+        break;
+      }
     }
 
     try {
-      fs.mkdirSync(targetPath);
+      await fs.promises.mkdir(targetPath);
       console.log('[create-folder] Successfully created folder at:', targetPath);
       return targetPath;
     } catch (err) {
