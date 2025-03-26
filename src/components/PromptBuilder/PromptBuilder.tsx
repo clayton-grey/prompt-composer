@@ -2,15 +2,17 @@
 /**
  * @file PromptBuilder.tsx
  * @description
- * High-level component that coordinates the prompt-building UI:
- *  - Displays a button to add a new text block
- *  - Displays a button to add a file block from the user's currently selected files
- *  - Renders the BlockList for reordering and deletion
- *  - Provides a toggle to show/hide the final "Plain Text View" (PromptPreview)
+ * The main prompt composition UI. Lets users add text blocks, handle 
+ * the single file block usage, reorder blocks, and show a plain-text preview.
  *
- * Step 12 Changes:
- * 1. Introduce "showPreview" state, with a button to toggle its value.
- * 2. When showPreview is true, we render <PromptPreview /> below the BlockList.
+ * Changes for "Architecture & State Management - Step 2: Clarify or Extend File Block Usage":
+ *  - We rename "handleAddFileBlock" to "handleUpdateFileBlock"
+ *  - We call "updateFileBlock(...)" instead of "setSingleFileBlock(...)"
+ *  - The button label is changed from "Add File Block" to "Update File Block"
+ *
+ * @notes
+ *  - The user can select files in the Sidebar, and we retrieve them with getSelectedFileEntries().
+ *    Then we pass them to updateFileBlock() to unify or overwrite the single file block.
  */
 
 import React, { useState } from 'react';
@@ -23,14 +25,14 @@ export const PromptBuilder: React.FC = () => {
   const {
     addBlock,
     getSelectedFileEntries,
-    setSingleFileBlock
+    updateFileBlock
   } = usePrompt();
 
-  // Step 12: Add local state for toggling the "Plain Text View"
+  // Local state to toggle the plain text view
   const [showPreview, setShowPreview] = useState(false);
 
   /**
-   * Adds a new text block to the prompt.
+   * Adds a new text block to the prompt for freeform text usage.
    */
   const handleAddTextBlock = () => {
     const newBlock: Block = {
@@ -43,20 +45,22 @@ export const PromptBuilder: React.FC = () => {
   };
 
   /**
-   * Step 3: Instead of creating an empty file block, 
-   * we take the selected files from the context and set them as a single file block in the prompt flow.
+   * handleUpdateFileBlock:
+   *  - Fetch the user-selected files from the tri-state file tree
+   *  - If none are selected, we do nothing (or log).
+   *  - Otherwise, pass them all to updateFileBlock()
    */
-  const handleAddFileBlock = () => {
+  const handleUpdateFileBlock = () => {
     const fileEntries = getSelectedFileEntries();
     if (!fileEntries || fileEntries.length === 0) {
-      console.log('[PromptBuilder] No files are currently selected in the sidebar.');
+      console.log('[PromptBuilder] No files currently selected in the sidebar. Nothing to update.');
       return;
     }
-    setSingleFileBlock(fileEntries);
+    updateFileBlock(fileEntries);
   };
 
   /**
-   * Toggles the display of the final prompt preview (Plain Text View).
+   * Toggles the display of the final prompt preview.
    */
   const togglePreview = () => {
     setShowPreview((prev) => !prev);
@@ -77,10 +81,10 @@ export const PromptBuilder: React.FC = () => {
             Add Text Block
           </button>
           <button
-            onClick={handleAddFileBlock}
+            onClick={handleUpdateFileBlock}
             className="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
           >
-            Add File Block
+            Update File Block
           </button>
           <button
             onClick={togglePreview}
@@ -94,11 +98,11 @@ export const PromptBuilder: React.FC = () => {
       {/* BlockList for all blocks */}
       <div className="flex-1 overflow-auto p-4">
         <BlockList />
-        {/*
-          If showPreview is true, show the final prompt preview
-        */}
+
+        {/* If showPreview is true, show the final prompt preview */}
         {showPreview && <PromptPreview />}
       </div>
     </div>
   );
 };
+      

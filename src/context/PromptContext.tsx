@@ -7,18 +7,15 @@
  * - Global Prompt settings (maxTokens, model)
  * - Utility methods for adding, removing, and updating blocks
  * - Real-time token usage calculation for blocks
- * - Single file block enforcement
+ * - Enforces only a single file block at a time
  * - Tracking user-selected files from the file tree
  * - getFlattenedPrompt() for final prompt generation
  * - importComposition() to replace the current composition with imported data
  *
- * Changes for Step 17B:
- *  - When creating or updating a new FilesBlock in addFileBlock() or setSingleFileBlock(),
- *    we set `includeProjectMap: true` by default, so the user can uncheck it in the UI.
- *
- * Notes:
- *  - We do not remove the actual file references or content. The user won't see them
- *    in the FileBlockEditor, but they're still embedded in the final prompt.
+ * Changes for "Architecture & State Management - Step 2: Clarify or Extend File Block Usage":
+ *  - Remove addFileBlock method. Instead, keep a single method: updateFileBlock(fileEntries).
+ *  - We only permit one file block. If no file block exists, we create one. If one exists, we overwrite it.
+ *  - Rename references from "setSingleFileBlock" to "updateFileBlock" to clarify usage.
  */
 
 import React, {
@@ -37,40 +34,118 @@ import { flattenBlocks } from '../utils/flattenPrompt';
 import { generateProjectAsciiMap } from '../utils/fileMapBuilder';
 
 interface PromptSettings {
+  /**
+   * The maximum number of tokens for the current model context (e.g., 8000).
+   */
   maxTokens: number;
+
+  /**
+   * The model name, e.g. "gpt-4".
+   */
   model: string;
 }
 
 interface TokenUsage {
+  /**
+   * blockTokenUsage: A mapping of blockId -> token count for that block.
+   */
   blockTokenUsage: Record<string, number>;
+
+  /**
+   * totalTokens: The total tokens used by all blocks.
+   */
   totalTokens: number;
 }
 
 interface PromptContextType {
+  /**
+   * The complete array of blocks in the user's composition.
+   */
   blocks: Block[];
+
+  /**
+   * Global prompt settings (maxTokens, model, etc.).
+   */
   settings: PromptSettings;
+
+  /**
+   * Adds a block to the end of the blocks array. This can be text or template, etc.
+   */
   addBlock: (block: Block) => void;
+
+  /**
+   * Removes a block by ID.
+   */
   removeBlock: (blockId: string) => void;
+
+  /**
+   * Updates an existing block in place, matched by its id.
+   */
   updateBlock: (updatedBlock: Block) => void;
+
+  /**
+   * Replaces the global settings with new values.
+   */
   setSettings: (newSettings: PromptSettings) => void;
+
+  /**
+   * Moves a block from oldIndex to newIndex in the array (simple reorder).
+   */
   moveBlock: (oldIndex: number, newIndex: number) => void;
-  addFileBlock: (filePath: string, fileContent: string, language: string) => void;
-  setSingleFileBlock: (
+
+  /**
+   * Overwrites or creates a single FilesBlock containing the given file entries.
+   * If a file block doesn't exist, it creates one. If it exists, it overwrites it.
+   */
+  updateFileBlock: (
     fileEntries: {
       path: string;
       content: string;
       language: string;
     }[]
   ) => void;
+
+  /**
+   * Contains the current token usage for each block plus a total.
+   */
   tokenUsage: TokenUsage;
+
+  /**
+   * The tri-state-file-tree-selected files (from the Sidebar).
+   * Key = absolute path, value = file contents.
+   */
   selectedFiles: Record<string, string>;
+
+  /**
+   * The total tokens for the selected files from the tri-state selection in the sidebar.
+   */
   selectedFilesTokenCount: number;
+
+  /**
+   * Called by the file tree to update the user-selected files in the tri-state selection.
+   * This triggers a recalculation of selectedFilesTokenCount.
+   */
   updateSelectedFiles: (fileMap: Record<string, string>) => void;
+
+  /**
+   * Returns an array of file objects from selectedFiles with extension-based guessed languages.
+   */
   getSelectedFileEntries: () => Array<{ path: string; content: string; language: string }>;
+
+  /**
+   * Returns the final flattened prompt string from all blocks.
+   */
   getFlattenedPrompt: () => string;
+
+  /**
+   * Replaces the current composition with the imported blocks & settings (from XML, etc.).
+   */
   importComposition: (newBlocks: Block[], newSettings: PromptSettings) => void;
 }
 
+/**
+ * Default prompt settings used at initialization if the user has not changed them.
+ */
 const defaultSettings: PromptSettings = {
   maxTokens: 8000,
   model: 'gpt-4'
@@ -84,8 +159,7 @@ const PromptContext = createContext<PromptContextType>({
   updateBlock: () => {},
   setSettings: () => {},
   moveBlock: () => {},
-  addFileBlock: () => {},
-  setSingleFileBlock: () => {},
+  updateFileBlock: () => {},
   tokenUsage: {
     blockTokenUsage: {},
     totalTokens: 0
@@ -98,6 +172,10 @@ const PromptContext = createContext<PromptContextType>({
   importComposition: () => {}
 });
 
+/**
+ * Attempts to guess a file's language from its extension.
+ * This is used in getSelectedFileEntries for better code block highlighting.
+ */
 function guessLanguageFromExtension(ext: string): string {
   switch (ext.toLowerCase()) {
     case 'js':
@@ -132,24 +210,40 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   const [selectedFiles, setSelectedFiles] = useState<Record<string, string>>({});
   const [selectedFilesTokenCount, setSelectedFilesTokenCount] = useState<number>(0);
 
+  /**
+   * Basic method to add a new block (usually text/template). 
+   * For file blocks, see updateFileBlock() which enforces single-block usage.
+   */
   const addBlock = useCallback((block: Block) => {
     setBlocks((prev) => [...prev, block]);
   }, []);
 
+  /**
+   * Removes a block by its unique ID.
+   */
   const removeBlock = useCallback((blockId: string) => {
     setBlocks((prev) => prev.filter((b) => b.id !== blockId));
   }, []);
 
+  /**
+   * Update an existing block, matched by ID. If not found, does nothing.
+   */
   const updateBlock = useCallback((updatedBlock: Block) => {
     setBlocks((prev) => {
       return prev.map((b) => (b.id === updatedBlock.id ? updatedBlock : b));
     });
   }, []);
 
+  /**
+   * Update global prompt settings (maxTokens, model, etc.).
+   */
   const setSettings = useCallback((newSettings: PromptSettings) => {
     setSettingsState(newSettings);
   }, []);
 
+  /**
+   * Reorder a block from oldIndex to newIndex in the array.
+   */
   const moveBlock = useCallback((oldIndex: number, newIndex: number) => {
     setBlocks((prev) => {
       if (oldIndex < 0 || oldIndex >= prev.length) return prev;
@@ -163,140 +257,67 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   }, []);
 
   /**
-   * addFileBlock: Creates a single file block if none exist, or logs a message if
-   * one already exists. (MVP approach from earlier steps.)
+   * updateFileBlock:
+   * Only one FilesBlock is allowed in the composition. If none exists, create one; if it exists, overwrite it.
+   * - For convenience, we automatically set label = "File Block".
+   * - We also generate the project ASCII map if possible, storing it in projectAsciiMap.
+   * - includeProjectMap defaults to true (the user can toggle off in the UI).
    *
-   * For Step 17B, we default `includeProjectMap: true`.
+   * @param fileEntries array of { path, content, language }
    */
-  const addFileBlock = useCallback(
-    (filePath: string, fileContent: string, language: string) => {
-      const existingFileBlock = blocks.find((b) => b.type === 'files') as FilesBlock | undefined;
-      if (existingFileBlock) {
-        console.log(
-          '[PromptContext] addFileBlock called, but a file block already exists. Ignoring.'
-        );
-        return;
-      }
-
-      const fileName = path.basename(filePath);
-      const newBlock: FilesBlock = {
-        id: uuidv4(),
-        type: 'files',
-        label: 'File Block',
-        files: [
-          {
-            path: filePath,
-            content: fileContent,
-            language
-          }
-        ],
-        projectAsciiMap: '',
-        includeProjectMap: true
-      };
-
-      setBlocks((prev) => [...prev, newBlock]);
-
-      generateProjectAsciiMap('.')
-        .then((mapStr) => {
-          setBlocks((prevBlocks) => {
-            return prevBlocks.map((b) => {
-              if (b.id === newBlock.id && b.type === 'files') {
-                const fb = b as FilesBlock;
-                return {
-                  ...fb,
-                  projectAsciiMap: mapStr
-                };
-              }
-              return b;
-            });
-          });
-        })
-        .catch((err) => {
-          console.error('[PromptContext] Failed to generate project ASCII map:', err);
-        });
-    },
-    [blocks]
-  );
-
-  /**
-   * setSingleFileBlock: Overwrites or creates a file block that includes all given file entries.
-   * For Step 17B, we also default `includeProjectMap: true`.
-   */
-  const setSingleFileBlock = useCallback(
+  const updateFileBlock = useCallback(
     (fileEntries: { path: string; content: string; language: string }[]) => {
       setBlocks((prev) => {
+        // Find if we have an existing FilesBlock
         const existingBlockIndex = prev.findIndex((b) => b.type === 'files');
+        const newId = uuidv4();
+
+        // We'll create a "candidate" block
+        const candidate: FilesBlock = {
+          id: newId,
+          type: 'files',
+          label: 'File Block',
+          files: fileEntries.map((f) => ({
+            path: f.path,
+            content: f.content,
+            language: f.language
+          })),
+          projectAsciiMap: '',
+          includeProjectMap: true
+        };
+
+        // Async: we'll fill in projectAsciiMap after creation:
+        generateProjectAsciiMap('.')
+          .then((mapStr) => {
+            setBlocks((prevBlocks) =>
+              prevBlocks.map((b) => {
+                // Replace the newly created or updated block with the one that has projectAsciiMap
+                if (b.id === newId) {
+                  return {
+                    ...candidate,
+                    id: newId,
+                    projectAsciiMap: mapStr
+                  };
+                }
+                return b;
+              })
+            );
+          })
+          .catch((err) => {
+            console.error('[PromptContext] Failed to generate project ASCII map:', err);
+          });
+
+        // If no existing block, just add
         if (existingBlockIndex === -1) {
-          // no file block found, create one
-          const newBlock: FilesBlock = {
-            id: uuidv4(),
-            type: 'files',
-            label: 'File Block',
-            files: fileEntries.map((f) => ({
-              path: f.path,
-              content: f.content,
-              language: f.language
-            })),
-            projectAsciiMap: '',
-            includeProjectMap: true
-          };
-
-          generateProjectAsciiMap('.')
-            .then((mapStr) => {
-              setBlocks((prevBlocks) => {
-                return prevBlocks.map((b) => {
-                  if (b.id === newBlock.id && b.type === 'files') {
-                    const fb = b as FilesBlock;
-                    return {
-                      ...fb,
-                      projectAsciiMap: mapStr
-                    };
-                  }
-                  return b;
-                });
-              });
-            })
-            .catch((err) => {
-              console.error('[PromptContext] Failed to generate project ASCII map:', err);
-            });
-
-          return [...prev, newBlock];
+          return [...prev, candidate];
         } else {
-          // update existing
-          const existingBlock = prev[existingBlockIndex] as FilesBlock;
-          const updatedBlock: FilesBlock = {
-            ...existingBlock,
-            label: 'File Block',
-            files: fileEntries.map((f) => ({
-              path: f.path,
-              content: f.content,
-              language: f.language
-            })),
-            projectAsciiMap: '',
-            includeProjectMap: true
-          };
-
-          generateProjectAsciiMap('.')
-            .then((mapStr) => {
-              setBlocks((prevBlocks) => {
-                return prevBlocks.map((b) => {
-                  if (b.id === updatedBlock.id && b.type === 'files') {
-                    return {
-                      ...updatedBlock,
-                      projectAsciiMap: mapStr
-                    };
-                  }
-                  return b;
-                });
-              });
-            })
-            .catch((err) => {
-              console.error('[PromptContext] Failed to generate project ASCII map:', err);
-            });
-
-          // Remove old file blocks, add updated one
-          const filteredBlocks = prev.filter((b) => b.type !== 'files');
-          return [...filteredBlocks, updatedBlock];
+          // Overwrite the existing block
+          const newBlocks = [...prev];
+          newBlocks[existingBlockIndex] = candidate;
+          // Remove any other file blocks if they somehow exist
+          return newBlocks.filter(
+            (b, idx) => b.type !== 'files' || idx === existingBlockIndex
+          );
         }
       });
     },
@@ -324,7 +345,6 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
           break;
         case 'files': {
           const fb = block as FilesBlock;
-          // If a file map is stored and we're including it, add that text to the count
           const shouldIncludeMap = fb.includeProjectMap ?? true;
           const mapText = shouldIncludeMap && fb.projectAsciiMap ? fb.projectAsciiMap : '';
           const filesConcatenated = fb.files.map((f) => f.content).join('\n');
@@ -347,7 +367,8 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   }, [blocks, settings.model]);
 
   /**
-   * Update selectedFiles for manual token counting from the Sidebar tri-state logic.
+   * updateSelectedFiles: invoked from the tri-state file tree. This sets an internal map 
+   * of { filePath -> fileContent }, then we recalc total tokens for those selected files.
    */
   const updateSelectedFiles = useCallback((fileMap: Record<string, string>) => {
     setSelectedFiles(fileMap);
@@ -363,7 +384,8 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   }, []);
 
   /**
-   * Convert the selectedFiles map into an array of file entries for potential block usage.
+   * Convert the selectedFiles map into an array of file entries for potential block usage, 
+   * guessing language from the file extension.
    */
   const getSelectedFileEntries = useCallback(() => {
     return Object.entries(selectedFiles).map(([filePath, content]) => {
@@ -377,14 +399,14 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   }, [selectedFiles]);
 
   /**
-   * Returns the final flattened prompt string.
+   * Returns a single flattened prompt string from all blocks in order.
    */
   const getFlattenedPrompt = useCallback((): string => {
     return flattenBlocks(blocks);
   }, [blocks]);
 
   /**
-   * importComposition: Replaces our current blocks/settings with the ones from the imported XML.
+   * Replaces all blocks/settings with the newly imported composition from an XML file.
    */
   const importComposition = useCallback((newBlocks: Block[], newSettings: PromptSettings) => {
     setBlocks(newBlocks);
@@ -392,19 +414,20 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   }, []);
 
   /**
-   * Handle "add-file-block" messages from the main process
+   * Listen for main process messages that want to update the file block
+   * e.g. "add-file-block" => we rename to "update-file-block" concept
    */
   useEffect(() => {
-    function handleAddFileBlock(
+    function handleFileBlockUpdate(
       _event: any,
       data: { path: string; content: string; language: string }
     ) {
-      console.log('[PromptContext] Received add-file-block message:', data);
-      addFileBlock(data.path, data.content, data.language);
+      console.log('[PromptContext] Received "add-file-block" message (renamed to updateFileBlock):', data);
+      updateFileBlock([{ path: data.path, content: data.content, language: data.language }]);
     }
 
     if (window.electronAPI && typeof window.electronAPI.onMessage === 'function') {
-      window.electronAPI.onMessage('add-file-block', handleAddFileBlock);
+      window.electronAPI.onMessage('add-file-block', handleFileBlockUpdate);
     }
 
     return () => {
@@ -412,10 +435,10 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
         window.electronAPI &&
         typeof window.electronAPI.removeChannelListener === 'function'
       ) {
-        window.electronAPI.removeChannelListener('add-file-block', handleAddFileBlock);
+        window.electronAPI.removeChannelListener('add-file-block', handleFileBlockUpdate);
       }
     };
-  }, [addFileBlock]);
+  }, [updateFileBlock]);
 
   const contextValue: PromptContextType = {
     blocks,
@@ -425,8 +448,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     updateBlock,
     setSettings,
     moveBlock,
-    addFileBlock,
-    setSingleFileBlock,
+    updateFileBlock,
     tokenUsage,
     selectedFiles,
     selectedFilesTokenCount,
@@ -443,6 +465,10 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   );
 };
 
+/**
+ * usePrompt is a convenience hook for accessing the PromptContext.
+ */
 export const usePrompt = (): PromptContextType => {
   return useContext(PromptContext);
 };
+      
