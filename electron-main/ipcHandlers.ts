@@ -1,24 +1,12 @@
 /**
  * @file ipcHandlers.ts
  * @description
- * This file registers IPC handlers for interacting with the local file system
- * and other tasks, including "export-xml" for saving the XML file,
- * "import-xml" for loading it, "list-directory" for reading directories,
- * "read-file" for reading file contents, "export-file-map" for saving a file map ASCII text file,
- * and now "create-folder" to create a new folder in the given parentPath.
+ * Consolidated directory reading logic to avoid duplication for project vs. external directories.
  *
- * Key Responsibilities:
- *  - "list-directory": returns { absolutePath, baseName, children } for the given dirPath
- *  - "read-file": returns the content of a file as a string
- *  - "export-xml": opens a save dialog, writes the XML file if confirmed
- *  - "import-xml": opens a file dialog for .xml
- *  - "export-file-map": opens a save dialog, writes ASCII tree to a .txt if confirmed
- *  - "create-folder": creates a new folder in parentPath, ensuring no name collisions by appending "(1)", "(2)", etc.
- *
- * Dependencies:
- *  - electron (ipcMain, dialog)
- *  - fs, path (Node.js)
- *  - ignore (to parse .gitignore)
+ * Step 1: Consolidate Directory Reading Logic
+ *  - Created a single helper: readDirectoryTree()
+ *  - Removed readDirectoryRecursive() and readDirectoryForTarget()
+ *  - Now we handle project vs. external logic inside readDirectoryTree()
  */
 
 import { ipcMain, dialog } from 'electron';
@@ -28,7 +16,7 @@ import ignore from 'ignore';
 
 // Allowed file extensions for text-based files
 const ALLOWED_EXTENSIONS = [
-  '.txt', '.md', '.js', '.ts', '.tsx', '.jsx', '.json', '.py', '.css', '.html'
+  '.txt', '.md', '.js', '.ts', '.tsx', '.jsx', '.json', '.py', '.css', '.html', '.sql'
 ];
 
 interface TreeNode {
@@ -38,37 +26,40 @@ interface TreeNode {
   children?: TreeNode[];
 }
 
-/**
- * Recursively reads directory contents, filters out ignored paths,
- * returns a nested JSON structure of directories/files.
- */
-function readDirectoryRecursive(
+// --- STEP 1 REFRACTOR ---
+// New single function to recursively read a directory, applying either project-root or external `.gitignore` logic.
+function readDirectoryTree(
   dirPath: string,
-  ig: ignore.Ignore
+  ig: ignore.Ignore,
+  isProjectDir: boolean,
+  projectRoot: string
 ): TreeNode[] {
-  let results: TreeNode[] = [];
+  const results: TreeNode[] = [];
 
-  let dirEntries: string[];
+  let entries: string[];
   try {
-    dirEntries = fs.readdirSync(dirPath);
+    entries = fs.readdirSync(dirPath);
   } catch (err) {
     console.error('[list-directory] Failed to read dir:', dirPath, err);
     return results;
   }
 
-  // Sort entries
-  dirEntries.sort((a, b) => a.localeCompare(b));
+  // Sort for consistent ordering
+  entries.sort((a, b) => a.localeCompare(b));
 
-  for (const entry of dirEntries) {
-    // Skip .git folder
-    if (entry === '.git') {
-      continue;
-    } else if (entry === '.DS_Store') {
+  for (const entry of entries) {
+    if (entry === '.git' || entry === '.DS_Store') {
       continue;
     }
-
     const fullPath = path.join(dirPath, entry);
-    const relPath = path.relative(process.cwd(), fullPath);
+
+    // Distinguish path to ignore-check by isProjectDir
+    let relPath = '';
+    if (isProjectDir) {
+      relPath = path.relative(projectRoot, fullPath);
+    } else {
+      relPath = path.relative(dirPath, fullPath); 
+    }
 
     if (ig.ignores(relPath)) {
       continue;
@@ -86,7 +77,7 @@ function readDirectoryRecursive(
         name: entry,
         path: fullPath,
         type: 'directory',
-        children: readDirectoryRecursive(fullPath, ig)
+        children: readDirectoryTree(fullPath, ig, isProjectDir, projectRoot)
       });
     } else {
       const ext = path.extname(entry).toLowerCase();
@@ -103,38 +94,40 @@ function readDirectoryRecursive(
   return results;
 }
 
-/**
- * Creates a new folder in the given parentPath. If a folder with the given name already
- * exists, we append "(1)", "(2)", etc., until we find a unique folder name.
- * 
- * @param parentPath - The directory in which to create the folder
- * @param folderName - The desired name, e.g., "New Folder"
- * @returns The final folder path that was created, or null if creation failed
- */
-function createFolder(parentPath: string, folderName: string): string | null {
-  let baseName = folderName;
-  let suffix = 1;
+// The consolidated function used by 'list-directory'.
+function createIgnoreForPath(targetPath: string, projectRoot: string) {
+  let ig = ignore();
 
-  let targetPath = path.join(parentPath, baseName);
-  while (fs.existsSync(targetPath)) {
-    suffix += 1;
-    baseName = `${folderName} (${suffix})`;
-    targetPath = path.join(parentPath, baseName);
+  // If we’re dealing with the project root or subfolders of it, we want the root-level .gitignore
+  // Otherwise, we look for an external .gitignore or apply default ignores.
+  const isProjectDir = targetPath.startsWith(projectRoot);
+
+  if (isProjectDir) {
+    const gitignorePath = path.join(projectRoot, '.gitignore');
+    if (fs.existsSync(gitignorePath)) {
+      const gitignoreContent = fs.readFileSync(gitignorePath, 'utf-8');
+      ig = ig.add(gitignoreContent.split('\n'));
+    }
+  } else {
+    const externalGitignorePath = path.join(targetPath, '.gitignore');
+    if (fs.existsSync(externalGitignorePath)) {
+      const gitignoreContent = fs.readFileSync(externalGitignorePath, 'utf-8');
+      ig = ig.add(gitignoreContent.split('\n'));
+    } else {
+      // Default patterns for external directories
+      ig = ig.add([
+        'node_modules',
+        '.git',
+        '.DS_Store',
+        '*.log'
+      ]);
+    }
   }
 
-  try {
-    fs.mkdirSync(targetPath);
-    console.log('[create-folder] Successfully created folder at:', targetPath);
-    return targetPath;
-  } catch (err) {
-    console.error('[create-folder] Error creating folder:', err);
-    return null;
-  }
+  return { ig, isProjectDir };
 }
 
-/**
- * Registers all IPC handlers used by the renderer process.
- */
+
 export function registerIpcHandlers(): void {
   // list-directory
   ipcMain.handle('list-directory', async (_event, dirPath: string) => {
@@ -144,109 +137,11 @@ export function registerIpcHandlers(): void {
     }
 
     console.log('[list-directory] Processing directory:', targetPath);
-    
-    // Create ignore instance specific to the targetPath
-    let ig = ignore();
-    
-    // For the main project directory, use .gitignore
-    if (targetPath.startsWith(process.cwd())) {
-      const gitignorePath = path.join(process.cwd(), '.gitignore');
-      if (fs.existsSync(gitignorePath)) {
-        console.log('[list-directory] Using .gitignore from project root');
-        const gitignoreContent = fs.readFileSync(gitignorePath, 'utf-8');
-        ig = ig.add(gitignoreContent.split('\n'));
-      }
-    } else {
-      // For external directories, check if they have their own .gitignore
-      const externalGitignorePath = path.join(targetPath, '.gitignore');
-      if (fs.existsSync(externalGitignorePath)) {
-        console.log('[list-directory] Using .gitignore from external directory');
-        const gitignoreContent = fs.readFileSync(externalGitignorePath, 'utf-8');
-        ig = ig.add(gitignoreContent.split('\n'));
-      } else {
-        // Default ignore patterns for external directories
-        console.log('[list-directory] Using default ignore patterns for external directory');
-        ig = ig.add([
-          'node_modules',
-          '.git',
-          '.DS_Store',
-          '*.log'
-        ]);
-      }
-    }
 
-    // For external directories, we need to modify how we check if a path is ignored
-    const isProjectDir = targetPath.startsWith(process.cwd());
-    
-    // Customized directory reading function for the specific target
-    function readDirectoryForTarget(dirToRead: string, ignoreObj: ignore.Ignore): TreeNode[] {
-      let results: TreeNode[] = [];
-    
-      let dirEntries: string[];
-      try {
-        dirEntries = fs.readdirSync(dirToRead);
-      } catch (err) {
-        console.error('[list-directory] Failed to read dir:', dirToRead, err);
-        return results;
-      }
-    
-      // Sort entries
-      dirEntries.sort((a, b) => a.localeCompare(b));
-    
-      for (const entry of dirEntries) {
-        // Skip .git folder and .DS_Store files
-        if (entry === '.git' || entry === '.DS_Store') {
-          continue;
-        }
-    
-        const fullPath = path.join(dirToRead, entry);
-        
-        // Handle ignores differently for project vs external directories
-        let shouldIgnore = false;
-        if (isProjectDir) {
-          // For project directory, use relative path from project root
-          const relPath = path.relative(process.cwd(), fullPath);
-          shouldIgnore = ignoreObj.ignores(relPath);
-        } else {
-          // For external directories, use relative path from the target directory
-          const relPath = path.relative(targetPath, fullPath);
-          shouldIgnore = ignoreObj.ignores(relPath);
-        }
-        
-        if (shouldIgnore) {
-          continue;
-        }
-    
-        let stats: fs.Stats;
-        try {
-          stats = fs.statSync(fullPath);
-        } catch {
-          continue;
-        }
-    
-        if (stats.isDirectory()) {
-          results.push({
-            name: entry,
-            path: fullPath,
-            type: 'directory',
-            children: readDirectoryForTarget(fullPath, ignoreObj)
-          });
-        } else {
-          const ext = path.extname(entry).toLowerCase();
-          if (ALLOWED_EXTENSIONS.includes(ext)) {
-            results.push({
-              name: entry,
-              path: fullPath,
-              type: 'file'
-            });
-          }
-        }
-      }
-    
-      return results;
-    }
+    const projectRoot = process.cwd();
+    const { ig, isProjectDir } = createIgnoreForPath(targetPath, projectRoot);
 
-    const tree = readDirectoryForTarget(targetPath, ig);
+    const tree = readDirectoryTree(targetPath, ig, isProjectDir, projectRoot);
     const baseName = path.basename(targetPath);
 
     return {
@@ -326,12 +221,7 @@ export function registerIpcHandlers(): void {
     }
   });
 
-  /**
-   * export-file-map
-   * Opens a save dialog for saving an ASCII file map.
-   * Input: { defaultFileName: string, fileMapContent: string }
-   * Returns: boolean (true if saved, false if canceled)
-   */
+  // export-file-map
   ipcMain.handle('export-file-map', async (_event, { defaultFileName, fileMapContent }) => {
     try {
       const saveDialogOptions: Electron.SaveDialogOptions = {
@@ -362,8 +252,6 @@ export function registerIpcHandlers(): void {
   /**
    * show-open-dialog
    * Opens a dialog for selecting directories
-   * Input: options object for dialog.showOpenDialog 
-   * Returns: { canceled: boolean, filePaths: string[] } - The result from the dialog
    */
   ipcMain.handle('show-open-dialog', async (_event, options: Electron.OpenDialogOptions) => {
     return dialog.showOpenDialog(options);
@@ -372,10 +260,25 @@ export function registerIpcHandlers(): void {
   /**
    * create-folder
    * Creates a new folder with a unique name in the given parent directory.
-   * Input: { parentPath: string, folderName: string }
-   * Returns: string | null (path to created folder, or null if creation failed)
    */
   ipcMain.handle('create-folder', async (_event, { parentPath, folderName }: { parentPath: string; folderName: string }) => {
-    return createFolder(parentPath, folderName);
+    let baseName = folderName;
+    let suffix = 1;
+    let targetPath = path.join(parentPath, baseName);
+
+    while (fs.existsSync(targetPath)) {
+      suffix += 1;
+      baseName = `${folderName} (${suffix})`;
+      targetPath = path.join(parentPath, baseName);
+    }
+
+    try {
+      fs.mkdirSync(targetPath);
+      console.log('[create-folder] Successfully created folder at:', targetPath);
+      return targetPath;
+    } catch (err) {
+      console.error('[create-folder] Error creating folder:', err);
+      return null;
+    }
   });
 }
