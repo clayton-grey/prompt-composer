@@ -1,8 +1,10 @@
+
 /**
  * @file ipcHandlers.ts
  * @description
- * Consolidated directory reading logic (step 1) + Asynchronous FS operations (step 2).
- * We now use `fs.promises` (readdir, stat, readFile) instead of synchronous calls.
+ * Consolidated directory reading logic + Asynchronous FS operations. 
+ * We also register IPC handlers for reading/writing files, importing/exporting XML,
+ * and now verifying file existence for XML import validation.
  */
 
 import { ipcMain, dialog } from 'electron';
@@ -24,7 +26,6 @@ interface TreeNode {
 
 /**
  * Creates an ignore object based on .gitignore or default patterns.
- * We'll make this async for consistency, although reading .gitignore is minor.
  */
 async function createIgnoreForPath(
   targetPath: string,
@@ -39,7 +40,7 @@ async function createIgnoreForPath(
       const gitignoreContent = await fs.promises.readFile(gitignorePath, 'utf-8');
       ig = ig.add(gitignoreContent.split('\n'));
     } catch {
-      // If .gitignore doesn't exist or fails, just skip.
+      // If .gitignore doesn't exist, skip
     }
   } else {
     const externalGitignorePath = path.join(targetPath, '.gitignore');
@@ -47,7 +48,7 @@ async function createIgnoreForPath(
       const gitignoreContent = await fs.promises.readFile(externalGitignorePath, 'utf-8');
       ig = ig.add(gitignoreContent.split('\n'));
     } catch {
-      // If .gitignore doesn't exist, apply default ignore patterns
+      // If .gitignore doesn't exist, apply defaults
       ig = ig.add([
         'node_modules',
         '.git',
@@ -102,7 +103,7 @@ async function readDirectoryTree(
     try {
       stats = await fs.promises.stat(fullPath);
     } catch {
-      // If we fail to stat, skip this entry
+      // If we fail to stat, skip
       continue;
     }
 
@@ -153,11 +154,11 @@ export function registerIpcHandlers(): void {
       };
     } catch (err) {
       console.error('[list-directory] Async error:', err);
-      throw err; // Let the renderer handle this error
+      throw err;
     }
   });
 
-  // read-file (still synchronous or we can easily adapt to async)
+  // read-file
   ipcMain.handle('read-file', async (_event, filePath: string) => {
     try {
       console.log('[read-file] Reading file:', filePath);
@@ -281,7 +282,7 @@ export function registerIpcHandlers(): void {
           targetPath = path.join(parentPath, baseName);
         }
       } catch {
-        // stat threw an error => it doesn't exist, so we can mkdir
+        // stat threw => doesn't exist, so we can mkdir
         break;
       }
     }
@@ -293,6 +294,20 @@ export function registerIpcHandlers(): void {
     } catch (err) {
       console.error('[create-folder] Error creating folder:', err);
       return null;
+    }
+  });
+
+  /**
+   * verify-file-existence
+   * Checks if the given file path exists on the local file system.
+   * Returns a boolean. Used for XML import validation.
+   */
+  ipcMain.handle('verify-file-existence', async (_event, filePath: string) => {
+    try {
+      await fs.promises.stat(filePath);
+      return true; // File exists
+    } catch {
+      return false; // File does not exist
     }
   });
 }

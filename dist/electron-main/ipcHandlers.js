@@ -2,8 +2,9 @@
 /**
  * @file ipcHandlers.ts
  * @description
- * Consolidated directory reading logic (step 1) + Asynchronous FS operations (step 2).
- * We now use `fs.promises` (readdir, stat, readFile) instead of synchronous calls.
+ * Consolidated directory reading logic + Asynchronous FS operations.
+ * We also register IPC handlers for reading/writing files, importing/exporting XML,
+ * and now verifying file existence for XML import validation.
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -20,7 +21,6 @@ const ALLOWED_EXTENSIONS = [
 ];
 /**
  * Creates an ignore object based on .gitignore or default patterns.
- * We'll make this async for consistency, although reading .gitignore is minor.
  */
 async function createIgnoreForPath(targetPath, projectRoot) {
     let ig = (0, ignore_1.default)();
@@ -32,7 +32,7 @@ async function createIgnoreForPath(targetPath, projectRoot) {
             ig = ig.add(gitignoreContent.split('\n'));
         }
         catch {
-            // If .gitignore doesn't exist or fails, just skip.
+            // If .gitignore doesn't exist, skip
         }
     }
     else {
@@ -42,7 +42,7 @@ async function createIgnoreForPath(targetPath, projectRoot) {
             ig = ig.add(gitignoreContent.split('\n'));
         }
         catch {
-            // If .gitignore doesn't exist, apply default ignore patterns
+            // If .gitignore doesn't exist, apply defaults
             ig = ig.add([
                 'node_modules',
                 '.git',
@@ -86,7 +86,7 @@ async function readDirectoryTree(dirPath, ig, isProjectDir, projectRoot) {
             stats = await fs_1.default.promises.stat(fullPath);
         }
         catch {
-            // If we fail to stat, skip this entry
+            // If we fail to stat, skip
             continue;
         }
         if (stats.isDirectory()) {
@@ -132,10 +132,10 @@ function registerIpcHandlers() {
         }
         catch (err) {
             console.error('[list-directory] Async error:', err);
-            throw err; // Let the renderer handle this error
+            throw err;
         }
     });
-    // read-file (still synchronous or we can easily adapt to async)
+    // read-file
     electron_1.ipcMain.handle('read-file', async (_event, filePath) => {
         try {
             console.log('[read-file] Reading file:', filePath);
@@ -249,7 +249,7 @@ function registerIpcHandlers() {
                 }
             }
             catch {
-                // stat threw an error => it doesn't exist, so we can mkdir
+                // stat threw => doesn't exist, so we can mkdir
                 break;
             }
         }
@@ -261,6 +261,20 @@ function registerIpcHandlers() {
         catch (err) {
             console.error('[create-folder] Error creating folder:', err);
             return null;
+        }
+    });
+    /**
+     * verify-file-existence
+     * Checks if the given file path exists on the local file system.
+     * Returns a boolean. Used for XML import validation.
+     */
+    electron_1.ipcMain.handle('verify-file-existence', async (_event, filePath) => {
+        try {
+            await fs_1.default.promises.stat(filePath);
+            return true; // File exists
+        }
+        catch {
+            return false; // File does not exist
         }
     });
 }

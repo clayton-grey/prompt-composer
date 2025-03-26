@@ -3,110 +3,25 @@
  * @file xmlParser.ts
  * @description
  * Provides functions to serialize and deserialize the Prompt Composer's data to/from XML.
+ * Also includes new logic (importAndValidateFromXML) to handle missing or invalid file references
+ * during XML import.
  *
  * Key Exports:
- *  - exportToXML(data: any): string
- *  - importFromXML(xmlString: string): { version: string, settings: ..., blocks: Block[] }
+ *  - exportToXML(data): string
+ *  - importFromXML(xmlString): { version, settings, blocks }
+ *  - importAndValidateFromXML(xmlString): Promise<{ version, settings, blocks }>
  *
- * Implementation Details:
- *  - We use DOMParser in the renderer for parsing (browser-based).
- *  - For Node/Electron environment, we'd use a library, but here we assume the code runs in renderer context.
- *  - We handle blocks of type text/template/files. For file blocks, we parse <file> subnodes with CDATA.
- *  - If a block is 'template', we parse <variables> as well.
- *
- * @notes
- *  - In the future, we could add more robust error handling if the XML is invalid or missing required tags.
+ * Implementation for Validation:
+ *  - After parsing the XML, we iterate over any <files> blocks.
+ *  - For each file path, we invoke window.electronAPI.verifyFileExistence(path).
+ *  - If the file does not exist, we skip it and log a warning.
+ *  - If all files in a block are invalid, that block ends up with an empty files array.
+ *  - We return the final set of blocks, ensuring the system does not crash or keep invalid paths.
  */
 
 import { Block, TextBlock, TemplateBlock, FilesBlock } from '../types/Block';
 
-/**
- * exportToXML
- * @param data: { version: string, settings: { maxTokens, model }, blocks: Block[] }
- * @returns string of well-formed XML
- *
- * @example
- * const xmlString = exportToXML({
- *   version: '1.0',
- *   settings: { maxTokens: 8000, model: 'gpt-4' },
- *   blocks: [...]
- * });
- */
-export function exportToXML(data: {
-  version: string;
-  settings: { maxTokens: number; model: string };
-  blocks: Block[];
-}): string {
-  const { version, settings, blocks } = data;
-  const { maxTokens, model } = settings;
-
-  // Basic XML structure
-  let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<promptComposer version="${version}">\n`;
-  xml += `  <settings>\n`;
-  xml += `    <maxTokens>${maxTokens}</maxTokens>\n`;
-  xml += `    <model>${model}</model>\n`;
-  xml += `  </settings>\n`;
-  xml += `  <blocks>\n`;
-
-  for (const block of blocks) {
-    xml += `    <block id="${block.id}" type="${block.type}" label="${escapeXml(block.label)}">\n`;
-
-    if (block.type === 'text') {
-      const b = block as TextBlock;
-      xml += `      <content>${escapeXml(b.content)}</content>\n`;
-    } else if (block.type === 'template') {
-      const b = block as TemplateBlock;
-      xml += `      <content>${escapeXml(b.content)}</content>\n`;
-      if (b.variables && b.variables.length > 0) {
-        xml += `      <variables>\n`;
-        for (const v of b.variables) {
-          xml += `        <variable name="${escapeXml(v.name)}" default="${escapeXml(v.default)}" />\n`;
-        }
-        xml += `      </variables>\n`;
-      }
-    } else if (block.type === 'files') {
-      const b = block as FilesBlock;
-      if (b.files && b.files.length > 0) {
-        xml += `      <files>\n`;
-        for (const fileObj of b.files) {
-          xml += `        <file path="${escapeXml(fileObj.path)}" language="${escapeXml(fileObj.language)}">\n`;
-          // Wrap the file content in CDATA
-          xml += `<![CDATA[\n${fileObj.content}\n]/]>`;
-          xml += `\n        </file>\n`;
-        }
-        xml += `      </files>\n`;
-      }
-    }
-
-    xml += `    </block>\n`;
-  }
-
-  xml += `  </blocks>\n</promptComposer>\n`;
-  return xml;
-}
-
-/**
- * importFromXML
- * @param xmlString - The XML string representing a prompt composition
- * @returns { version: string, settings: { maxTokens, model }, blocks: Block[] }
- *
- * @example
- * const { version, settings, blocks } = importFromXML(xmlString);
- *
- * Implementation:
- *  1) Parse the <promptComposer> root, read version
- *  2) Extract <settings><maxTokens>, <model>
- *  3) Loop over <block> elements, read type, label, etc.
- *  4) For text blocks: read <content>
- *  5) For template blocks: read <content>, <variables><variable .../>
- *  6) For files blocks: read <files><file path="" language=""> <![CDATA[ ... ]/]></file>
- *  7) Return the structured data
- *
- * @notes
- *  - We assume well-formed XML. Minimal error checking is done.
- *  - If parse fails, we throw an error or return partial data. 
- *  - This function should be called by the renderer after openXml, to update the context state.
- */
+// Existing importFromXML, used internally:
 export function importFromXML(xmlString: string): {
   version: string;
   settings: { maxTokens: number; model: string };
@@ -201,11 +116,8 @@ export function importFromXML(xmlString: string): {
           for (const fEl of fileEls) {
             const filePath = fEl.getAttribute('path') || '';
             const language = fEl.getAttribute('language') || 'plaintext';
-
-            // The file content is stored in the textContent, inside a CDATA block
             const cdataContent = fEl.textContent || '';
-            // We do not do fancy unescaping for now, as it's within CDATA
-            // But we can strip leading/trailing newlines if desired:
+            // Remove leading/trailing newlines from CDATA
             const fileContent = cdataContent.replace(/^\n/, '').replace(/\n$/, '');
 
             filesBlock.files.push({
@@ -219,7 +131,6 @@ export function importFromXML(xmlString: string): {
         break;
       }
       default:
-        // Unknown block type. We could skip or throw. Let's skip for safety.
         console.warn(`[importFromXML] Skipping unknown block type: ${type}`);
         break;
     }
@@ -233,8 +144,106 @@ export function importFromXML(xmlString: string): {
 }
 
 /**
- * escapeXml - Minimal XML entity escaping for attribute/element text
+ * importAndValidateFromXML
+ * @description
+ * An async wrapper around importFromXML that verifies each file path in <files> blocks 
+ * actually exists on the local file system. Invalid references are removed or skipped.
+ * 
+ * @param xmlString - The raw XML content
+ * @returns a Promise resolving to { version, settings, blocks }, but with 
+ *          invalid file references removed from the 'blocks'.
  */
+export async function importAndValidateFromXML(xmlString: string): Promise<{
+  version: string;
+  settings: { maxTokens: number; model: string };
+  blocks: Block[];
+}> {
+  // 1) Parse the XML normally
+  const data = importFromXML(xmlString);
+
+  // 2) For each "files" block, check file existence
+  if (!window.electronAPI?.verifyFileExistence) {
+    console.warn('[importAndValidateFromXML] No electronAPI.verifyFileExistence found. Skipping path validation.');
+    return data;
+  }
+
+  // Because we must do async checks, we iterate over the blocks
+  for (const blk of data.blocks) {
+    if (blk.type === 'files') {
+      const filesBlock = blk as FilesBlock;
+      const validFiles = [];
+      for (const fObj of filesBlock.files) {
+        const doesExist = await window.electronAPI.verifyFileExistence(fObj.path);
+        if (doesExist) {
+          validFiles.push(fObj);
+        } else {
+          console.warn(`[importAndValidateFromXML] File does not exist: ${fObj.path}. Skipping.`);
+        }
+      }
+      filesBlock.files = validFiles;
+    }
+  }
+
+  return data;
+}
+
+/**
+ * exportToXML
+ * @param data: { version, settings, blocks }
+ * @returns string of well-formed XML
+ */
+export function exportToXML(data: {
+  version: string;
+  settings: { maxTokens: number; model: string };
+  blocks: Block[];
+}): string {
+  const { version, settings, blocks } = data;
+  const { maxTokens, model } = settings;
+
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>\n<promptComposer version="${version}">\n`;
+  xml += `  <settings>\n`;
+  xml += `    <maxTokens>${maxTokens}</maxTokens>\n`;
+  xml += `    <model>${model}</model>\n`;
+  xml += `  </settings>\n`;
+  xml += `  <blocks>\n`;
+
+  for (const block of blocks) {
+    xml += `    <block id="${block.id}" type="${block.type}" label="${escapeXml(block.label)}">\n`;
+
+    if (block.type === 'text') {
+      const b = block as TextBlock;
+      xml += `      <content>${escapeXml(b.content)}</content>\n`;
+    } else if (block.type === 'template') {
+      const b = block as TemplateBlock;
+      xml += `      <content>${escapeXml(b.content)}</content>\n`;
+      if (b.variables && b.variables.length > 0) {
+        xml += `      <variables>\n`;
+        for (const v of b.variables) {
+          xml += `        <variable name="${escapeXml(v.name)}" default="${escapeXml(v.default)}" />\n`;
+        }
+        xml += `      </variables>\n`;
+      }
+    } else if (block.type === 'files') {
+      const b = block as FilesBlock;
+      if (b.files && b.files.length > 0) {
+        xml += `      <files>\n`;
+        for (const fileObj of b.files) {
+          xml += `        <file path="${escapeXml(fileObj.path)}" language="${escapeXml(fileObj.language)}">\n`;
+          xml += `<![CDATA[\n${fileObj.content}\n]\]>`;
+          xml += `\n        </file>\n`;
+        }
+        xml += `      </files>\n`;
+      }
+    }
+
+    xml += `    </block>\n`;
+  }
+
+  xml += `  </blocks>\n</promptComposer>\n`;
+  return xml;
+}
+
+/** Utility: escape XML entities in text content */
 function escapeXml(str: string): string {
   return str
     .replace(/&/g, '&amp;')
@@ -244,9 +253,7 @@ function escapeXml(str: string): string {
     .replace(/>/g, '&gt;');
 }
 
-/**
- * unescapeXml - Reverse of escapeXml
- */
+/** Utility: unescape XML entities */
 function unescapeXml(str: string): string {
   return str
     .replace(/&quot;/g, '"')

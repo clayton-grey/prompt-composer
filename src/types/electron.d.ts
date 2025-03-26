@@ -1,8 +1,10 @@
+
 /**
  * @file electron.d.ts
  * @description
  * Type definitions for the electron API that is exposed to the renderer process
- * via the preload script.
+ * via the preload script. We update this file to include verifyFileExistence 
+ * for XML import validation.
  */
 
 export interface ListDirectoryResult {
@@ -24,7 +26,7 @@ interface ElectronAPI {
   onMessage: (channel: string, callback: (data: any) => void) => void;
 
   /**
-   * Show the Open Dialog to select directories
+   * Show the Open Dialog to select files/folders
    */
   showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>;
 
@@ -40,23 +42,18 @@ interface ElectronAPI {
 
   /**
    * Remove a listener for a given channel
-   * @param channel The channel name
-   * @param callback The exact same function reference used in onMessage
    */
   removeChannelListener: (channel: string, callback: (event: any, data: any) => void) => void;
 
   /**
-   * Old leftover from prior code:
-   * removeFileChangeListener is still here if needed by the user, but not used for open dialog
-   */
-  removeFileChangeListener: (callback: (event: any, data: any) => void) => void;
-  
-  /**
    * Creates a new folder in the specified parent directory
-   * @param args Object containing parentPath and folderName
-   * @returns Promise resolving to the path of the created folder, or null if creation failed
    */
   createFolder: (args: { parentPath: string; folderName: string }) => Promise<string | null>;
+
+  /**
+   * Verify if the specified file path exists on the local disk.
+   */
+  verifyFileExistence: (filePath: string) => Promise<boolean>;
 }
 
 // Add electronAPI to Window interface

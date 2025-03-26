@@ -6,28 +6,27 @@
  *  - Copy Prompt button
  *  - Export XML button
  *  - Import XML button
- *  - NEW: Theme toggle button (light/dark) using ThemeContext
+ *  - Theme toggle (light/dark)
  *
  * Implementation:
  *  1) handleCopy: copies the flattened prompt to clipboard
- *  2) handleExportXML: calls exportToXML, then electronAPI.exportXml
- *  3) handleImportXML: calls electronAPI.openXml, parse with importFromXML, updates context
- *  4) toggleDarkMode: flips the darkMode boolean from ThemeContext
- *
- * @notes
- *  - The theme toggle is a simple button that calls toggleDarkMode.
- *  - The label changes based on current mode for user clarity.
+ *  2) handleExportXML: serializes the entire composition to XML and saves via electron
+ *  3) handleImportXML: now calls importAndValidateFromXML to skip invalid file references
+ *  4) handleThemeToggle: flips darkMode
  */
 
 import React from 'react';
 import { usePrompt } from '../context/PromptContext';
-import { exportToXML, importFromXML } from '../utils/xmlParser';
+import { exportToXML, importAndValidateFromXML } from '../utils/xmlParser';
 import { useTheme } from '../context/ThemeContext';
 
 const TopBar: React.FC = () => {
   const { getFlattenedPrompt, blocks, settings, importComposition } = usePrompt();
   const { darkMode, toggleDarkMode } = useTheme();
 
+  /**
+   * Copies the flattened prompt to clipboard
+   */
   const handleCopy = async () => {
     try {
       const promptString = getFlattenedPrompt();
@@ -43,7 +42,6 @@ const TopBar: React.FC = () => {
    */
   const handleExportXML = async () => {
     try {
-      // Build the data structure for export
       const data = {
         version: '1.0',
         settings: {
@@ -52,10 +50,8 @@ const TopBar: React.FC = () => {
         },
         blocks
       };
-
       const xmlString = exportToXML(data);
 
-      // Attempt to export using the electronAPI
       const defaultFileName = 'prompt_composition.xml';
       const result = await window.electronAPI.exportXml({
         defaultFileName,
@@ -73,7 +69,8 @@ const TopBar: React.FC = () => {
   };
 
   /**
-   * Imports a composition from an XML file, replacing our current blocks & settings.
+   * Imports a composition from an XML file, using importAndValidateFromXML to 
+   * skip missing/invalid file references. Then updates the context.
    */
   const handleImportXML = async () => {
     try {
@@ -82,20 +79,17 @@ const TopBar: React.FC = () => {
         console.log('[TopBar] No XML content returned (user canceled or error).');
         return;
       }
-      // parse the XML and get blocks/settings
-      const data = importFromXML(content);
-      // now we feed it into the context
+
+      // parse the XML with validation
+      const data = await importAndValidateFromXML(content);
       importComposition(data.blocks, data.settings);
-      console.log('[TopBar] Successfully imported XML composition.');
+
+      console.log('[TopBar] Successfully imported XML composition (with validated file references).');
     } catch (err) {
       console.error('[TopBar] Failed to import XML:', err);
-      // Optionally show a user notification
     }
   };
 
-  /**
-   * Toggles the dark/light theme by flipping darkMode
-   */
   const handleThemeToggle = () => {
     toggleDarkMode();
   };
