@@ -1,4 +1,3 @@
-
 /**
  * @file Sidebar.tsx
  * @description
@@ -89,16 +88,28 @@ const Sidebar: React.FC = () => {
         <div className="flex items-center gap-1">
           <button
             onClick={addFolder}
-            className="text-xs border border-gray-500 rounded px-2 py-1 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100"
+            className="text-xs rounded p-1 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100"
+            title="Add Folder"
           >
-            Add Folder
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-folder-plus-icon lucide-folder-plus">
+              <path d="M12 10v6"/>
+              <path d="M9 13h6"/>
+              <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>
+            </svg>
           </button>
-          {/* Step 2: "Refresh" button */}
+          {/* Step 2: "Refresh" button with SVG icon */}
           <button
             onClick={handleRefresh}
-            className="text-xs border border-gray-500 rounded px-2 py-1 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100"
+            className="text-xs rounded p-1 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100"
+            title="Refresh Folders"
           >
-            Refresh
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="lucide lucide-folder-sync-icon lucide-folder-sync">
+              <path d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v.5"/>
+              <path d="M12 10v4h4"/>
+              <path d="m12 14 1.535-1.605a5 5 0 0 1 8 1.5"/>
+              <path d="M22 22v-4h-4"/>
+              <path d="m22 18-1.535 1.605a5 5 0 0 1-8-1.5"/>
+            </svg>
           </button>
         </div>
       </div>

@@ -1,4 +1,3 @@
-
 /**
  * @file ProjectContext.tsx
  * @description
@@ -490,12 +489,25 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     function buildAsciiLines(node: TreeNode, prefix = '', isLast = true): string[] {
       const out: string[] = [];
       const nodeMarker = isLast ? '└── ' : '├── ';
-      out.push(prefix + nodeMarker + node.name);
+      
+      // Mark directories with [D] prefix
+      const displayName = node.type === 'directory' ? `[D] ${node.name}` : node.name;
+      out.push(prefix + nodeMarker + displayName);
 
       if (node.type === 'directory' && node.children && node.children.length > 0) {
+        // Sort children: directories first, then files, both alphabetically
+        const sortedChildren = [...node.children].sort((a, b) => {
+          // If types are different, directories come first
+          if (a.type !== b.type) {
+            return a.type === 'directory' ? -1 : 1;
+          }
+          // Otherwise sort alphabetically
+          return a.name.localeCompare(b.name);
+        });
+
         const childPrefix = prefix + (isLast ? '    ' : '│   ');
-        node.children.forEach((child, idx) => {
-          const childIsLast = idx === node.children!.length - 1;
+        sortedChildren.forEach((child, idx) => {
+          const childIsLast = idx === sortedChildren.length - 1;
           out.push(...buildAsciiLines(child, childPrefix, childIsLast));
         });
       }
@@ -503,8 +515,16 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     }
 
     if (rootNode.children && rootNode.children.length > 0) {
-      rootNode.children.forEach((child, idx) => {
-        const isLast = idx === rootNode.children!.length - 1;
+      // Sort root children: directories first, then files
+      const sortedRootChildren = [...rootNode.children].sort((a, b) => {
+        if (a.type !== b.type) {
+          return a.type === 'directory' ? -1 : 1;
+        }
+        return a.name.localeCompare(b.name);
+      });
+
+      sortedRootChildren.forEach((child, idx) => {
+        const isLast = idx === sortedRootChildren.length - 1;
         lines.push(...buildAsciiLines(child, '', isLast));
       });
     }
