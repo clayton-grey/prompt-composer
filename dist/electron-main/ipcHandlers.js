@@ -4,7 +4,10 @@
  * @description
  * Consolidated directory reading logic + Asynchronous FS operations.
  * We also register IPC handlers for reading/writing files, importing/exporting XML,
- * and now verifying file existence for XML import validation.
+ * and verifying file existence for XML import validation.
+ *
+ * Final Cleanup (Step 11):
+ * - Removed the export-file-map IPC handler because FileMapViewer is removed.
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -199,31 +202,11 @@ function registerIpcHandlers() {
             return null;
         }
     });
-    // export-file-map
-    electron_1.ipcMain.handle('export-file-map', async (_event, { defaultFileName, fileMapContent }) => {
-        try {
-            const saveDialogOptions = {
-                title: 'Export File Map',
-                defaultPath: defaultFileName || 'file_map.txt',
-                filters: [
-                    { name: 'Text Files', extensions: ['txt'] },
-                    { name: 'All Files', extensions: ['*'] }
-                ]
-            };
-            const result = await electron_1.dialog.showSaveDialog(saveDialogOptions);
-            if (result.canceled || !result.filePath) {
-                console.log('[export-file-map] Save dialog canceled');
-                return false;
-            }
-            await fs_1.default.promises.writeFile(result.filePath, fileMapContent, 'utf-8');
-            console.log('[export-file-map] Successfully saved file map to:', result.filePath);
-            return true;
-        }
-        catch (err) {
-            console.error('[export-file-map] Failed to save file map:', err);
-            return false;
-        }
-    });
+    /**
+     * Previously, we had an 'export-file-map' IPC handler used by FileMapViewer.
+     * That feature is now removed (FileMapViewer was deleted in final cleanup).
+     * So we have removed that IPC handler here.
+     */
     /**
      * show-open-dialog
      * Opens a dialog for selecting directories.

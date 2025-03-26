@@ -2,17 +2,17 @@
 /**
  * @file Sidebar.tsx
  * @description
- * The main sidebar for managing project folders. The user can add a folder, 
- * which is appended to local additionalFolders. Then we pass that array to <FileTree> 
- * and <FileMapViewer>. 
- * 
- * As of Step 3, we no longer retrieve "selectedFilesTokenCount" from PromptContext. 
- * Instead, we show useProject().selectedFilesTokenCount at the bottom. 
+ * The main sidebar for managing project folders. The user can add a folder,
+ * which is appended to local additionalFolders. Then we pass that array to
+ * <FileTree> for tri-state toggling. 
+ *
+ * Final Cleanup (Step 11):
+ *  - Removed FileMapViewer import and usage, so the ASCII file map is no
+ *    longer displayed in the sidebar. Only the tri-state file tree remains.
  */
 
 import React, { useState, useCallback } from 'react';
 import FileTree from './Sidebar/FileTree';
-import FileMapViewer from './Sidebar/FileMapViewer';
 import { useProject } from '../context/ProjectContext';
 
 const Sidebar: React.FC = () => {
@@ -57,7 +57,9 @@ const Sidebar: React.FC = () => {
     <aside className="bg-gray-200 dark:bg-gray-700 flex flex-col h-full relative min-w-[180px]">
       {/* Top controls */}
       <div className="flex items-center justify-between p-2 border-b border-gray-300 dark:border-gray-600">
-        <span className="text-gray-900 dark:text-gray-50 font-medium">Project Folders</span>
+        <span className="text-gray-900 dark:text-gray-50 font-medium">
+          Project Folders
+        </span>
         <button
           onClick={addFolder}
           className="ml-2 text-xs border border-gray-500 rounded px-2 py-1 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100"
@@ -72,8 +74,12 @@ const Sidebar: React.FC = () => {
           folders={additionalFolders}
           onRemoveFolder={removeFolder}
         />
-        <hr className="my-3 border-gray-400 dark:border-gray-600" />
-        <FileMapViewer rootPath="." />
+
+        {/* 
+          Final Cleanup:
+          The FileMapViewer component has been removed, 
+          so we no longer display the ASCII map here.
+        */}
       </div>
 
       {/* Bottom bar with selected files token usage */}
