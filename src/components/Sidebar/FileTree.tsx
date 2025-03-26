@@ -6,15 +6,53 @@
  * tri-state selectable, collapsible tree structure. The user can add or remove
  * root folders externally, and each folder can be expanded or collapsed.
  *
- * This file has been updated to remove direct IPC calls (window.electronAPI.listDirectory).
- * Instead, it now uses the ProjectContext (via useProject()) to retrieve the directory data 
- * from a shared in-memory cache. This prevents repeated calls for the same folder.
+ * This file has been updated for "Architecture & State Management - Step 1: 
+ * Refactor Tri-State Parent-Child Logic." We now perform the tri-state 
+ * updates in a single pass after toggling a node, instead of repeatedly 
+ * updating ancestor states. This approach sets the target node's subtree 
+ * to 'all' or 'none' and then recalculates the entire tree from the roots 
+ * downward to determine which folders are 'none', 'all', or 'partial'.
  *
- * Key Changes in Step 3 (File & Directory Handling):
- *  - We replaced the loadFolderTree function that used electronAPI with 
- *    a simple call to project.getDirectoryListing(folderPath). 
- *  - We keep the tri-state selection logic the same, but the directory data 
- *    is fetched from context instead of direct electron calls.
+ * Key Changes:
+ *  - Removed repeated calls to updateAncestorStates()
+ *  - Introduced a single-pass function `recalcSubtreeStates` that, given a root, 
+ *    traverses all descendants. After toggling a node, we update the subtree 
+ *    states for that node, then run the recalc logic from each root folder 
+ *    to enforce correct partial states in ancestors.
+ *  - This approach simplifies the logic and reduces potential redundant scans.
+ *
+ * Tri-State Explanation:
+ *  - 'none': Node and all descendants are not selected
+ *  - 'all': Node and all descendants are selected
+ *  - 'partial': Some children are selected but not all, or a child is partial
+ *
+ * Inputs:
+ *  - props.folders: string[] of folder paths the user added
+ *  - props.onRemoveFolder: callback to remove a folder
+ *
+ * Maintained State:
+ *  - folderTrees: array of { rootPath, node, error } describing each root folder
+ *  - nodeStates: Record<string, NodeState> mapping each node path to 'none'|'all'|'partial'
+ *  - expandedPaths: Record<string, boolean> for toggling expansion in the UI
+ *  - selectedFileContents: record of file path => file content for selected files
+ *
+ * Implementation & Flow:
+ *  1) We fetch each folder tree via ProjectContext.getDirectoryListing.
+ *  2) We store them in folderTrees. For each node, we track a tri-state in nodeStates.
+ *  3) Toggling a node changes it from 'none' => 'all' or 'all' => 'none'. We apply 
+ *     that state recursively to the node's subtree.
+ *  4) We then call `recalcAllRootStates()` which calls `recalcSubtreeState()` 
+ *     on each root node. That function does a post-order DFS to compute 
+ *     each directory’s correct tri-state from its children.
+ *  5) The final nodeStates is stored in React state, triggering a re-render 
+ *     that sets partial icons, etc.
+ *  6) The selectedFileContents is updated based on which nodes are 'all' (files).
+ *  7) The parent PromptContext is notified to update token usage and other details.
+ *
+ * Edge Cases:
+ *  - If a folder is empty or fails to load, it shows an error or loading state.
+ *  - Large folder trees might create performance overhead. This step's single-pass 
+ *    approach helps reduce repeated ancestor scans.
  */
 
 import React, { useEffect, useState, useCallback } from 'react';
@@ -36,6 +74,10 @@ interface FileTreeProps {
   onRemoveFolder: (folderPath: string) => void;
 }
 
+/**
+ * folderTrees items hold each root folder's data, including the fully loaded tree node,
+ * or an error if loading fails, so we can display it in the UI.
+ */
 interface FolderTreeState {
   rootPath: string;
   node: TreeNode | null;
@@ -44,44 +86,37 @@ interface FolderTreeState {
 
 /**
  * The FileTree component uses tri-state selection logic for each node:
- *  - 'none' => not selected
- *  - 'all'  => fully selected
- *  - 'partial' => partially selected
+ * 'none' => not selected
+ * 'all' => fully selected
+ * 'partial' => partially selected (some descendants are 'all', others are 'none').
  */
 const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   const { updateSelectedFiles } = usePrompt();
   const { getDirectoryListing } = useProject();
 
-  /**
-   * folderTrees stores the root-level data for each folder. If node = null, 
-   * we haven't finished loading or it failed. 
-   */
+  // folderTrees: each root folder's top node plus any error/loading states
   const [folderTrees, setFolderTrees] = useState<FolderTreeState[]>([]);
 
-  /**
-   * nodeStates holds tri-state selection for each node path.
-   * expandedPaths holds boolean expansions for each node path.
-   */
+  // nodeStates: track tri-state for each node's path
   const [nodeStates, setNodeStates] = useState<Record<string, NodeState>>({});
+
+  // expandedPaths: track which nodes are expanded for UI display
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
 
-  /**
-   * selectedFileContents is a mapping of file path => file content
-   * for all files whose nodeState is 'all'.
-   */
+  // selectedFileContents: file path => file content for all files that are fully selected ('all')
   const [selectedFileContents, setSelectedFileContents] = useState<Record<string, string>>({});
 
   /**
-   * Removes a root folder from the FileTree. 
-   * We call the parent callback so the folder is removed from "folders" prop.
+   * Removes a root folder from the FileTree.
+   * Calls the parent callback so it’s removed from the "folders" prop externally.
    */
   const removeRootFolder = useCallback((folderPath: string) => {
     onRemoveFolder(folderPath);
   }, [onRemoveFolder]);
 
   /**
-   * retrieveFolderTree uses ProjectContext to fetch the DirectoryListing 
-   * for a given folder path. We do not store errors in context; we handle them locally.
+   * retrieveFolderTree calls ProjectContext to get a DirectoryListing for a folder path.
+   * We do not store errors in context; if it fails, we track them in local state.
    */
   const retrieveFolderTree = useCallback(async (folderPath: string) => {
     const listing = await getDirectoryListing(folderPath);
@@ -99,23 +134,23 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }, [getDirectoryListing]);
 
   /**
-   * Whenever the "folders" prop changes (user adds or removes a folder), we handle:
-   *  1) Removing states for any folder no longer in the array
-   *  2) Creating a new entry for newly added folders and loading them 
+   * For newly added folders, load them from ProjectContext if not already in folderTrees.
+   * For removed folders, drop them from folderTrees. This runs whenever `folders` changes.
    */
   useEffect(() => {
-    // 1) Filter out any folderTrees that no longer appear in "folders"
+    // Remove any folderTrees not in `folders`
     setFolderTrees((prev) => prev.filter((ft) => folders.includes(ft.rootPath)));
 
-    // 2) For newly added folders, load from context if we don't already have them
+    // For newly added folders, load them if they’re not in folderTrees yet
     folders.forEach(async (fPath) => {
       const existing = folderTrees.find((ft) => ft.rootPath === fPath);
       if (!existing) {
-        // Add a placeholder with node=null
+        // create a placeholder
         setFolderTrees((prev) => [...prev, { rootPath: fPath, node: null }]);
-        // Attempt to retrieve the data from ProjectContext
+        // fetch data
         const node = await retrieveFolderTree(fPath);
         if (!node) {
+          // mark error
           setFolderTrees((prev2) =>
             prev2.map((item) =>
               item.rootPath === fPath
@@ -125,21 +160,23 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           );
           return;
         }
-        // If we successfully got a node, we set expansions and states
+        // initialize expansions & states for each node in this new tree
         const newExpanded: Record<string, boolean> = {};
         const newStates: Record<string, NodeState> = {};
-        const initData = (nd: TreeNode) => {
-          newExpanded[nd.path] = false;
-          newStates[nd.path] = 'none';
-          if (nd.children) {
-            nd.children.forEach(initData);
+        function initData(n: TreeNode) {
+          newExpanded[n.path] = false;
+          newStates[n.path] = 'none';
+          if (n.children) {
+            n.children.forEach(initData);
           }
-        };
+        }
         initData(node);
 
+        // merge expansions & states
         setExpandedPaths((prev2) => ({ ...prev2, ...newExpanded }));
         setNodeStates((prev2) => ({ ...prev2, ...newStates }));
 
+        // set the newly loaded node
         setFolderTrees((prev2) =>
           prev2.map((item) => (item.rootPath === fPath ? { ...item, node, error: null } : item))
         );
@@ -149,10 +186,9 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }, [folders]);
 
   /**
-   * readFile is used when a node is set to 'all' to load the file's content from disk
-   * via electronAPI. We haven't cached file contents in ProjectContext yet, 
-   * so we still call electronAPI directly here. That is acceptable for the 
-   * purpose of caching directory structures only. 
+   * readFile loads content from disk for a given file path via electronAPI.
+   * We do not yet cache these in the ProjectContext for performance reasons,
+   * so each selected file is read once here as needed.
    */
   const readFile = useCallback(async (filePath: string): Promise<string> => {
     if (!window.electronAPI?.readFile) {
@@ -169,16 +205,18 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }, []);
 
   /**
-   * Once nodeStates changes, gather all file paths whose state is 'all', 
-   * load or remove them from selectedFileContents, then call updateSelectedFiles 
-   * in PromptContext for token usage.
+   * Recomputes selectedFileContents whenever nodeStates changes:
+   * - Collect all file paths that are 'all'.
+   * - read them if not already in selectedFileContents.
+   * - remove any that are no longer 'all'.
+   * Then call updateSelectedFiles() in PromptContext so it can recalc token usage, etc.
    */
   useEffect(() => {
     const allPaths: string[] = [];
 
-    // Recursively traverse the entire tree for each root
+    // Traverse all root folders to collect file paths marked 'all'
     function collectAllFilePaths(node: TreeNode) {
-      const st = nodeStates[node.path];
+      const st = nodeStates[node.path] || 'none';
       if (node.type === 'file' && st === 'all') {
         allPaths.push(node.path);
       }
@@ -193,16 +231,17 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       }
     });
 
-    // Remove stale paths from selectedFileContents
+    // Remove any no-longer-selected paths from selectedFileContents
     setSelectedFileContents((prev) => {
       const updated: Record<string, string> = {};
-      // Keep existing entries if still in allPaths
+      // keep existing entries if still in allPaths
       for (const filePath of Object.keys(prev)) {
         if (allPaths.includes(filePath)) {
           updated[filePath] = prev[filePath];
         }
       }
-      // For newly added paths, read from disk
+
+      // load newly 'all' paths that are not in updated
       const newPaths = allPaths.filter((p) => !(p in updated));
       if (newPaths.length > 0) {
         Promise.all(
@@ -220,20 +259,20 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           });
         });
       }
+
       return updated;
     });
   }, [nodeStates, folderTrees, readFile]);
 
   /**
-   * Whenever selectedFileContents changes, call updateSelectedFiles in PromptContext
-   * so that the new set of files can be considered for token usage.
+   * Whenever selectedFileContents changes, notify PromptContext so it can update token usage.
    */
   useEffect(() => {
     updateSelectedFiles(selectedFileContents);
   }, [selectedFileContents, updateSelectedFiles]);
 
   /**
-   * Toggles a directory node's expansion state.
+   * Toggles expansion for a directory node in the UI.
    */
   const toggleFolderExpand = (nodePath: string) => {
     setExpandedPaths((prev) => ({
@@ -243,7 +282,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   };
 
   /**
-   * collapseAll sets expandedPaths to false for every node in the subtree.
+   * Collapses an entire subtree under a given root node.
    */
   const collapseAll = useCallback((rootNode: TreeNode) => {
     const pathsToCollapse: string[] = [];
@@ -254,6 +293,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       }
     }
     gatherPaths(rootNode);
+
     setExpandedPaths((prev) => {
       const updated = { ...prev };
       pathsToCollapse.forEach((p) => {
@@ -264,80 +304,113 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }, []);
 
   /**
-   * setNodeStateRecursive sets the entire subtree of 'startNode' to newState
+   * setNodeStateRecursive: sets the entire subtree (node and descendants) 
+   * to newState ('all' or 'none'). This is used immediately after toggling 
+   * a node, before re-running the global tri-state recalculation.
    */
   const setNodeStateRecursive = (startNode: TreeNode, newState: NodeState, updated: Record<string, NodeState>) => {
     updated[startNode.path] = newState;
     if (startNode.type === 'directory' && startNode.children) {
-      startNode.children.forEach((child) => setNodeStateRecursive(child, newState, updated));
+      startNode.children.forEach((child) => {
+        setNodeStateRecursive(child, newState, updated);
+      });
     }
   };
 
   /**
-   * toggleNodeSelection flips a node's selection state from 'none' to 'all' 
-   * or from 'all' to 'none'. We do not currently handle partial toggles directly,
-   * partial states occur only if children differ.
+   * recalcSubtreeState: post-order DFS that calculates the correct tri-state of this node 
+   * based on the states of its children. The final state is stored in updated[node.path].
+   *
+   * Steps:
+   *  1) If node is file, do nothing; just return updated[node.path].
+   *  2) If node is directory, we recurse into children first. Then if all children 
+   *     are 'all' => node is 'all'; if all children are 'none' => node is 'none'; 
+   *     else => node is 'partial'.
+   */
+  const recalcSubtreeState = (node: TreeNode, updated: Record<string, NodeState>): NodeState => {
+    const current = updated[node.path] || 'none';
+
+    if (node.type === 'file') {
+      // Leaf node. Return whatever is currently set. 
+      return current;
+    }
+
+    if (!node.children || node.children.length === 0) {
+      // Directory with no children => remain as is (or 'none' by default).
+      return current;
+    }
+
+    // If directory, evaluate children
+    let childAllCount = 0;
+    let childNoneCount = 0;
+    let totalChildren = node.children.length;
+
+    for (const child of node.children) {
+      // Recurse first
+      const childState = recalcSubtreeState(child, updated);
+
+      if (childState === 'all') {
+        childAllCount += 1;
+      } else if (childState === 'none') {
+        childNoneCount += 1;
+      }
+    }
+
+    // If all children are 'all', node = 'all'
+    if (childAllCount === totalChildren) {
+      updated[node.path] = 'all';
+    }
+    // If all children are 'none', node = 'none'
+    else if (childNoneCount === totalChildren) {
+      updated[node.path] = 'none';
+    }
+    // Otherwise, it's partial
+    else {
+      updated[node.path] = 'partial';
+    }
+
+    return updated[node.path];
+  };
+
+  /**
+   * After toggling a node's subtree, we run recalcSubtreeState for each root node 
+   * to ensure all ancestors get correct partial states. This single pass from the root 
+   * downward ensures a clean tri-state resolution. 
+   */
+  const recalcAllRootStates = (updated: Record<string, NodeState>) => {
+    for (const ft of folderTrees) {
+      if (ft.node) {
+        recalcSubtreeState(ft.node, updated);
+      }
+    }
+  };
+
+  /**
+   * Toggles a node's selection from 'all' => 'none' or 'none' => 'all'.
+   * We set the subtree to that new state, then recalc states from each root.
    */
   const toggleNodeSelection = (node: TreeNode) => {
     setNodeStates((prev) => {
       const updated = { ...prev };
       const currentState = updated[node.path] || 'none';
       const newState: NodeState = currentState === 'all' ? 'none' : 'all';
+
+      // 1) Set the entire subtree to newState
       setNodeStateRecursive(node, newState, updated);
-      updateAncestorStates(node, updated);
+
+      // 2) Recalc entire tri-state from each root
+      recalcAllRootStates(updated);
+
       return updated;
     });
   };
 
   /**
-   * updateAncestorStates traverses upwards from a node to recalc parent's nodeState.
-   * If all children are 'all', parent is 'all'. If all children are 'none', parent is 'none'. 
-   * Otherwise it's 'partial'. 
-   */
-  const updateAncestorStates = (node: TreeNode, updated: Record<string, NodeState>) => {
-    function findParent(childPath: string): TreeNode | null {
-      for (const ft of folderTrees) {
-        if (!ft.node) continue;
-        const parent = searchParent(ft.node, childPath);
-        if (parent) return parent;
-      }
-      return null;
-    }
-    function searchParent(current: TreeNode, childPath: string): TreeNode | null {
-      if (current.children) {
-        for (const c of current.children) {
-          if (c.path === childPath) return current;
-          const deeper = searchParent(c, childPath);
-          if (deeper) return deeper;
-        }
-      }
-      return null;
-    }
-
-    const parentNode = findParent(node.path);
-    if (!parentNode) return;
-
-    if (parentNode.children) {
-      const childStates = parentNode.children.map((c) => updated[c.path] || 'none');
-      const allAll = childStates.every((s) => s === 'all');
-      const allNone = childStates.every((s) => s === 'none');
-      let newParentState: NodeState = 'partial';
-      if (allAll) {
-        newParentState = 'all';
-      } else if (allNone) {
-        newParentState = 'none';
-      }
-      updated[parentNode.path] = newParentState;
-      updateAncestorStates(parentNode, updated);
-    }
-  };
-
-  /**
-   * Renders a tri-state icon for a node, allowing toggling with a click.
+   * Renders a tri-state icon for a node. Clicking it toggles 'all'/'none'.
    */
   const renderSelectionIcon = (nodeState: NodeState, onClick: () => void) => {
     if (nodeState === 'all') {
-      // checked
+      // fully selected
       return (
         <span onClick={onClick} className="cursor-pointer mr-2">
           <svg viewBox="0 0 24 24" className="h-4 w-4 text-blue-500" fill="none" stroke="currentColor" strokeWidth="2">
@@ -346,8 +419,9 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           </svg>
         </span>
       );
-    } else if (nodeState === 'partial') {
-      // partial
+    }
+    else if (nodeState === 'partial') {
+      // partial selection
       return (
         <span onClick={onClick} className="cursor-pointer mr-2">
           <svg viewBox="0 0 24 24" className="h-4 w-4 text-blue-500" fill="none" stroke="currentColor" strokeWidth="2">
@@ -368,10 +442,11 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   };
 
   /**
-   * Renders a folder icon (open or closed) or empty space for a file.
+   * Renders a folder icon (open or closed) or empty space for files.
    */
   const renderFolderIcon = (isDir: boolean, isExpanded: boolean) => {
     if (!isDir) {
+      // it's a file
       return <span className="w-4 mr-1" />;
     }
     if (isExpanded) {
@@ -396,12 +471,12 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   };
 
   /**
-   * Renders a single node (directory or file). If directory and expanded, 
-   * we recursively render children.
+   * renderNode: Renders a single node (directory or file). If it's a directory and expanded, 
+   * we recursively render its children. We also attach tri-state icons to each node.
    */
   const renderNode = (node: TreeNode, depth: number = 0): JSX.Element => {
     const isDir = node.type === 'directory';
-    const isExpanded = !!expandedPaths[node.path];
+    const isExpanded = expandedPaths[node.path] || false;
     const nodeState = nodeStates[node.path] || 'none';
     const paddingLeft = depth * 18;
 
@@ -411,7 +486,10 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           className="flex items-center text-sm py-1"
           style={{ paddingLeft: `${paddingLeft}px` }}
         >
+          {/* Tri-State check icon */}
           {renderSelectionIcon(nodeState, () => toggleNodeSelection(node))}
+          
+          {/* Folder or file icon + name */}
           <span
             onClick={() => isDir && toggleFolderExpand(node.path)}
             className="cursor-pointer flex items-center"
@@ -425,6 +503,8 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
             {node.name}
           </span>
         </div>
+
+        {/* If directory is expanded, render children */}
         {isDir && isExpanded && node.children && node.children.length > 0 && (
           <div>
             {node.children.map((child) => renderNode(child, depth + 1))}
@@ -435,8 +515,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   };
 
   /**
-   * Renders one root folder. The root folder is displayed similarly, but 
-   * with a "collapse all" and "remove folder" button in the header row.
+   * Renders a root folder with its name, plus "collapse all" and remove folder buttons.
    */
   const renderRootFolder = (item: FolderTreeState) => {
     const { rootPath, node, error } = item;
@@ -462,8 +541,10 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       <div key={rootPath} className="mb-2">
         {/* Root folder row */}
         <div className="flex items-center bg-transparent p-1">
+          {/* Tri-state icon */}
           {renderSelectionIcon(nodeState, () => toggleNodeSelection(node))}
 
+          {/* Folder icon */}
           <span
             onClick={() => toggleFolderExpand(node.path)}
             className="cursor-pointer flex items-center"
@@ -471,6 +552,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
             {renderFolderIcon(true, isExpanded)}
           </span>
 
+          {/* Folder name */}
           <span
             className="truncate overflow-hidden whitespace-nowrap max-w-[140px] text-gray-800 dark:text-gray-100 font-semibold"
             onClick={() => toggleFolderExpand(node.path)}
