@@ -112,7 +112,7 @@ interface PromptContextType {
  */
 const defaultSettings: PromptSettings = {
   maxTokens: 100000,
-  model: 'gpt-4'
+  model: 'gpt-4o'
 };
 
 const PromptContext = createContext<PromptContextType>({
@@ -168,7 +168,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
       const blockTokenUsage: Record<string, number> = {};
       let totalTokens = 0;
 
-      console.log(`[PromptContext] Recalculating tokens for ${blocks.length} blocks`);
+      console.log(`[PromptContext] Recalculating tokens for ${blocks.length} blocks with model: ${settings.model}`);
       
       blocks.forEach((block) => {
         let blockText = '';
@@ -192,7 +192,8 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
             // Create a more detailed representation of each file for token counting
             const fileTexts = fb.files.map(f => {
               const formattedFile = `<file_contents>\nFile: ${f.path}\n\`\`\`${f.language}\n${f.content}\n\`\`\`\n</file_contents>`;
-              console.log(`[PromptContext] File ${f.path}: ${f.content.length} chars, estimated tokens: ${estimateTokens(formattedFile)}`);
+              const fileTokens = estimateTokens(formattedFile, settings.model);
+              console.log(`[PromptContext] File ${f.path}: ${f.content.length} chars, estimated tokens: ${fileTokens}`);
               return formattedFile;
             });
             
@@ -207,7 +208,8 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
             blockText = '';
         }
 
-        const count = estimateTokens(blockText);
+        // Pass the model parameter to estimateTokens
+        const count = estimateTokens(blockText, settings.model);
         console.log(`[PromptContext] Block ${block.id} token count: ${count}`);
         blockTokenUsage[block.id] = count;
         totalTokens += count;
@@ -303,7 +305,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
         // Calculate tokens including the ASCII map if provided
         const mapContent = asciiMap || '';
         const fullContent = mapContent ? mapContent + '\n\n' + dummyContent : dummyContent;
-        const estimatedTokens = estimateTokens(fullContent);
+        const estimatedTokens = estimateTokens(fullContent, settings.model);
         
         console.log(`[PromptContext] Estimated tokens for new file block: ${estimatedTokens}`);
         
@@ -330,7 +332,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
         }
       });
     },
-    []
+    [settings.model]
   );
 
   /**

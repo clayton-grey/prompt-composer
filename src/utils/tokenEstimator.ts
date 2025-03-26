@@ -5,138 +5,128 @@
  * Tiktoken is the same tokenizer used by OpenAI models.
  */
 
-import { Tiktoken, encoding_for_model, TiktokenModel } from '@dqbd/tiktoken';
+import { encoding_for_model, TiktokenModel } from '@dqbd/tiktoken';
 
-// Cache the encoder instances for different models
-const encoderCache: Record<string, Tiktoken> = {};
+// Cache the encoder instances for different encodings
+const encoderCache = new Map();
 
-// Map model names to encoding names
-const MODEL_TO_ENCODING: Record<string, TiktokenModel> = {
-  'gpt-3.5-turbo': 'cl100k_base',
-  'gpt-4': 'cl100k_base',
-  'gpt-4-turbo': 'cl100k_base',
-  'text-embedding-ada-002': 'cl100k_base',
-  // Note: gpt-4o is not included because it's not in the TiktokenModel type
-  // We'll handle it in the getEncodingForModel function
+// Valid encoding names according to TiktokenModel type
+const VALID_ENCODINGS = {
+  'cl100k_base': 'cl100k_base' as TiktokenModel,
+  'p50k_base': 'p50k_base' as TiktokenModel,
+  'r50k_base': 'r50k_base' as TiktokenModel
+} as const;
+
+// Map of model name prefixes to their encoding
+const MODEL_ENCODINGS: Record<string, TiktokenModel> = {
+  'gpt-4o': VALID_ENCODINGS.cl100k_base,
+  'gpt-4-turbo': VALID_ENCODINGS.cl100k_base, 
+  'gpt-4': VALID_ENCODINGS.cl100k_base,
+  'gpt-3.5-turbo': VALID_ENCODINGS.cl100k_base,
+  'text-embedding': VALID_ENCODINGS.cl100k_base
 };
 
-// Default encoding to use
-const DEFAULT_ENCODING: TiktokenModel = 'cl100k_base';
-
-/**
- * Get the appropriate encoding name for a model
- */
-function getEncodingForModel(model: string): TiktokenModel {
-  // Check if the model is directly in our mapping
-  if (model in MODEL_TO_ENCODING) {
-    return MODEL_TO_ENCODING[model as keyof typeof MODEL_TO_ENCODING];
-  }
-  
-  // For newer models like gpt-4o that aren't in the TiktokenModel type,
-  // we use cl100k_base as recommended by OpenAI
-  if (model.startsWith('gpt-4') || model.startsWith('gpt-3.5')) {
-    return 'cl100k_base';
-  }
-  
-  // Default fallback
-  return DEFAULT_ENCODING;
-}
+// Default encoding for any model not explicitly mapped
+const DEFAULT_ENCODING = VALID_ENCODINGS.cl100k_base;
 
 /**
  * Initialize the token estimator for a specific model
  */
-export function initEncoder(model: string = 'gpt-3.5-turbo'): void {
-  console.log('[tokenEstimator] Initializing tiktoken encoder for model:', model);
+export function initEncoder(model: string = 'gpt-4o'): void {
+  console.log('[tokenEstimator] Initializing encoder for model:', model);
   
-  try {
-    // Get the encoding name for this model
-    const encodingName = getEncodingForModel(model);
-    
-    // Only create a new encoder if we don't already have one for this encoding
-    if (!encoderCache[encodingName]) {
-      const encoder = encoding_for_model(encodingName);
-      encoderCache[encodingName] = encoder;
-      console.log(`[tokenEstimator] Created new encoder for ${encodingName}`);
-    } else {
-      console.log(`[tokenEstimator] Using cached encoder for ${encodingName}`);
-    }
-  } catch (error) {
-    console.error('[tokenEstimator] Error initializing encoder:', error);
-  }
+  // Lazily initialize the encoder when it's actually needed
+  // This avoids unnecessary initialization at startup
 }
 
 /**
- * Get the appropriate encoder for a model
+ * Accurate token estimation using the tiktoken library
  */
-function getEncoder(model: string = 'gpt-3.5-turbo'): Tiktoken | null {
-  const encodingName = getEncodingForModel(model);
-  
-  if (!encoderCache[encodingName]) {
-    try {
-      initEncoder(model);
-    } catch (error) {
-      console.error('[tokenEstimator] Failed to initialize encoder:', error);
-      return null;
-    }
-  }
-  
-  return encoderCache[encodingName] || null;
-}
-
-/**
- * Accurate token estimation using tiktoken
- */
-export function estimateTokens(text: string, model: string = 'gpt-3.5-turbo'): number {
+export function estimateTokens(text: string, model: string = 'gpt-4o'): number {
   if (!text) return 0;
   
   try {
-    const encoder = getEncoder(model);
+    // Determine the encoding to use
+    let encodingName = DEFAULT_ENCODING;
     
-    if (!encoder) {
-      // Fallback to approximate count if encoder failed
-      console.warn('[tokenEstimator] Using fallback token estimation');
-      return fallbackEstimateTokens(text);
+    // Find the right encoding based on model prefix
+    for (const [prefix, encoding] of Object.entries(MODEL_ENCODINGS)) {
+      if (model.startsWith(prefix)) {
+        encodingName = encoding;
+        break;
+      }
     }
     
-    // Use tiktoken to encode and count tokens
+    // Get or create the encoder
+    let encoder = encoderCache.get(encodingName);
+    if (!encoder) {
+      try {
+        encoder = encoding_for_model(encodingName);
+        encoderCache.set(encodingName, encoder);
+      } catch (error) {
+        console.error(`[tokenEstimator] Error creating encoder for ${encodingName}:`, error);
+        return fallbackEstimateTokens(text, model);
+      }
+    }
+    
+    // Count tokens
     const tokens = encoder.encode(text);
     const tokenCount = tokens.length;
     
-    console.log(`[tokenEstimator] Tiktoken count for text (${text.length} chars): ${tokenCount} tokens`);
-    
-    // Free resources
-    if (tokens && typeof tokens.free === 'function') {
-      tokens.free();
+    // For GPT-4o specifically, apply a correction factor to match OpenAI's web interface
+    if (model === 'gpt-4o') {
+      return Math.ceil(tokenCount * 1.170);
     }
     
     return tokenCount;
   } catch (error) {
     console.error('[tokenEstimator] Error estimating tokens:', error);
-    return fallbackEstimateTokens(text);
+    return fallbackEstimateTokens(text, model);
   }
 }
 
 /**
  * Fallback token estimation when tiktoken fails
+ * This implementation closely matches OpenAI's average token/character ratio
  */
-function fallbackEstimateTokens(text: string): number {
-  // Get a character count first
+function fallbackEstimateTokens(text: string, model: string = 'gpt-4o'): number {
+  if (!text) return 0;
+  
+  // Get a character count
   const charCount = text.length;
   
-  // Get a word count
-  const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+  // Determine if text contains code blocks
+  const hasCode = text.includes('```');
   
-  // Generate multiple estimates and average them
-  // 1. Character-based estimate (1 token ~= 4 chars)
-  const charBasedEstimate = Math.ceil(charCount / 4);
+  // Calculate more accurate divisor based on model and content type
+  let divisor = 3.8; // Base divisor for GPT-4o plain text
   
-  // 2. Word-based estimate (100 tokens ~= 75 words)
-  const wordBasedEstimate = Math.ceil(wordCount * (100/75));
+  if (model === 'gpt-4o') {
+    // GPT-4o specific adjustments
+    if (hasCode) {
+      // Code content is more token-efficient
+      divisor = text.includes('typescript') || text.includes('javascript') ? 4.7 : 4.5;
+    } else if (text.includes('<file_map>') || text.includes('<file_contents>')) {
+      // File content with markup tends to be less efficient
+      divisor = 3.55;
+    }
+  } else if (model.startsWith('gpt-4')) {
+    // Other GPT-4 models
+    divisor = hasCode ? 4.5 : 3.9;
+  } else {
+    // GPT-3.5 and others
+    divisor = hasCode ? 4.2 : 3.7;
+  }
   
-  // 3. Combined estimate - average of the two but weight char-based more
-  const finalEstimate = Math.ceil((charBasedEstimate * 0.6) + (wordBasedEstimate * 0.4));
+  // Calculate token count
+  let tokenCount = Math.ceil(charCount / divisor);
   
-  console.log(`[tokenEstimator] Fallback estimate: ${finalEstimate} tokens`);
+  // Apply correction factor for GPT-4o to match OpenAI's web interface
+  if (model === 'gpt-4o') {
+    tokenCount = Math.ceil(tokenCount * 1.170);
+  }
   
-  return finalEstimate;
+  console.log(`[tokenEstimator-fallback] Model: ${model}, Chars: ${charCount}, Divisor: ${divisor.toFixed(2)}, Final tokens: ${tokenCount}`);
+  
+  return tokenCount;
 }

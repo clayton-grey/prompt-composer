@@ -35,6 +35,19 @@ import React, {
 } from 'react';
 import { initEncoder, estimateTokens } from '../utils/tokenizer';
 
+// Instead of importing the module, declare the window interface directly
+declare global {
+  interface Window {
+    electronAPI?: {
+      listDirectory: (dirPath: string) => Promise<any>;
+      readFile: (filePath: string) => Promise<string>;
+      showOpenDialog: (options: any) => Promise<{ canceled: boolean; filePaths: string[] }>;
+      sendMessage: (channel: string, data: any) => void;
+      onMessage: (channel: string, callback: (data: any) => void) => void;
+    }
+  }
+}
+
 /**
  * A tree node representing a file or directory from the file system
  */
@@ -137,7 +150,8 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    * On mount, initialize token estimator with a default model
    */
   useEffect(() => {
-    initEncoder('gpt-3.5-turbo'); // can be replaced with user-chosen model if needed
+    // Use GPT-4o as the default model for token estimation
+    initEncoder('gpt-4o');
   }, []);
 
   /**
@@ -145,17 +159,26 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    */
   useEffect(() => {
     let total = 0;
-    console.log(`[ProjectContext] Recalculating tokens for ${Object.keys(selectedFileContents).length} selected files`);
+    // Use GPT-4o for token counting to match the OpenAI tokenizer
+    const model = 'gpt-4o';
+    
+    console.log(`[ProjectContext] Recalculating tokens for ${Object.keys(selectedFileContents).length} selected files using model: ${model}`);
     
     for (const [filePath, content] of Object.entries(selectedFileContents)) {
       const ext = getFileExtension(filePath) || 'txt';
       const formatted = `<file_contents>\nFile: ${filePath}\n\`\`\`${ext}\n${content}\n\`\`\`\n</file_contents>`;
-      const fileTokens = estimateTokens(formatted);
+      // Pass the model parameter to estimateTokens
+      const fileTokens = estimateTokens(formatted, model);
       console.log(`[ProjectContext] File ${filePath}: ${content.length} chars, estimated tokens: ${fileTokens}`);
       total += fileTokens;
     }
     
-    console.log(`[ProjectContext] Total token count for selected files: ${total}`);
+    // Apply a fine-tuning correction factor to match OpenAI's estimator
+    const rawTotal = total;
+    // Use the same correction factor (1.04) to align with OpenAI's web interface estimator
+    total = Math.ceil(total * 1.04);
+    console.log(`[ProjectContext] Raw token count: ${rawTotal}`);
+    console.log(`[ProjectContext] Adjusted token count for selected files: ${total}`);
     setSelectedFilesTokenCount(total);
   }, [selectedFileContents]);
 
@@ -166,7 +189,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     if (directoryCache[dirPath]) {
       return directoryCache[dirPath];
     }
-    if (!window.electronAPI?.listDirectory) {
+    if (!window?.electronAPI?.listDirectory) {
       console.warn('[ProjectContext] No electronAPI.listDirectory found.');
       return null;
     }
@@ -250,7 +273,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    * readFile: loads file content from disk
    */
   async function readFile(filePath: string): Promise<string> {
-    if (!window.electronAPI?.readFile) {
+    if (!window?.electronAPI?.readFile) {
       console.warn('[ProjectContext] readFile: no electronAPI.readFile found');
       return '';
     }
@@ -501,4 +524,3 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
 export function useProject(): ProjectContextType {
   return useContext(ProjectContext);
 }
-

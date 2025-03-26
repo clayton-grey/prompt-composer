@@ -41,15 +41,28 @@ const FileBlockEditor: React.FC<FileBlockEditorProps> = ({ block, onChange }) =>
     
     if (block.projectAsciiMap) {
       console.log(`[FileBlockEditor] ASCII map length: ${block.projectAsciiMap.length} chars`);
+      // Log the current block to check its structure
+      console.log('[FileBlockEditor] Current block before update:', JSON.stringify(block, null, 2));
     } else {
       console.log('[FileBlockEditor] No ASCII map is present');
     }
     
+    // Create a new block with the updated includeProjectMap value
     const updated = {
       ...block,
       includeProjectMap: newValue
     };
+    
+    // Log the updated block to verify the change
+    console.log('[FileBlockEditor] Updated block after toggle:', JSON.stringify(updated, null, 2));
+    
+    // Apply the update
     onChange(updated);
+    
+    // Add a delayed log to check if the token count updates
+    setTimeout(() => {
+      console.log('[FileBlockEditor] Token count should be updated by now');
+    }, 500);
   };
 
   // We forcibly rename the block label to "File Block" for consistency with step 17B.

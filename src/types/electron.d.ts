@@ -1,3 +1,10 @@
+/**
+ * @file electron.d.ts
+ * @description
+ * Type definitions for the electron API that is exposed to the renderer process
+ * via the preload script.
+ */
+
 export interface ListDirectoryResult {
   path: string;
   name: string;
@@ -5,23 +12,31 @@ export interface ListDirectoryResult {
   children?: ListDirectoryResult[];
 }
 
-export interface ElectronAPI {
-  listDirectory: (path: string) => Promise<ListDirectoryResult>;
-  readFile: (path: string) => Promise<string>;
+interface ElectronAPI {
+  /**
+   * Send a message to the main process
+   */
+  sendMessage: (channel: string, data?: any) => void;
 
   /**
-   * Send an arbitrary message with data to the main process or other renderer listeners.
-   * @param message The channel name
-   * @param data The payload
+   * Register a callback for messages from the main process
    */
-  sendMessage: (message: string, data: any) => void;
+  onMessage: (channel: string, callback: (data: any) => void) => void;
 
   /**
-   * Listen for messages on a given channel
-   * @param channel The channel name, e.g. 'add-file-block'
-   * @param callback The function to call with (event, data)
+   * Show the Open Dialog to select directories
    */
-  onMessage: (channel: string, callback: (event: any, data: any) => void) => void;
+  showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>;
+
+  /**
+   * List the contents of a directory
+   */
+  listDirectory: (dirPath: string) => Promise<any>;
+
+  /**
+   * Read the contents of a file
+   */
+  readFile: (filePath: string) => Promise<string>;
 
   /**
    * Remove a listener for a given channel
@@ -29,13 +44,6 @@ export interface ElectronAPI {
    * @param callback The exact same function reference used in onMessage
    */
   removeChannelListener: (channel: string, callback: (event: any, data: any) => void) => void;
-
-  /**
-   * Opens a dialog to select files or folders
-   * @param options Options for the open dialog
-   * @returns Promise resolving to the dialog result
-   */
-  showOpenDialog: (options: any) => Promise<{ canceled: boolean; filePaths: string[] }>;
 
   /**
    * Old leftover from prior code:
@@ -51,8 +59,12 @@ export interface ElectronAPI {
   createFolder: (args: { parentPath: string; folderName: string }) => Promise<string | null>;
 }
 
+// Add electronAPI to Window interface
 declare global {
   interface Window {
     electronAPI: ElectronAPI;
   }
 }
+
+// Re-export the global as a module
+export {};
