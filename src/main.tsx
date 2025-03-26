@@ -6,9 +6,15 @@
  * inside the ThemeProvider, ProjectProvider, and PromptProvider. 
  * 
  * Step 3 (File & Directory Handling) requires we wrap <PromptProvider> in 
- * <ProjectProvider> to cache directory listing data. That ensures components 
- * like FileTree or FileMapViewer can fetch from the ProjectContext instead 
- * of calling electronAPI directly.
+ * <ProjectProvider> to cache directory listing data for FileTree.
+ * 
+ * Implementation Details:
+ *  - The ThemeProvider handles global light/dark mode
+ *  - The ProjectProvider manages all file/folder tri-state logic
+ *  - The PromptProvider manages prompt blocks and token usage
+ *
+ * Notes:
+ *  - FileMapViewer references have been removed as part of final tri-state cleanup (Step 3).
  */
 
 import React from 'react';
@@ -24,7 +30,7 @@ import { ProjectProvider } from './context/ProjectContext';
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider>
-      {/* The ProjectProvider caches directory data for FileTree / FileMapViewer */}
+      {/* The ProjectProvider caches directory data for FileTree */}
       <ProjectProvider>
         <PromptProvider>
           <App />
