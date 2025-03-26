@@ -2,12 +2,17 @@
 /**
  * @file ipcHandlers.ts
  * @description
- * Consolidated directory reading logic + Asynchronous FS operations. 
+ * Consolidated directory reading logic + Asynchronous FS operations.
  * We also register IPC handlers for reading/writing files, importing/exporting XML,
  * and verifying file existence for XML import validation.
  *
- * Final Cleanup (Step 11):
- * - Removed the export-file-map IPC handler because FileMapViewer is removed.
+ * Step 5 (Nested Template Support):
+ *  - We add a new "read-prompt-composer-file" handler to read a file from
+ *    the .prompt-composer folder in the project's root. If the file doesn't exist,
+ *    we return null. If it does, we return its contents.
+ *
+ * Final Cleanup in prior steps:
+ *  - We have removed the "export-file-map" IPC handler and references to FileMapViewer.
  */
 
 import { ipcMain, dialog } from 'electron';
@@ -15,7 +20,6 @@ import fs from 'fs';
 import path from 'path';
 import ignore from 'ignore';
 
-/** Allowed file extensions for text-based files */
 const ALLOWED_EXTENSIONS = [
   '.txt', '.md', '.js', '.ts', '.tsx', '.jsx', '.json', '.py', '.css', '.html', '.sql'
 ];
@@ -66,7 +70,6 @@ async function createIgnoreForPath(
 
 /**
  * Recursively reads a directory, applying .gitignore-like filters (via 'ignore').
- * Uses asynchronous fs.promises APIs to avoid blocking the main thread.
  */
 async function readDirectoryTree(
   dirPath: string,
@@ -93,7 +96,6 @@ async function readDirectoryTree(
     }
     const fullPath = path.join(dirPath, entry);
 
-    // Distinguish path to ignore-check
     const relPath = isProjectDir
       ? path.relative(projectRoot, fullPath)
       : path.relative(dirPath, fullPath);
@@ -106,7 +108,6 @@ async function readDirectoryTree(
     try {
       stats = await fs.promises.stat(fullPath);
     } catch {
-      // If we fail to stat, skip
       continue;
     }
 
@@ -231,24 +232,12 @@ export function registerIpcHandlers(): void {
     }
   });
 
-  /**
-   * Previously, we had an 'export-file-map' IPC handler used by FileMapViewer.
-   * That feature is now removed (FileMapViewer was deleted in final cleanup).
-   * So we have removed that IPC handler here.
-   */
-
-  /**
-   * show-open-dialog
-   * Opens a dialog for selecting directories.
-   */
+  // show-open-dialog
   ipcMain.handle('show-open-dialog', async (_event, options: Electron.OpenDialogOptions) => {
     return dialog.showOpenDialog(options);
   });
 
-  /**
-   * create-folder
-   * Creates a new folder with a unique name in the given parent directory.
-   */
+  // create-folder
   ipcMain.handle('create-folder', async (_event, { parentPath, folderName }: { parentPath: string; folderName: string }) => {
     let baseName = folderName;
     let suffix = 1;
@@ -263,7 +252,7 @@ export function registerIpcHandlers(): void {
           targetPath = path.join(parentPath, baseName);
         }
       } catch {
-        // stat threw => doesn't exist, so we can mkdir
+        // doesn't exist, so we can mkdir
         break;
       }
     }
@@ -278,17 +267,45 @@ export function registerIpcHandlers(): void {
     }
   });
 
-  /**
-   * verify-file-existence
-   * Checks if the given file path exists on the local file system.
-   * Returns a boolean. Used for XML import validation.
-   */
+  // verify-file-existence
   ipcMain.handle('verify-file-existence', async (_event, filePath: string) => {
     try {
       await fs.promises.stat(filePath);
       return true; // File exists
     } catch {
       return false; // File does not exist
+    }
+  });
+
+  /**
+   * Step 5: read-prompt-composer-file
+   * Attempts to read a file from the .prompt-composer folder at the project root.
+   * If not found, returns null.
+   * 
+   * We accept a relative filename (e.g. "MY_TEMPLATE.txt") and locate it in
+   *   path.join(process.cwd(), ".prompt-composer", relativeFilename).
+   */
+  ipcMain.handle('read-prompt-composer-file', async (_event, relativeFilename: string) => {
+    try {
+      const projectRoot = process.cwd();
+      const promptComposerFolder = path.join(projectRoot, '.prompt-composer');
+      const targetPath = path.join(promptComposerFolder, relativeFilename);
+
+      // Check if file exists
+      const stats = await fs.promises.stat(targetPath);
+      if (!stats.isFile()) {
+        // It's not a file
+        console.warn(`[read-prompt-composer-file] Not a file: ${targetPath}`);
+        return null;
+      }
+
+      // If it is a file, read and return content
+      const content = await fs.promises.readFile(targetPath, 'utf-8');
+      return content;
+    } catch (err) {
+      // If anything fails, we return null
+      console.warn('[read-prompt-composer-file] Could not read file:', relativeFilename, err);
+      return null;
     }
   });
 }
