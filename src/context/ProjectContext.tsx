@@ -1,3 +1,4 @@
+
 /**
  * @file ProjectContext.tsx
  * @description
@@ -44,6 +45,7 @@ declare global {
       showOpenDialog: (options: any) => Promise<{ canceled: boolean; filePaths: string[] }>;
       sendMessage: (channel: string, data: any) => void;
       onMessage: (channel: string, callback: (data: any) => void) => void;
+      verifyFileExistence?: (filePath: string) => Promise<boolean>;
     }
   }
 }
@@ -73,22 +75,70 @@ export interface DirectoryListing {
 type NodeState = 'none' | 'all' | 'partial';
 
 interface ProjectContextType {
+  /**
+   * Returns cached or fetches directory data from the main process.
+   */
   getDirectoryListing: (dirPath: string) => Promise<DirectoryListing | null>;
+
+  /**
+   * Each node's tri-state selection status, keyed by absolute path.
+   */
   nodeStates: Record<string, NodeState>;
+
+  /**
+   * Whether a directory path is expanded or collapsed in the UI tree.
+   */
   expandedPaths: Record<string, boolean>;
+
+  /**
+   * Map of fully selected file paths -> their content.
+   */
   selectedFileContents: Record<string, string>;
+
+  /**
+   * Real-time total tokens for all selected file contents. Helps with performance warnings.
+   */
   selectedFilesTokenCount: number;
+
+  /**
+   * Cached DirectoryListing objects by folder path.
+   */
   directoryCache: Record<string, DirectoryListing>;
 
+  /**
+   * Toggles a node's selection state between 'all' and 'none' (and recalc partial).
+   */
   toggleNodeSelection: (node: TreeNode) => void;
+
+  /**
+   * Toggles expansion for a directory path in the UI tree.
+   */
   toggleExpansion: (nodePath: string) => void;
+
+  /**
+   * Collapses a directory path and all of its children. (Sets expandedPaths to false)
+   */
   collapseSubtree: (node: TreeNode) => void;
+
+  /**
+   * Generates an ASCII representation of the folder structure for the given path.
+   */
   generateAsciiTree: (rootPath: string) => Promise<string>;
+
+  /**
+   * Returns an array of selected file entries for use in the file block.
+   */
   getSelectedFileEntries: () => Array<{
     path: string;
     content: string;
     language: string;
   }>;
+
+  /**
+   * Refreshes the folder structure by re-fetching directory listings and re-evaluating tri-state logic.
+   * This is the method added in Step 2 to implement the "Refresh" button for the File Tree.
+   */
+  refreshFolders: (folderPaths: string[]) => Promise<void>;
 }
 
 /**
@@ -112,7 +162,8 @@ const ProjectContext = createContext<ProjectContextType>({
   toggleExpansion: () => {},
   collapseSubtree: () => {},
   generateAsciiTree: async () => '',
-  getSelectedFileEntries: () => []
+  getSelectedFileEntries: () => [],
+  refreshFolders: async () => {}
 });
 
 export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
@@ -173,9 +224,8 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       total += fileTokens;
     }
     
-    // Apply a fine-tuning correction factor to match OpenAI's estimator
+    // Apply a fine-tuning correction factor
     const rawTotal = total;
-    // Use the same correction factor (1.04) to align with OpenAI's web interface estimator
     total = Math.ceil(total * 1.04);
     console.log(`[ProjectContext] Raw token count: ${rawTotal}`);
     console.log(`[ProjectContext] Adjusted token count for selected files: ${total}`);
@@ -216,7 +266,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
   }
 
   /**
-   * post-order DFS to recalc tri-state from children up. 
+   * post-order DFS to recalc tri-state from children up.
    * If all children are 'all', set parent to 'all'. If all are 'none', set parent to 'none'.
    * Otherwise 'partial'.
    */
@@ -496,6 +546,52 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     return results;
   }, [selectedFileContents]);
 
+  /**
+   * refreshFolders
+   * Step 2 Implementation:
+   * Allows the user to "Refresh" the folder tree from the sidebar, re-fetching
+   * directory listings and re-evaluating tri-state selections for new or removed files.
+   *
+   * @param folderPaths - array of absolute or relative folder paths
+   * @returns A promise that resolves once the refresh is complete
+   */
+  const refreshFolders = useCallback(async (folderPaths: string[]): Promise<void> => {
+    try {
+      console.log('[ProjectContext] refreshFolders called for:', folderPaths);
+
+      // For each folder path, re-fetch directory data from electron main
+      for (const fPath of folderPaths) {
+        console.log(`[ProjectContext] Force refresh for folder: ${fPath}`);
+        if (!window.electronAPI?.listDirectory) {
+          console.warn('[ProjectContext] refreshFolders: electronAPI.listDirectory is unavailable');
+          continue;
+        }
+        try {
+          const freshListing = await window.electronAPI.listDirectory(fPath);
+          if (freshListing) {
+            setDirectoryCache((prev) => ({
+              ...prev,
+              [fPath]: freshListing
+            }));
+          }
+        } catch (err) {
+          console.error(`[ProjectContext] Failed to refresh folder: ${fPath}`, err);
+        }
+      }
+
+      // Now recalc tri-state states & sync selected files
+      // Because new or removed files/folders might appear or vanish
+      setNodeStates((prev) => {
+        const updated = { ...prev };
+        recalcAllRootStates(updated);
+        syncSelectedFilesFromNodeStates(updated);
+        return updated;
+      });
+    } catch (err) {
+      console.error('[ProjectContext] refreshFolders error:', err);
+    }
+  }, [recalcAllRootStates, syncSelectedFilesFromNodeStates]);
+
   const contextValue: ProjectContextType = {
     getDirectoryListing,
     nodeStates,
@@ -507,7 +603,8 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     toggleExpansion,
     collapseSubtree,
     generateAsciiTree,
-    getSelectedFileEntries
+    getSelectedFileEntries,
+    refreshFolders
   };
 
   return (

@@ -4,7 +4,11 @@
  * @description
  * The main sidebar for managing project folders. The user can add a folder,
  * which is appended to local additionalFolders. Then we pass that array to
- * <FileTree> for tri-state toggling. 
+ * <FileTree> for tri-state toggling.
+ *
+ * Step 2: We now add a "Refresh" button to re-fetch directory listings from the
+ * ProjectContext. This ensures newly added or removed files in the OS are reflected
+ * in the tri-state file tree.
  *
  * Final Cleanup (Step 11):
  *  - Removed FileMapViewer import and usage, so the ASCII file map is no
@@ -20,8 +24,12 @@ const Sidebar: React.FC = () => {
   const [additionalFolders, setAdditionalFolders] = useState<string[]>([]);
 
   // We'll show the selectedFilesTokenCount from ProjectContext, not from PromptContext
-  const { selectedFilesTokenCount } = useProject();
+  const { selectedFilesTokenCount, refreshFolders } = useProject();
 
+  /**
+   * addFolder
+   * Allows the user to open a dialog and select a new project folder to track.
+   */
   const addFolder = async () => {
     try {
       if (!window.electronAPI?.showOpenDialog) {
@@ -49,9 +57,27 @@ const Sidebar: React.FC = () => {
     }
   };
 
+  /**
+   * removeFolder
+   * Removes a folder from the local array. This no longer wipes tri-state in ProjectContext,
+   * but effectively hides that folder from the user. If re-added, we re-initialize it.
+   */
   const removeFolder = useCallback((folderPath: string) => {
     setAdditionalFolders((prev) => prev.filter((p) => p !== folderPath));
   }, []);
+
+  /**
+   * handleRefresh
+   * Step 2: Calls refreshFolders in the ProjectContext with our array of additionalFolders.
+   */
+  const handleRefresh = async () => {
+    console.log('[Sidebar] handleRefresh triggered');
+    if (!refreshFolders) {
+      console.warn('[Sidebar] refreshFolders is unavailable');
+      return;
+    }
+    await refreshFolders(additionalFolders);
+  };
 
   return (
     <aside className="bg-gray-200 dark:bg-gray-700 flex flex-col h-full relative min-w-[180px]">
@@ -60,12 +86,21 @@ const Sidebar: React.FC = () => {
         <span className="text-gray-900 dark:text-gray-50 font-medium">
           Project Folders
         </span>
-        <button
-          onClick={addFolder}
-          className="ml-2 text-xs border border-gray-500 rounded px-2 py-1 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100"
-        >
-          Add Folder
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={addFolder}
+            className="text-xs border border-gray-500 rounded px-2 py-1 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100"
+          >
+            Add Folder
+          </button>
+          {/* Step 2: "Refresh" button */}
+          <button
+            onClick={handleRefresh}
+            className="text-xs border border-gray-500 rounded px-2 py-1 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="flex-grow overflow-y-auto p-2">
@@ -74,12 +109,6 @@ const Sidebar: React.FC = () => {
           folders={additionalFolders}
           onRemoveFolder={removeFolder}
         />
-
-        {/* 
-          Final Cleanup:
-          The FileMapViewer component has been removed, 
-          so we no longer display the ASCII map here.
-        */}
       </div>
 
       {/* Bottom bar with selected files token usage */}

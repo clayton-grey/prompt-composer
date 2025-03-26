@@ -6,8 +6,7 @@
  *
  * Responsibilities:
  *  1) Renders the root folder(s) from the array of folder paths given via props.folders
- *  2) For each folder path, we call useProject().getDirectoryListing(folderPath) to get or load 
- *     the tree data from the context's cache.
+ *  2) For each folder path, we use directoryCache or call getDirectoryListing to get tree data
  *  3) We use ProjectContext's nodeStates to decide which node is 'none', 'all', or 'partial'
  *  4) We use ProjectContext's expandedPaths to decide if a directory is expanded
  *  5) We call toggleNodeSelection and toggleExpansion from ProjectContext 
@@ -18,7 +17,7 @@
  *  - onRemoveFolder(folderPath: string): removes a root folder from parent's state
  *
  * Implementation details:
- *  - This merges the multi-root logic: for each folder path, we fetch or display the tree
+ *  - We REMOVED local folderTrees state and always pull directly from directoryCache
  *  - We do not store node states or expansions in local state; we read from context
  *  - The tri-state logic is now in ProjectContext, so we just display the correct icon 
  *    based on nodeStates[node.path]
@@ -28,7 +27,7 @@
  *    asynchronous file reading to mitigate performance issues.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect } from 'react';
 import { useProject, TreeNode } from '../../context/ProjectContext';
 
 type NodeState = 'none' | 'all' | 'partial';
@@ -52,80 +51,21 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
     expandedPaths,
     toggleNodeSelection,
     toggleExpansion,
-    collapseSubtree
+    collapseSubtree,
+    directoryCache,
+    refreshFolders
   } = useProject();
 
   /**
-   * We store a local array of { rootPath, node, error } to display each folder's tree. 
-   * We do not keep expansions or node states here anymore. 
-   */
-  const [folderTrees, setFolderTrees] = useState<Array<{
-    rootPath: string;
-    node: TreeNode | null;
-    error: string | null;
-  }>>([]);
-
-  /**
-   * Whenever 'folders' changes, we add or remove folderTrees. 
-   * We do an effect for each new folder, fetch from getDirectoryListing, store in folderTrees.
+   * For each folder path in props, ensure it's loaded into directoryCache
    */
   useEffect(() => {
-    // Remove any folderTrees that are no longer in the 'folders' prop
-    setFolderTrees((prev) => prev.filter((ft) => folders.includes(ft.rootPath)));
-
-    // For each newly added folder in 'folders', check if we already have it in folderTrees
     folders.forEach(async (folderPath) => {
-      const existing = folderTrees.find((ft) => ft.rootPath === folderPath);
-      if (!existing) {
-        // placeholder entry
-        setFolderTrees((prev2) => [
-          ...prev2,
-          {
-            rootPath: folderPath, // <-- FIX: previously used rootPath alone; now corrected
-            node: null,
-            error: null
-          }
-        ]);
-
-        // attempt to load directory listing
-        const listing = await getDirectoryListing(folderPath);
-        if (!listing) {
-          setFolderTrees((prev2) =>
-            prev2.map((ft) =>
-              ft.rootPath === folderPath
-                ? { ...ft, error: 'Failed to load directory tree' }
-                : ft
-            )
-          );
-          return;
-        }
-
-        // Build a root node
-        const rootNode: TreeNode = {
-          name: listing.baseName,
-          path: listing.absolutePath,
-          type: 'directory',
-          children: listing.children
-        };
-
-        // store the loaded node
-        setFolderTrees((prev2) =>
-          prev2.map((ft) =>
-            ft.rootPath === folderPath
-              ? { ...ft, node: rootNode, error: null }
-              : ft
-          )
-        );
+      if (!directoryCache[folderPath]) {
+        await getDirectoryListing(folderPath);
       }
     });
-
-    // We intentionally do not place folderTrees in the dependency array because
-    // we want to check for new additions but avoid infinite re-fetching. 
-    // This is a minimal approach for demonstration. 
-    // In a real scenario, we'd structure this carefully or use a separate effect 
-    // if we needed to handle repeated folder additions.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folders]);
+  }, [folders, directoryCache, getDirectoryListing]);
 
   /**
    * Renders a tri-state check icon for a node. 
@@ -137,25 +77,10 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
     const onClick = (e: React.MouseEvent) => {
       e.stopPropagation();
       console.log(`[FileTree] Toggling selection for ${nodePath} (${nodeType})`);
-      console.log(`[FileTree] Current state: ${st}`);
       
-      const foundFolder = folderTrees.find((ft) => {
-        // see if ft.node has the same absolute path or if nodePath is inside that root
-        return ft.node && nodePath.startsWith(ft.node.path);
-      });
-      
-      // foundFolder might not be correct if there are multiple roots, 
-      // but typically node belongs to one root
-      // We'll rely on context's toggleNodeSelection needing the actual TreeNode. 
-      // We can do a BFS/DFS to find the node in that folder's tree:
-      if (!foundFolder || !foundFolder.node) {
-        console.error(`[FileTree] Could not find folder for node ${nodePath}`);
-        return;
-      }
-      
-      const node = findNodeByPath(foundFolder.node, nodePath);
+      // Find the node in the directory tree
+      const node = findNodeByPath(nodePath);
       if (node) {
-        console.log(`[FileTree] Found node, toggling selection: ${node.path} (${node.type})`);
         toggleNodeSelection(node);
       } else {
         console.error(`[FileTree] Could not find node with path ${nodePath}`);
@@ -198,6 +123,40 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }
 
   /**
+   * Creates a new folder inside the specified directory
+   */
+  async function createFolder(parentPath: string) {
+    if (!window?.electronAPI?.createFolder) {
+      console.error("[FileTree] createFolder: electronAPI.createFolder not available");
+      return;
+    }
+
+    try {
+      console.log(`[FileTree] Creating new folder in ${parentPath}`);
+      const newFolderPath = await window.electronAPI.createFolder({
+        parentPath,
+        folderName: "Untitled Folder"
+      });
+
+      if (newFolderPath) {
+        console.log(`[FileTree] Created new folder: ${newFolderPath}`);
+        
+        // Force refresh the parent folder to show the new folder
+        toggleExpansion(parentPath);
+        
+        if (refreshFolders) {
+          console.log(`[FileTree] Refreshing parent folder: ${parentPath}`);
+          await refreshFolders([parentPath]);
+        }
+      } else {
+        console.error("[FileTree] Failed to create new folder");
+      }
+    } catch (err) {
+      console.error("[FileTree] Error creating folder:", err);
+    }
+  }
+
+  /**
    * Renders a small folder icon, open or closed, or blank for files.
    */
   function renderFolderIcon(node: TreeNode) {
@@ -228,6 +187,52 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }
 
   /**
+   * Find a node by its path in the directoryCache
+   */
+  function findNodeByPath(targetPath: string): TreeNode | null {
+    // Check if this is a root folder
+    if (directoryCache[targetPath]) {
+      const listing = directoryCache[targetPath];
+      return {
+        name: listing.baseName,
+        path: listing.absolutePath,
+        type: 'directory',
+        children: listing.children
+      };
+    }
+    
+    // Otherwise search through all folders
+    for (const rootPath in directoryCache) {
+      if (!directoryCache[rootPath]) continue;
+      
+      const rootNode = {
+        name: directoryCache[rootPath].baseName,
+        path: directoryCache[rootPath].absolutePath,
+        type: 'directory' as const,
+        children: directoryCache[rootPath].children 
+      };
+      
+      // Helper function to search a subtree
+      function searchNode(node: TreeNode): TreeNode | null {
+        if (node.path === targetPath) return node;
+        if (!node.children) return null;
+        
+        for (const child of node.children) {
+          const found = searchNode(child);
+          if (found) return found;
+        }
+        
+        return null;
+      }
+      
+      const found = searchNode(rootNode);
+      if (found) return found;
+    }
+    
+    return null;
+  }
+
+  /**
    * Recursively render children if directory is expanded
    */
   function renderNode(node: TreeNode, depth: number = 0): JSX.Element {
@@ -237,67 +242,86 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       toggleExpansion(node.path);
     };
 
-    return (
-      <div key={node.path}>
-        <div
-          className="flex items-center text-sm py-1"
-          style={{ paddingLeft: depth * 18 }}
-        >
-          {renderSelectionIcon(node.path, node.type)}
-          <span 
-            className="cursor-pointer flex items-center"
-            onClick={node.type === 'directory' ? onFolderClick : undefined}
-          >
-            {renderFolderIcon(node)}
-          </span>
-          <span className="truncate overflow-hidden whitespace-nowrap max-w-[140px] text-gray-800 dark:text-gray-100">
-            {node.name}
-          </span>
-        </div>
-        {node.type === 'directory' && isExpanded && node.children && (
-          <div>
-            {node.children.map((child) => renderNode(child, depth + 1))}
+    const className = `flex items-start py-1 ${
+      depth > 0 ? 'pl-4' : ''
+    } hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors duration-100`;
+
+    if (node.type === 'directory') {
+      return (
+        <div key={node.path}>
+          <div className={className}>
+            <div 
+              className="flex items-center flex-grow cursor-pointer" 
+              onClick={onFolderClick}
+            >
+              {renderSelectionIcon(node.path, 'directory')}
+              {renderFolderIcon(node)}
+              <span className="ml-1 text-gray-800 dark:text-gray-200 text-sm truncate">
+                {node.name}
+              </span>
+            </div>
           </div>
-        )}
-      </div>
-    );
+          {isExpanded && node.children && (
+            <div className="ml-4 border-l border-gray-300 dark:border-gray-600">
+              {node.children.map((child) => renderNode(child, depth + 1))}
+            </div>
+          )}
+        </div>
+      );
+    } else if (node.type === 'file') {
+      return (
+        <div key={node.path} className={className}>
+          <div className="flex items-center">
+            {renderSelectionIcon(node.path, 'file')}
+            <svg
+              className="h-4 w-4 text-gray-600 dark:text-gray-300"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+              />
+            </svg>
+            <span className="ml-1 text-gray-800 dark:text-gray-200 text-sm truncate">
+              {node.name}
+            </span>
+          </div>
+        </div>
+      );
+    }
+    
+    // Default fallback
+    return <div>Unknown node type: {node.type}</div>;
   }
 
   /**
-   * findNodeByPath: BFS or DFS in the folder tree to find the node by path
+   * Renders a root folder (top-level directory)
    */
-  function findNodeByPath(root: TreeNode, targetPath: string): TreeNode | null {
-    if (root.path === targetPath) return root;
-    if (!root.children) return null;
-    for (const c of root.children) {
-      const found = findNodeByPath(c, targetPath);
-      if (found) return found;
-    }
-    return null;
-  }
-
-  function renderRootFolder(item: {
-    rootPath: string;
-    node: TreeNode | null;
-    error: string | null;
-  }) {
-    const { rootPath, node, error } = item;
-    if (error) {
+  function renderRootFolder(folderPath: string) {
+    const listing = directoryCache[folderPath];
+    
+    if (!listing) {
       return (
-        <div key={rootPath} className="text-red-500 text-xs mb-2">
-          Failed to load folder: {rootPath}
-        </div>
-      );
-    }
-    if (!node) {
-      return (
-        <div key={rootPath} className="text-gray-500 text-xs mb-2">
-          Loading {rootPath}...
+        <div key={folderPath} className="text-gray-500 text-xs mb-2">
+          Loading {folderPath}...
         </div>
       );
     }
 
+    // Convert directory listing to a tree node
+    const node: TreeNode = {
+      name: listing.baseName,
+      path: listing.absolutePath,
+      type: 'directory',
+      children: listing.children
+    };
+    
     const isExpanded = expandedPaths[node.path] || false;
+    
     const onFolderClick = () => {
       toggleExpansion(node.path);
     };
@@ -305,15 +329,16 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
     const handleCollapseClick = () => {
       collapseSubtree(node);
     };
+    
     const handleRemoveFolder = () => {
-      onRemoveFolder(rootPath);
+      onRemoveFolder(folderPath);
     };
 
     return (
-      <div key={rootPath} className="mb-2">
+      <div key={folderPath} className="mb-2">
         <div className="flex items-center bg-transparent p-1">
           {/* Tri-state icon for root */}
-          {renderSelectionIcon(node.path, node.type)}
+          {renderSelectionIcon(node.path, 'directory')}
 
           {/* Folder icon */}
           <span onClick={onFolderClick} className="cursor-pointer flex items-center">
@@ -362,7 +387,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
         </div>
 
         {/* If expanded, render children */}
-        {node.type === 'directory' && isExpanded && node.children && node.children.length > 0 && (
+        {isExpanded && node.children && node.children.length > 0 && (
           <div className="pl-6">
             {node.children.map((child) => renderNode(child, 1))}
           </div>
@@ -373,12 +398,12 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
 
   return (
     <div className="w-full h-full text-xs text-gray-800 dark:text-gray-100">
-      {folderTrees.length === 0 && (
+      {folders.length === 0 && (
         <div className="text-gray-500 italic">
           No folders added. Click "Add Folder" to include your project.
         </div>
       )}
-      {folderTrees.map((item) => renderRootFolder(item))}
+      {folders.map(folderPath => renderRootFolder(folderPath))}
     </div>
   );
 };
