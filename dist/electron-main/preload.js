@@ -3,11 +3,13 @@
  * @file preload.ts
  * @description
  * Runs in the Electron preload script context. We define window.electronAPI with relevant
- * methods. We have now added `readPromptComposerFile` to support reading templates from
- * the `.prompt-composer` folder in the user’s project.
+ * methods. We now add:
+ *  - listAllTemplateFiles()
+ *  - readGlobalPromptComposerFile()
  *
- * Note: Because this is the 'preload' script, it must not rely on Node integration. Instead,
- * we communicate with the main process via IPC calls (`ipcRenderer.invoke`, etc.).
+ * These allow the renderer to retrieve a combined listing of .prompt-composer files from
+ * both global (~/.prompt-composer) and project-based (cwd/.prompt-composer), and to read
+ * global template files specifically.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const electron_1 = require("electron");
@@ -62,6 +64,24 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
      */
     verifyFileExistence: (filePath) => {
         return electron_1.ipcRenderer.invoke('verify-file-existence', filePath);
+    },
+    /**
+     * Get the user's home directory
+     */
+    getHomeDirectory: async () => {
+        return electron_1.ipcRenderer.invoke('get-home-directory');
+    },
+    /**
+     * List all template files from global and project .prompt-composer directories
+     */
+    listAllTemplateFiles: async () => {
+        return electron_1.ipcRenderer.invoke('list-all-template-files');
+    },
+    /**
+     * Read a template file from the global ~/.prompt-composer directory
+     */
+    readGlobalPromptComposerFile: async (fileName) => {
+        return electron_1.ipcRenderer.invoke('read-global-prompt-composer-file', fileName);
     },
     /**
      * Reads a file from the .prompt-composer folder.

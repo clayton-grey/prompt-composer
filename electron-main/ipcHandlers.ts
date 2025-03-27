@@ -1,33 +1,71 @@
+
 /**
  * @file ipcHandlers.ts
  * @description
- * Consolidated directory reading logic + Asynchronous FS operations.
- * We also register IPC handlers for reading/writing files, importing/exporting XML,
- * and verifying file existence for XML import validation.
+ * Consolidated directory reading logic + Asynchronous FS operations, plus
+ * newly added IPC handlers for listing and reading template files from both
+ * the global and project .prompt-composer directories.
  *
- * Step 5 (Nested Template Support):
- *  - We add a new "read-prompt-composer-file" handler to read a file from
- *    the .prompt-composer folder in the project's root. If the file doesn't exist,
- *    we return null. If it does, we return its contents.
+ * Step 2 Changes (Implement a consolidated "Add Template Block" pop-up):
+ *  - Added 'list-all-template-files' handler to gather .txt/.md files from:
+ *      (a) Global: ~/<.prompt-composer>
+ *      (b) Project: <cwd>/.prompt-composer
+ *  - Added 'read-global-prompt-composer-file' to read a file from the global directory
+ *    if it exists. If not found, returns null.
  *
- * Final Cleanup in prior steps:
- *  - We have removed the "export-file-map" IPC handler and references to FileMapViewer.
+ * Implementation Details:
+ *  - We import 'os' to find the user's home directory for the global .prompt-composer folder.
+ *  - We define helper function `listPromptComposerFiles(folderPath: string)` that enumerates
+ *    .txt and .md files if the folder exists, ignoring hidden items.
+ *  - If the folder doesn't exist or is not a directory, we skip it.
+ *
+ * Edge Cases:
+ *  - If neither folder exists, we return an empty list.
+ *  - If the user does not have a global folder, that's fine, we skip it.
+ *  - If the user has no .txt/.md files, we return an empty array.
  */
 
 import { ipcMain, dialog } from 'electron';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import ignore from 'ignore';
 
 const ALLOWED_EXTENSIONS = [
   '.txt', '.md', '.js', '.ts', '.tsx', '.jsx', '.json', '.py', '.css', '.html', '.sql'
 ];
 
+// Reuse the interface for our directory tree
 interface TreeNode {
   name: string;
   path: string;
   type: 'file' | 'directory';
   children?: TreeNode[];
+}
+
+async function listPromptComposerFiles(folderPath: string): Promise<string[]> {
+  // We only want .txt and .md files from the folder
+  // If the folder doesn't exist or isn't a directory, we return an empty array
+  try {
+    const stat = await fs.promises.stat(folderPath);
+    if (!stat.isDirectory()) {
+      return [];
+    }
+  } catch {
+    // folder doesn't exist
+    return [];
+  }
+
+  const files = await fs.promises.readdir(folderPath, { withFileTypes: true });
+  const results: string[] = [];
+  for (const dirent of files) {
+    if (!dirent.isFile()) continue;
+    const ext = path.extname(dirent.name).toLowerCase();
+    if (ext === '.txt' || ext === '.md') {
+      results.push(dirent.name);
+    }
+  }
+  return results;
 }
 
 /**
@@ -276,14 +314,7 @@ export function registerIpcHandlers(): void {
     }
   });
 
-  /**
-   * Step 5: read-prompt-composer-file
-   * Attempts to read a file from the .prompt-composer folder at the project root.
-   * If not found, returns null.
-   * 
-   * We accept a relative filename (e.g. "MY_TEMPLATE.txt") and locate it in
-   *   path.join(process.cwd(), ".prompt-composer", relativeFilename).
-   */
+  // read-prompt-composer-file
   ipcMain.handle('read-prompt-composer-file', async (_event, relativeFilename: string) => {
     try {
       const projectRoot = process.cwd();
@@ -304,32 +335,77 @@ export function registerIpcHandlers(): void {
         return null;
       }
       
-      // Log directory contents for debugging
-      try {
-        const files = await fs.promises.readdir(promptComposerFolder);
-        console.log(`[read-prompt-composer-file] Files in .prompt-composer: ${files.join(', ')}`);
-      } catch (readErr) {
-        console.error(`[read-prompt-composer-file] Failed to read directory contents: ${promptComposerFolder}`, readErr);
-      }
-      
       const targetPath = path.join(promptComposerFolder, relativeFilename);
       console.log(`[read-prompt-composer-file] Looking for file: ${targetPath}`);
 
       // Check if file exists
       const stats = await fs.promises.stat(targetPath);
       if (!stats.isFile()) {
-        // It's not a file
         console.warn(`[read-prompt-composer-file] Not a file: ${targetPath}`);
         return null;
       }
 
-      // If it is a file, read and return content
       const content = await fs.promises.readFile(targetPath, 'utf-8');
       console.log(`[read-prompt-composer-file] Successfully read file: ${relativeFilename} (${content.length} bytes)`);
       return content;
     } catch (err) {
-      // If anything fails, we return null
       console.warn(`[read-prompt-composer-file] Could not read file: ${relativeFilename}`, err);
+      return null;
+    }
+  });
+
+  /**
+   * Step 2 addition: list-all-template-files
+   * Gathers .txt/.md files from (a) global ~/.prompt-composer and (b) project .prompt-composer
+   * Returns an array of objects { fileName: string, source: 'global' | 'project' }.
+   */
+  ipcMain.handle('list-all-template-files', async () => {
+    const result: Array<{ fileName: string; source: 'global' | 'project' }> = [];
+    const globalDir = path.join(os.homedir(), '.prompt-composer');
+    const projectDir = path.join(process.cwd(), '.prompt-composer');
+
+    try {
+      const globalFiles = await listPromptComposerFiles(globalDir);
+      for (const gf of globalFiles) {
+        result.push({ fileName: gf, source: 'global' });
+      }
+    } catch (err) {
+      console.warn('[list-all-template-files] Could not list global .prompt-composer files:', err);
+    }
+
+    try {
+      const projectFiles = await listPromptComposerFiles(projectDir);
+      for (const pf of projectFiles) {
+        result.push({ fileName: pf, source: 'project' });
+      }
+    } catch (err) {
+      console.warn('[list-all-template-files] Could not list project .prompt-composer files:', err);
+    }
+
+    return result;
+  });
+
+  /**
+   * Step 2 addition: read-global-prompt-composer-file
+   * Attempts to read a file from ~/.prompt-composer. If not found, returns null.
+   */
+  ipcMain.handle('read-global-prompt-composer-file', async (_event, fileName: string) => {
+    try {
+      const globalFolder = path.join(os.homedir(), '.prompt-composer');
+      const targetPath = path.join(globalFolder, fileName);
+
+      console.log(`[read-global-prompt-composer-file] Looking for file at: ${targetPath}`);
+      const stats = await fs.promises.stat(targetPath);
+      if (!stats.isFile()) {
+        console.warn(`[read-global-prompt-composer-file] Not a file: ${targetPath}`);
+        return null;
+      }
+
+      const content = await fs.promises.readFile(targetPath, 'utf-8');
+      console.log(`[read-global-prompt-composer-file] Successfully read file: ${fileName} (${content.length} bytes)`);
+      return content;
+    } catch (err) {
+      console.warn(`[read-global-prompt-composer-file] Could not read file: ${fileName}`, err);
       return null;
     }
   });

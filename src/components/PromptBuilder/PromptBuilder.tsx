@@ -2,30 +2,21 @@
 /**
  * @file PromptBuilder.tsx
  * @description
- * Provides the UI for adding text/template/file blocks, plus a toggle
- * for plain text preview. Previously, we also had an "Add Prefab" button
- * and related state/menu for prefabs; that has now been removed.
+ * Provides the UI for adding text, template, and file blocks, plus a toggle
+ * for plain text preview. We now update the "Add Template Block" functionality
+ * to open a modal (TemplateSelectorModal) listing available templates from
+ * global + project sources, rather than just inserting an empty template block.
  *
- * Step 1 Changes (Refactor Prefab → Template):
- *  - Removed all references to "prefab," including:
- *    - Removed the "Add Prefab" button
- *    - Removed showPrefabMenu, handleAddPrefabClick, handleInsertExamplePrefab, examplePrefab
- *    - Removed import { parsePrefab } from '../../utils/prefabParser'
- *  - Preserved "Add Template Block" button as is.
+ * Step 2 Changes:
+ *  - Import TemplateSelectorModal
+ *  - Add state showTemplateModal
+ *  - When user clicks "Add Template Block," we set showTemplateModal = true
+ *  - On selection, we parse the chosen .txt or .md file into multiple blocks
+ *    with parseTemplateBlocks, then call addBlocks(newBlocks).
  *
- * Key Responsibilities:
- *  - Add text blocks, add template blocks, add file block
- *  - Toggling a plain text preview of the current prompt
- *  - The actual layout (BlockList, PromptPreview) is below
- *
- * Dependencies:
- *  - usePrompt from PromptContext for block management
- *  - useProject from ProjectContext for file selection
- *  - nanoid for unique IDs
- *
- * @notes
- *  - The next steps will handle the consolidated “Add Template Block” pop-up and
- *    other template logic.
+ * Implementation Details:
+ *  - The rest of PromptBuilder remains the same except for handleAddTemplateBlock, which
+ *    now toggles the modal.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -34,14 +25,15 @@ import BlockList from './BlockList';
 import { usePrompt } from '../../context/PromptContext';
 import PromptPreview from './PromptPreview';
 import { useProject } from '../../context/ProjectContext';
+import TemplateSelectorModal from './TemplateSelectorModal';
 
 export const PromptBuilder: React.FC = () => {
-  const { addBlock, addBlocks, updateFileBlock, tokenUsage } = usePrompt();
+  const { addBlock, addBlocks, updateFileBlock } = usePrompt();
   const { getSelectedFileEntries, generateAsciiTree, directoryCache } = useProject();
   const [showPreview, setShowPreview] = useState(false);
+  const [showTemplateModal, setShowTemplateModal] = useState(false);
   const [rootFolders, setRootFolders] = useState<string[]>([]);
 
-  // Gather project root folder paths from directoryCache on mount/updates
   useEffect(() => {
     const folderPaths = Object.keys(directoryCache);
     if (folderPaths.length > 0) {
@@ -49,9 +41,6 @@ export const PromptBuilder: React.FC = () => {
     }
   }, [directoryCache]);
 
-  /**
-   * Add a new text block
-   */
   const handleAddTextBlock = () => {
     addBlock({
       id: nanoid(),
@@ -62,20 +51,14 @@ export const PromptBuilder: React.FC = () => {
   };
 
   /**
-   * Add a new template block (currently just empty content)
+   * Instead of creating a blank template, we now open a modal to select from available .txt/.md files.
    */
   const handleAddTemplateBlock = () => {
-    addBlock({
-      id: nanoid(),
-      type: 'template',
-      label: 'Template Block',
-      content: '',
-      variables: []
-    });
+    setShowTemplateModal(true);
   };
 
   /**
-   * Add or update the single File Block using the selected file entries
+   * Insert or update the File Block with selected file entries
    */
   const handleAddFileBlock = async () => {
     const fileEntries = getSelectedFileEntries();
@@ -97,14 +80,13 @@ export const PromptBuilder: React.FC = () => {
       console.error('[PromptBuilder] generateAsciiTree error:', err);
     }
 
-    // If generating a fancy ASCII map fails, fallback to a simple file list
+    // fallback
     const simpleMap = generateSimpleFileList(fileEntries);
     updateFileBlock(fileEntries, simpleMap);
   };
 
   /**
-   * Helper to find which root folder all files belong to (if any).
-   * Returns the longest matching root. If none match, returns null.
+   * Helper: findRootFolderForFiles
    */
   function findRootFolderForFiles(
     files: Array<{ path: string }>,
@@ -123,9 +105,6 @@ export const PromptBuilder: React.FC = () => {
     return null;
   }
 
-  /**
-   * If the fancy tree generation fails, produce a minimal listing
-   */
   function generateSimpleFileList(
     files: { path: string; content: string; language: string }[]
   ): string {
@@ -156,10 +135,16 @@ export const PromptBuilder: React.FC = () => {
     return map;
   }
 
-  /**
-   * Toggle to show/hide plain text preview
-   */
   const togglePreview = () => setShowPreview(!showPreview);
+
+  /**
+   * handleInsertTemplateBlocks
+   * Called by TemplateSelectorModal once the user picks a file, it's parsed into blocks,
+   * we simply add them all here with addBlocks.
+   */
+  const handleInsertTemplateBlocks = (parsedBlocks: any[]) => {
+    addBlocks(parsedBlocks);
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -188,7 +173,6 @@ export const PromptBuilder: React.FC = () => {
             >
               Add File Block
             </button>
-            {/* Removed the "Add Prefab" button */}
             <button
               onClick={togglePreview}
               className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
@@ -204,6 +188,13 @@ export const PromptBuilder: React.FC = () => {
         <BlockList />
         {showPreview && <PromptPreview />}
       </div>
+
+      {/* Step 2: Template selector modal */}
+      <TemplateSelectorModal
+        isOpen={showTemplateModal}
+        onClose={() => setShowTemplateModal(false)}
+        onInsertBlocks={handleInsertTemplateBlocks}
+      />
     </div>
   );
 };
