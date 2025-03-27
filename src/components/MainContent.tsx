@@ -1,16 +1,13 @@
+
 /**
  * @file MainContent.tsx
  * @description
- * The main content area of Prompt Composer. In Step 6, we update this file to
- * include the actual PromptBuilder interface rather than a placeholder.
+ * The main content area of Prompt Composer. We wrap the PromptBuilder in a
+ * flex container so that it can grow/shrink and scroll if needed.
  *
- * Key Responsibilities:
- *  - Render the PromptBuilder component (the block-based UI)
- *  - Provide a scrolling area for the prompt editing workflow
- *
- * @notes
- *  - We remove the previous placeholder text. Now it hosts the real builder.
- *  - The PromptBuilder handles the core logic for adding blocks.
+ * Implementation:
+ *  - "flex flex-col h-full overflow-hidden" on outer
+ *  - Inside, the PromptBuilder can do "flex-1 overflow-auto"
  */
 
 import React from 'react';
@@ -18,7 +15,7 @@ import { PromptBuilder } from './PromptBuilder/PromptBuilder';
 
 const MainContent: React.FC = () => {
   return (
-    <main className="flex-grow bg-gray-100 dark:bg-gray-800 p-4 overflow-auto">
+    <main className="flex flex-col h-full overflow-hidden">
       <PromptBuilder />
     </main>
   );

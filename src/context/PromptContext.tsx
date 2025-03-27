@@ -3,15 +3,13 @@
  * @file PromptContext.tsx
  * @description
  * Provides global state management for the Prompt Composer's prompt blocks and settings.
- * We now switch from a synchronous flatten to an async flatten so we can handle nested placeholders
- * from .prompt-composer.
+ * We now support an `addBlocks()` method that can insert multiple blocks in sequence.
  *
- * Key changes for Step 5 (Nested Template Support):
- *  - Replaced getFlattenedPrompt() with an async method that calls flattenBlocksAsync(...) 
- *  - The rest of the context (blocks, token usage) remains mostly the same, though token usage
- *    still calculates without waiting for placeholders from the filesystem. The user will see 
- *    an approximate token count; if the inserted template is large, it will adjust after the 
- *    final flatten is produced (depending on future steps).
+ * Key changes for enabling prefab templates:
+ *  - Introduced addBlocks(newBlocks: Block[]): Adds an array of blocks (e.g. from prefab parsing)
+ *    to the current list in the order provided.
+ *
+ * The rest is unchanged from the previous steps, except for the new addBlocks function.
  */
 
 import React, {
@@ -23,7 +21,6 @@ import React, {
   useRef
 } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-
 import type { Block, FilesBlock } from '../types/Block';
 import { initEncoder, estimateTokens } from '../utils/tokenizer';
 import { flattenBlocksAsync } from '../utils/flattenPrompt';
@@ -43,6 +40,11 @@ interface PromptContextType {
   settings: PromptSettings;
 
   addBlock: (block: Block) => void;
+  /**
+   * addBlocks inserts multiple blocks at once in sequence.
+   */
+  addBlocks: (newBlocks: Block[]) => void;
+
   removeBlock: (blockId: string) => void;
   updateBlock: (updatedBlock: Block) => void;
   setSettings: (newSettings: PromptSettings) => void;
@@ -58,16 +60,7 @@ interface PromptContextType {
   ) => void;
 
   tokenUsage: TokenUsage;
-
-  /**
-   * Returns a Promise that resolves to a single flattened prompt string by 
-   * concatenating all blocks AND substituting any nested placeholders.
-   */
   getFlattenedPrompt: () => Promise<string>;
-
-  /**
-   * Imports new blocks & settings from an XML file (replaces current).
-   */
   importComposition: (newBlocks: Block[], newSettings: PromptSettings) => void;
 }
 
@@ -80,6 +73,7 @@ const PromptContext = createContext<PromptContextType>({
   blocks: [],
   settings: defaultSettings,
   addBlock: () => {},
+  addBlocks: () => {},
   removeBlock: () => {},
   updateBlock: () => {},
   setSettings: () => {},
@@ -163,6 +157,14 @@ ${f.content}
     setBlocks((prev) => [...prev, block]);
   }, []);
 
+  /**
+   * addBlocks
+   * Inserts multiple blocks in the order provided. Useful for prefab expansions.
+   */
+  const addBlocks = useCallback((newBlocks: Block[]) => {
+    setBlocks((prev) => [...prev, ...newBlocks]);
+  }, []);
+
   const removeBlock = useCallback((blockId: string) => {
     setBlocks((prev) => prev.filter((b) => b.id !== blockId));
   }, []);
@@ -204,7 +206,8 @@ ${f.content}
           label: 'File Block',
           files,
           projectAsciiMap: asciiMap || '',
-          includeProjectMap: true
+          includeProjectMap: true,
+          locked: false
         };
 
         if (existingIndex === -1) {
@@ -220,9 +223,6 @@ ${f.content}
     []
   );
 
-  /**
-   * Returns a Promise that resolves to the fully flattened prompt (including nested template expansions).
-   */
   const getFlattenedPrompt = useCallback(async (): Promise<string> => {
     const flattened = await flattenBlocksAsync(blocks);
     return flattened;
@@ -240,6 +240,7 @@ ${f.content}
     blocks,
     settings,
     addBlock,
+    addBlocks,
     removeBlock,
     updateBlock,
     setSettings,
