@@ -1,30 +1,80 @@
+
 /**
  * @file templateResolver.ts
  * @description
- * Provides functions to recursively resolve placeholders of the form {{PLACEHOLDER}}
- * by loading template files from the .prompt-composer directory. 
+ * Provides functions to recursively resolve placeholders of the form {{TEMPLATE_NAME}}
+ * by loading template files from the project or global .prompt-composer directories.
  *
- * Core Function: resolveNestedTemplates(content, visited)
- * - Scans for placeholders using a regex
- * - For each {{SOMENAME}}, tries to load .prompt-composer/SOMENAME
- * - If found, recursively resolves placeholders in that file's content
- * - Prevents infinite loops by tracking visited placeholders in a Set
+ * We fix nested references so that if reading from the project fails, we fallback
+ * to reading from global. Also, if the placeholder has no extension, we try ".txt"
+ * and ".md" in both project and global contexts.
  *
- * Known Limitations:
- * - We do not handle placeholders with spaces or punctuation (only alphanumeric + underscores).
- * - If a placeholder file doesn't exist, we skip or leave the placeholder as-is.
- * - We do not do block-level variable substitution here (that's done prior).
+ * Implementation logic:
+ *  - For each {{NAME}}, we do:
+ *    1) try readPromptComposerFile(NAME)
+ *    2) if not found, try readGlobalPromptComposerFile(NAME)
+ *    3) if no extension in NAME, try appending .txt / .md for project, then global
+ *    4) if still not found, leave placeholder as-is
+ *
+ *  - We maintain a visited set to avoid infinite loops.
  */
 
-const PLACEHOLDER_REGEX = /\{\{([A-Za-z0-9_\-]+)\}\}/g;
+const PLACEHOLDER_REGEX = /\{\{([A-Za-z0-9_\-]+(\.[A-Za-z0-9]+)?)\}\}/g;
 
 /**
- * Recursively resolves placeholders in the given content by loading 
- * corresponding files from the .prompt-composer folder. 
- * 
+ * Attempts to read a template from the project or global .prompt-composer, including
+ * trying .txt/.md if no extension is present.
+ */
+async function tryReadTemplateFile(baseName: string): Promise<string | null> {
+  if (!window.electronAPI) {
+    console.warn('[templateResolver] electronAPI not available. Skipping read attempts.');
+    return null;
+  }
+
+  // Direct attempt in project
+  let content = await window.electronAPI.readPromptComposerFile(baseName);
+  if (content) {
+    return content;
+  }
+
+  // Direct attempt in global
+  content = await window.electronAPI.readGlobalPromptComposerFile(baseName);
+  if (content) {
+    return content;
+  }
+
+  // If the baseName has an extension, we're done
+  if (baseName.includes('.')) {
+    return null;
+  }
+
+  // If no extension, try .txt and .md in project, then global
+  const possibleExts = ['.txt', '.md'];
+  for (const ext of possibleExts) {
+    const fullName = baseName + ext;
+
+    // project
+    let c = await window.electronAPI.readPromptComposerFile(fullName);
+    if (c) {
+      return c;
+    }
+    // global
+    c = await window.electronAPI.readGlobalPromptComposerFile(fullName);
+    if (c) {
+      return c;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Recursively resolves placeholders in the given content by loading
+ * corresponding files from either project or global .prompt-composer.
+ *
  * @param content - The text in which to search for {{Placeholder}} patterns
- * @param visited - A set of placeholder names we have already visited, to avoid infinite loops
- * @returns The fully resolved text (some placeholders may remain if no corresponding file found)
+ * @param visited - Set of placeholder names already visited
+ * @returns fully resolved text
  */
 export async function resolveNestedTemplates(
   content: string,
@@ -35,76 +85,41 @@ export async function resolveNestedTemplates(
   let match: RegExpExecArray | null;
   let resolvedContent = content;
 
-  // Because we might add more placeholders as we replace content, 
-  // we do a loop until no more new placeholders found or we stop changing. 
-  // But for performance, we do a single pass here, then recursively expand the result of each placeholder.
-  // If we find multiple placeholders, we handle them in a straightforward manner, 
-  // but each replaced portion can also have placeholders that we handle in a subsequent pass.
+  // We'll keep looping until no more placeholders or we can break after
+  // we've replaced the first occurrence in each iteration. But typically
+  // we do a "global" search. We'll do a single pass, replace each found,
+  // then run again if we find new placeholders from expansions.
 
   while ((match = PLACEHOLDER_REGEX.exec(resolvedContent)) !== null) {
-    const placeholderName = match[1]; // e.g. 'MY_TEMPLATE'
-    console.log(`[templateResolver] Found placeholder: {{${placeholderName}}}`);
-
-    // Check for potential infinite recursion
+    const placeholderFull = match[0];     // e.g. "{{HELLO}}"
+    const placeholderName = match[1];     // e.g. "HELLO" or "HELLO.md"
     if (visited.has(placeholderName)) {
-      console.warn(`[templateResolver] Detected loop for placeholder "{{${placeholderName}}}". Skipping to prevent infinite recursion.`);
-      continue; // We skip replacing it
+      console.warn(`[templateResolver] Detected loop for placeholder "{{${placeholderName}}}". Skipping.`);
+      continue;
     }
-
-    // Mark as visited
     visited.add(placeholderName);
-    console.log(`[templateResolver] Looking up file for placeholder: ${placeholderName}`);
 
-    let replacementText = '';
+    // Attempt to read from project or global
+    let replacementText: string | null = null;
     try {
-      if (window.electronAPI && window.electronAPI.readPromptComposerFile) {
-        console.log(`[templateResolver] Calling electronAPI.readPromptComposerFile for: ${placeholderName}`);
-        // Attempt to load the file from .prompt-composer
-        const fileContent = await window.electronAPI.readPromptComposerFile(placeholderName);
-        console.log(`[templateResolver] Result for ${placeholderName}: ${fileContent ? 'File found' : 'File not found'}`);
-        
-        if (fileContent) {
-          console.log(`[templateResolver] File content for ${placeholderName} (${fileContent.length} bytes): "${fileContent.substring(0, 50)}${fileContent.length > 50 ? '...' : ''}"`);
-          // Recursively resolve placeholders in the loaded content
-          replacementText = await resolveNestedTemplates(fileContent, visited);
-        } else {
-          console.warn(`[templateResolver] No file found for placeholder "{{${placeholderName}}}". Leaving placeholder as-is.`);
-          // Adding extension check - try common extensions if name was provided without extension
-          if (!placeholderName.includes('.')) {
-            console.log(`[templateResolver] Trying with extensions for ${placeholderName}`);
-            const extensions = ['.txt', '.md'];
-            for (const ext of extensions) {
-              const nameWithExt = `${placeholderName}${ext}`;
-              console.log(`[templateResolver] Trying with extension: ${nameWithExt}`);
-              const contentWithExt = await window.electronAPI.readPromptComposerFile(nameWithExt);
-              if (contentWithExt) {
-                console.log(`[templateResolver] Found file with extension: ${nameWithExt}`);
-                replacementText = await resolveNestedTemplates(contentWithExt, visited);
-                break;
-              }
-            }
-            
-            // If we still didn't find anything with extensions
-            if (replacementText === '') {
-              replacementText = `{{${placeholderName}}}`;
-            }
-          } else {
-            replacementText = `{{${placeholderName}}}`;
-          }
-        }
-      } else {
-        console.warn(`[templateResolver] window.electronAPI.readPromptComposerFile not available. Skipping placeholder "{{${placeholderName}}}".`);
-        replacementText = `{{${placeholderName}}}`;
+      const fileContent = await tryReadTemplateFile(placeholderName);
+      if (fileContent) {
+        // recursively expand placeholders in the loaded text
+        replacementText = await resolveNestedTemplates(fileContent, visited);
       }
     } catch (err) {
-      console.error(`[templateResolver] Error reading .prompt-composer/${placeholderName}:`, err);
-      replacementText = `{{${placeholderName}}}`;
+      console.error(`[templateResolver] Error loading template "${placeholderName}"`, err);
     }
 
-    // Replace the first occurrence of this placeholder with the resolved text
-    // We only do one replacement at a time for each iteration
-    console.log(`[templateResolver] Replacing "{{${placeholderName}}}" with text (${replacementText.length} bytes)`);
-    resolvedContent = resolvedContent.replace(`{{${placeholderName}}}`, replacementText);
+    // If we found text to replace
+    if (replacementText) {
+      resolvedContent = resolvedContent.replace(placeholderFull, replacementText);
+      // We should reset the regex lastIndex to re-check new content if needed
+      PLACEHOLDER_REGEX.lastIndex = 0;
+    } else {
+      // No file found. Leave the placeholder as-is.
+      console.warn(`[templateResolver] No file found for "{{${placeholderName}}}". Leaving as placeholder.`);
+    }
   }
 
   return resolvedContent;

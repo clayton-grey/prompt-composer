@@ -2,23 +2,15 @@
 /**
  * @file TemplateBlockEditor.tsx
  * @description
- * Provides an editing interface for a "template" type block. Before Step 4, we only
- * allowed labeling, content editing, and variable editing. Now we add a "flip" or "Edit
- * Raw Template" feature for the lead block. This allows the user to see the entire
- * reconstructed raw template text (including placeholders like {{TEXT_BLOCK}}), edit it,
- * and confirm to re-parse all sub-blocks in the group. This does NOT overwrite the
- * underlying file on disk; it's purely an in-memory transformation.
+ * Provides an editing interface for a "template" type block. Now if this block
+ * is the lead block of its group (isGroupLead=true), we allow "Edit Raw" mode.
+ * When entering raw mode, we set block.editingRaw = true so child blocks are
+ * hidden in the BlockList. On cancel or confirm, we revert or remove that state.
  *
- * Step 4 Implementation:
- *  - If block.isGroupLead, show an "Edit Raw Template" button. On click, we gather all
- *    blocks that share this block's groupId and reconstruct the raw text from them:
- *       e.g. for sub-block type text => {{TEXT_BLOCK}}, etc.
- *  - The user sees a <textarea> with the entire raw text. On confirm, we call
- *    promptContext.replaceTemplateGroup(leadBlockId=block.id, groupId=block.groupId, newText=...) 
- *    to remove and re-parse that group. Then we exit "edit mode."
- *
- * There's some existing code here for label + content + variable editing. That remains.
- * The "flip" mode is in addition to that. 
+ * We also continue to support label, content, and variable editing for normal usage.
+ * 
+ * Additionally, we do not overwrite the disk version of the template; it's purely 
+ * an in-memory transformation for this session.
  */
 
 import React, { ChangeEvent, useState } from 'react';
@@ -26,21 +18,16 @@ import { TemplateBlock } from '../../types/Block';
 import { usePrompt } from '../../context/PromptContext';
 
 /**
- * We assume these placeholders to reverse-engineer from block types:
- *  - text block with locked => '{{TEXT_BLOCK}}'
- *  - files block => '{{FILE_BLOCK}}'
- *  - template block with label "Nested Template Block" => '{{TEMPLATE_BLOCK}}'
+ * We assume placeholders to reconstruct if they're locked sub-blocks of the group.
+ * In raw mode, child blocks are hidden from BlockList. We'll flip editingRaw
+ * on the lead block so the user sees only this block while raw editing.
  */
 function reconstructRawTemplateFromGroup(
   groupId: string,
   leadBlockId: string,
   allBlocks: any[]
 ): string {
-  // 1) Filter blocks in that group
-  const groupBlocks = allBlocks.filter((b: any) => b.groupId === groupId);
-
-  // 2) Sort them in the order they appear in the main blocks array
-  //    We'll rely on their index in allBlocks
+  // Sort the blocks in the order they appear in 'allBlocks'
   const blockOrder: { block: any; index: number }[] = [];
   allBlocks.forEach((b: any, idx: number) => {
     if (b.groupId === groupId) {
@@ -49,30 +36,27 @@ function reconstructRawTemplateFromGroup(
   });
   blockOrder.sort((a, b) => a.index - b.index);
 
-  // 3) Build up the raw text in sequence
   let raw = '';
 
   blockOrder.forEach(({ block }) => {
-    // If it's the lead block (or a template block that isn't specifically a placeholder), we treat
-    // its text as "template segment." Unless the label is "Nested Template Block."
+    // If it's the lead or a "template" block not labeled "Nested Template Block", we treat content as literal text
     if (block.type === 'template') {
       if (block.label === 'Nested Template Block') {
         raw += '{{TEMPLATE_BLOCK}}';
       } else {
-        // We treat this as a chunk of literal text
+        // treat as text
         raw += block.content;
       }
     } else if (block.type === 'text') {
-      // If it's locked and part of the group => we interpret it as a placeholder
-      // We assume this was originally {{TEXT_BLOCK}}
       if (block.locked) {
+        // locked text sub-block => was originally {{TEXT_BLOCK}}
         raw += '{{TEXT_BLOCK}}';
       } else {
-        // If it wasn't locked, it might be a lead block... but normally the lead block is template.
+        // Possibly the lead block? We'll just treat it as text
         raw += block.content;
       }
     } else if (block.type === 'files') {
-      // We treat this as a {{FILE_BLOCK}}
+      // locked => was originally {{FILE_BLOCK}}
       raw += '{{FILE_BLOCK}}';
     }
   });
@@ -81,14 +65,7 @@ function reconstructRawTemplateFromGroup(
 }
 
 interface TemplateBlockEditorProps {
-  /**
-   * The TemplateBlock being edited
-   */
   block: TemplateBlock;
-
-  /**
-   * Callback invoked when the block data changes
-   */
   onChange: (updatedBlock: TemplateBlock) => void;
 }
 
@@ -97,21 +74,17 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
   onChange
 }) => {
   const { blocks, replaceTemplateGroup } = usePrompt();
-
-  /**
-   * Collapsed UI states from prior implementation
-   */
   const [collapsed, setCollapsed] = useState<boolean>(false);
 
   /**
-   * Step 4: Local editing ("flip") state
+   * Step 4 / 5: local "raw editing" UI
+   * But now we also set block.editingRaw on the block itself so that child blocks get hidden.
    */
-  const [isEditingRaw, setIsEditingRaw] = useState<boolean>(false);
+  const [isEditingRaw, setIsEditingRaw] = useState<boolean>(block.editingRaw || false);
   const [rawTemplateContent, setRawTemplateContent] = useState<string>('');
 
   /**
    * handleLabelChange
-   * Updates the block label in context.
    */
   const handleLabelChange = (e: ChangeEvent<HTMLInputElement>) => {
     onChange({ ...block, label: e.target.value });
@@ -119,7 +92,6 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
 
   /**
    * handleContentChange
-   * Updates the block content in context.
    */
   const handleContentChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
     onChange({ ...block, content: e.target.value });
@@ -127,7 +99,6 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
 
   /**
    * handleVariableDefaultChange
-   * Updates a variable's default value by index.
    */
   const handleVariableDefaultChange = (index: number, value: string) => {
     const updatedVariables = [...block.variables];
@@ -137,44 +108,53 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
 
   /**
    * toggleCollapsed
-   * Flips the 'collapsed' state to hide or show details.
    */
-  const toggleCollapsed = () => {
-    setCollapsed((prev) => !prev);
-  };
+  const toggleCollapsed = () => setCollapsed(!collapsed);
 
   /**
-   * Step 4: Flip or "Edit Raw Template" for the lead block
+   * handleEditRawClick
+   * We set editingRaw to true on the block, so the child blocks are hidden in the list,
+   * and we reconstruct the entire raw text from the group.
    */
   const handleEditRawClick = () => {
-    // Reconstruct from all blocks in that group
-    if (!block.groupId) {
-      console.warn('[TemplateBlockEditor] No groupId for block, cannot flip edit');
-      return;
-    }
+    if (!block.groupId) return;
+    // 1) reconstruct
     const reconstructed = reconstructRawTemplateFromGroup(block.groupId, block.id, blocks);
     setRawTemplateContent(reconstructed);
+
+    // 2) set local state
     setIsEditingRaw(true);
+
+    // 3) update the block to have editingRaw = true
+    const updated = { ...block, editingRaw: true };
+    onChange(updated);
   };
 
   /**
    * handleRawConfirm
-   * On confirm, we call replaceTemplateGroup to re-parse everything from rawTemplateContent.
+   * We call replaceTemplateGroup. That removes all sub-blocks and re-parses from new text.
+   * The new lead block will come in fresh, with editingRaw = false by default.
    */
   const handleRawConfirm = () => {
-    if (!block.groupId) return;
+    if (!block.groupId) {
+      setIsEditingRaw(false);
+      return;
+    }
     replaceTemplateGroup(block.id, block.groupId, rawTemplateContent);
-    setIsEditingRaw(false);
+    // We rely on the newly created blocks having editingRaw = false by default.
   };
 
   /**
    * handleRawCancel
+   * We revert any changes, set editingRaw = false on the lead block,
+   * so the child blocks become visible again.
    */
   const handleRawCancel = () => {
     setIsEditingRaw(false);
+    onChange({ ...block, editingRaw: false });
   };
 
-  // If we are in raw editing mode, show only the text area + confirm/cancel
+  // If user is in raw editing mode, show only the raw editing UI
   if (isEditingRaw) {
     return (
       <div className="p-3 border border-yellow-400 bg-yellow-50 rounded">
@@ -207,7 +187,7 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
 
   return (
     <div className="p-3 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800">
-      {/* Header Row: Label + Expand/Collapse Toggle + (Optionally) "Edit Raw" button */}
+      {/* Header Row */}
       <div className="flex items-center justify-between">
         {/* Label Field */}
         <div className="mr-2 flex-1">
@@ -253,12 +233,11 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
           )}
         </button>
 
-        {/* Step 4: "Edit Raw Template" button if this block is the group lead */}
-        {block.isGroupLead && (
+        {/* Edit Raw if lead block */}
+        {block.isGroupLead && !block.editingRaw && (
           <button
             onClick={handleEditRawClick}
             className="ml-2 px-2 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
-            title="Edit Raw Template Text"
           >
             Edit Raw
           </button>

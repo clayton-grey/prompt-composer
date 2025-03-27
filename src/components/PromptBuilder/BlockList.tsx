@@ -5,19 +5,11 @@
  * We list blocks in order, each with its own editor. Blocks can be reordered or deleted,
  * but if they share a groupId, they must move or delete as a single unit.
  *
- * For each block:
- *   - If it has a groupId, we treat it as part of a multi-block group:
- *       - If isGroupLead: show reorder/delete for the entire group
- *       - If not lead: no reorder/delete
- *   - If it has no groupId: it's a standalone block with reorder/delete (unless locked).
+ * NEW: If the lead block of a template group is in raw editing mode (editingRaw=true),
+ * we skip rendering all other blocks in that group, effectively hiding them so the user
+ * only sees the lead block's raw edit UI.
  *
- * Implementation details:
- *   - "moveBlockUp / moveBlockDown" either moves one block or the entire group in the array.
- *   - "deleteBlock" either deletes that single block or the entire group if groupId is set (and isGroupLead).
- *
- * This approach ensures the user can reorder or delete normal blocks (not locked) individually.
- * If a block is locked and has a groupId, that means it's part of a multi-block template group,
- * which moves/deletes together.
+ * Also, we fix the reorder logic for grouped blocks. That remains the same.
  */
 
 import React, { useEffect } from 'react';
@@ -40,7 +32,7 @@ const BlockList: React.FC = () => {
       return [startIdx, startIdx];
     }
     const gid = b.groupId;
-    // gather indices of all blocks in this array that share the same groupId
+    // gather indices of all blocks that share the same groupId
     const indices = blocks.map((x, i) => ({ block: x, idx: i }))
       .filter(x => x.block.groupId === gid)
       .map(x => x.idx);
@@ -67,6 +59,7 @@ const BlockList: React.FC = () => {
 
   /**
    * handleMoveDown
+   * If block is group lead, move the entire group. Otherwise move just the block.
    */
   const handleMoveDown = (index: number) => {
     if (index >= blocks.length - 1) return;
@@ -130,11 +123,39 @@ const BlockList: React.FC = () => {
     console.log('[BlockList] current blocks:', blocks);
   }, [blocks]);
 
+  /**
+   * Rendering logic:
+   * If a lead block has editingRaw=true, we skip rendering all child blocks
+   * in that group. Only the lead block is shown. This way, the user only sees
+   * the raw editing UI for the lead block (in TemplateBlockEditor).
+   */
+  function shouldRenderBlock(block: Block, index: number): boolean {
+    // If this block is the group lead and has editingRaw, always render it
+    if (block.isGroupLead && block.editingRaw) {
+      return true;
+    }
+    // If this block is in a group whose lead is editing raw, skip it
+    if (block.groupId) {
+      // find the lead for this group
+      const leadIndex = blocks.findIndex(b => b.groupId === block.groupId && b.isGroupLead);
+      if (leadIndex !== -1) {
+        const leadBlock = blocks[leadIndex];
+        if (leadBlock.editingRaw && leadIndex !== index) {
+          // It's a child block in an editing group => hide
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+
   return (
     <div className="space-y-4">
       {blocks.map((block, index) => {
-        const isFirst = index === 0;
-        const isLast = index === blocks.length - 1;
+        // Skip rendering if the group lead is in editingRaw mode and this is not the lead
+        if (!shouldRenderBlock(block, index)) {
+          return null;
+        }
 
         let canReorderOrDelete = false;
         if (!block.locked) {

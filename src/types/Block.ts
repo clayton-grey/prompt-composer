@@ -7,13 +7,9 @@
  * label, and other properties. This file also exports a union type "Block"
  * that can represent any of these block types.
  *
- * New additions (to support grouping as a single immutable unit):
- *  - groupId?: string  => An identifier that all blocks in a "group" share.
- *  - isGroupLead?: boolean => True if this block is the "lead" of its group,
- *    i.e., the one with reorder/delete controls.
- *
- * The idea: a set of blocks can belong to the same groupId, but only the "lead"
- * block shows reorder/delete UI. The entire set moves or deletes as one chunk.
+ * This update adds "editingRaw?: boolean" to handle the scenario where the
+ * lead TemplateBlock is in "raw edit mode," so we can hide child blocks
+ * while the user is editing raw template text.
  */
 
 export interface BaseBlock {
@@ -48,6 +44,13 @@ export interface BaseBlock {
    * is the one that has reorder/delete buttons for the entire group.
    */
   isGroupLead?: boolean;
+
+  /**
+   * If true, this block is currently "raw editing" the entire template group.
+   * Only makes sense on the lead block for a template group. Child blocks
+   * should remain hidden if the lead is editingRaw. This is ephemeral/in-memory.
+   */
+  editingRaw?: boolean;
 }
 
 /**
