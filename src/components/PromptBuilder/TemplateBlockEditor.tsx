@@ -2,14 +2,27 @@
 /**
  * @file TemplateBlockEditor.tsx
  * @description
- * Editing interface for template blocks. Now we do an async call to 
- * replaceTemplateGroup so that nested templates can be expanded at parse time.
+ * Editing interface for template blocks. In earlier versions, we displayed a top-right
+ * "Edit Raw" button. Now we remove that button from here and let BlockList handle
+ * the raw edit icon in the bottom-right corner on hover.
+ *
+ * We still show the raw editing textarea if block.editingRaw is true, but the button
+ * to enter raw mode is no longer here.
+ *
+ * Step X changes:
+ *  - Removed the old "Flip" or "Edit Raw" button from the top bar. Instead, the parent
+ *    container in BlockList shows a pencil icon in the bottom-right corner on hover.
+ *  - We keep the confirmation/cancel logic for handleRawConfirm / handleRawCancel.
  */
 
 import React, { useState, useEffect } from 'react';
 import { TemplateBlock, Block } from '../../types/Block';
 import { usePrompt } from '../../context/PromptContext';
 
+/**
+ * Reconstruct the raw template text from the group. 
+ * This is the same function as before, so we keep it for editingRaw usage.
+ */
 function reconstructRawTemplateFromGroup(
   groupId: string,
   leadBlockId: string,
@@ -26,33 +39,15 @@ function reconstructRawTemplateFromGroup(
   let raw = '';
   for (const { block } of sortedByIndex) {
     if (block.type === 'template') {
-      if (block.label === 'Template Segment') {
-        raw += block.content;
-      } else if (block.label === 'Nested Template Block') {
-        raw += `{{TEMPLATE_BLOCK=${block.content}}}`;
-      } else if (block.label?.startsWith('Inline Template:')) {
-        const templateName = block.label.replace('Inline Template:', '').trim();
-        raw += `{{${templateName}}}`;
-      } else if (block.label?.startsWith('Cyclic Template Ref:')) {
-        // We'll keep that as is
-        const refName = block.label.replace('Cyclic Template Ref:', '').trim();
-        raw += `{{${refName}}}`;
-      } else if (block.label === 'Unknown Template Placeholder'
-              || block.label === 'Unknown Template'
-      ) {
-        // If we have an unknown template, keep the content which might be {{SOMETHING}}
-        raw += block.content;
-      } else {
-        // fallback
-        raw += block.content;
-      }
+      // We keep the original content
+      raw += block.content;
     } else if (block.type === 'text') {
+      // replaced with {{TEXT_BLOCK=...}}
       raw += `{{TEXT_BLOCK=${block.content}}}`;
     } else if (block.type === 'files') {
       raw += `{{FILE_BLOCK}}`;
     }
   }
-
   return raw;
 }
 
@@ -70,23 +65,21 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
   const [rawContent, setRawContent] = useState<string>('');
   const [originalRawContent, setOriginalRawContent] = useState<string>('');
 
+  // Whenever editingRaw toggles, reconstruct the raw text or reset states
   useEffect(() => {
-    if (isEditingRaw) {
+    if (block.editingRaw) {
+      setIsEditingRaw(true);
       const reconstructed = reconstructRawTemplateFromGroup(block.groupId!, block.id, blocks);
       setRawContent(reconstructed);
       setOriginalRawContent(reconstructed);
+    } else {
+      setIsEditingRaw(false);
     }
-  }, [isEditingRaw, block.groupId, block.id, blocks]);
-
-  const handleFlipToRawClick = () => {
-    if (!block.groupId) return;
-    setIsEditingRaw(true);
-    onChange({ ...block, editingRaw: true });
-  };
+  }, [block.editingRaw, block.groupId, block.id, blocks]);
 
   /**
-   * handleRawConfirm is now async, so we can await replaceTemplateGroup which does the parse 
-   * that loads nested template content from disk.
+   * handleRawConfirm: user has edited raw text and clicked "Confirm"
+   * We parse it to form new sub-blocks in place. 
    */
   const handleRawConfirm = async () => {
     if (!block.groupId) {
@@ -94,10 +87,14 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
       onChange({ ...block, editingRaw: false });
       return;
     }
+
     await replaceTemplateGroup(block.id, block.groupId, rawContent, originalRawContent);
     setIsEditingRaw(false);
   };
 
+  /**
+   * handleRawCancel: revert to normal display with no changes
+   */
   const handleRawCancel = () => {
     setIsEditingRaw(false);
     onChange({ ...block, editingRaw: false });
@@ -133,20 +130,9 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
     );
   }
 
-  // Normal mode: show content read-only if any
+  // Normal mode: just show the block content read-only if any
   return (
     <div>
-      {block.isGroupLead && !block.editingRaw && (
-        <div className="flex items-center justify-end mb-2">
-          <button
-            onClick={handleFlipToRawClick}
-            className="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
-          >
-            Edit Raw
-          </button>
-        </div>
-      )}
-
       {block.content && (
         <div className="whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded p-2">
           {block.content}

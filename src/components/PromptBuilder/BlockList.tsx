@@ -2,19 +2,18 @@
 /**
  * @file BlockList.tsx
  * @description
- * Lists blocks in order, each with its own editor. 
- * Blocks can be reordered or deleted, but if they share a groupId, they
- * move/delete as a single unit.
+ * Renders the list of blocks in order, each with its own editor. Blocks can be reordered or deleted,
+ * but if they share a groupId, they move/delete as a single unit. We also handle special icons:
+ *  - Move Up/Down
+ *  - Block vs. Template Delete
+ *  - Raw Edit icon (pencil) for template group leads only
  *
- * In this update (Step 5a):
- *  - We add a "group hover" approach so the reorder/delete buttons float
- *    and only show on mouse hover. 
- *  - We add "block tail" styling classes to each block to visually match
- *    the reference design with a "tail" shape, indicating that sub-blocks
- *    belong to a parent template.
- *  - We unify the prior background color logic into these block-tail classes
- *    so that the user sees the new design with pastel backgrounds and the
- *    triangular shape on the left for each block.
+ * Step X changes:
+ *  - Swapped out the old text-based "Up / Down / Delete" buttons for the new SVG icons:
+ *    move-up-icon, move-down-icon, and square-x-icon or grid-2x2-x-icon for template block leads.
+ *  - Added a bottom-right floating pencil (raw edit) icon for template block leads only, hidden by default,
+ *    shown on hover with absolute positioning inside the block container.
+ *  - Removed the old "Edit Raw" top-right button from TemplateBlockEditor (we let the parent handle it).
  */
 
 import React, { useEffect } from 'react';
@@ -22,14 +21,9 @@ import { usePrompt } from '../../context/PromptContext';
 import type { Block } from '../../types/Block';
 import BlockEditor from './BlockEditor';
 
-/**
- * Finds the min and max index for blocks sharing a groupId with the block at startIdx.
- */
 function findGroupRange(blocks: Block[], startIdx: number): [number, number] {
   const b = blocks[startIdx];
-  if (!b.groupId) {
-    return [startIdx, startIdx];
-  }
+  if (!b.groupId) return [startIdx, startIdx];
   const gid = b.groupId;
   const indices = blocks
     .map((x, i) => ({ block: x, idx: i }))
@@ -41,7 +35,8 @@ function findGroupRange(blocks: Block[], startIdx: number): [number, number] {
 }
 
 /**
- * Helper to produce the CSS classes for block "tail" + color, based on type.
+ * getBlockTailClass
+ * Returns the pastel color classes for the block background + tail, by block type.
  */
 function getBlockTailClass(block: Block): string {
   switch (block.type) {
@@ -52,18 +47,68 @@ function getBlockTailClass(block: Block): string {
     case 'files':
       return 'block-tail block-tail-green';
     default:
-      return 'block-tail block-tail-blue'; // fallback
+      return 'block-tail block-tail-blue';
   }
 }
 
-const BlockList: React.FC = () => {
-  const { blocks, addBlock, removeBlock, updateBlock, moveBlock } = usePrompt();
+/**
+ * Renders the correct SVG for the delete button:
+ *  - If it's a group lead template block, show the template delete icon
+ *  - Otherwise, show the standard block delete icon
+ */
+function renderDeleteIcon(block: Block, onClick: () => void) {
+  // If it's a template block lead, we show the "template delete" icon
+  if (block.type === 'template' && block.isGroupLead) {
+    return (
+      <button onClick={onClick} className="p-1 text-gray-700 dark:text-gray-200 hover:bg-red-100 dark:hover:bg-red-600 rounded">
+        {/* Template delete icon (grid2x2-x) */}
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="lucide lucide-grid2x2-x-icon lucide-grid-2x2-x"
+        >
+          <path d="M12 3v17a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1H3"></path>
+          <path d="m16 16 5 5"></path>
+          <path d="m16 21 5-5"></path>
+        </svg>
+      </button>
+    );
+  }
 
-  /**
-   * handleMoveUp / handleMoveDown / handleDelete:
-   * We move or delete the entire group if it's a group lead,
-   * otherwise we only affect the single block if groupId is not defined or locked is false.
-   */
+  // Otherwise, standard block delete icon (square-x)
+  return (
+    <button onClick={onClick} className="p-1 text-gray-700 dark:text-gray-200 hover:bg-red-100 dark:hover:bg-red-600 rounded">
+      {/* block delete icon (square-x) */}
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="20"
+        height="20"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="lucide lucide-square-x-icon lucide-square-x"
+      >
+        <rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
+        <path d="m15 9-6 6"></path>
+        <path d="m9 9 6 6"></path>
+      </svg>
+    </button>
+  );
+}
+
+const BlockList: React.FC = () => {
+  const { blocks, addBlock, removeBlock, updateBlock, moveBlock, replaceTemplateGroup } = usePrompt();
+
   const handleMoveUp = (index: number) => {
     if (index <= 0) return;
     const block = blocks[index];
@@ -125,13 +170,23 @@ const BlockList: React.FC = () => {
     }
   };
 
+  /**
+   * Raw edit flow:
+   * We replicate the logic that used to be in TemplateBlockEditor.
+   * This button only appears for template block leads.
+   * On click, we set block.editingRaw = true, then the user sees the raw editor
+   * in TemplateBlockEditor. 
+   */
+  const handleRawEdit = (block: Block) => {
+    // Only valid for template leads
+    if (block.type !== 'template' || !block.isGroupLead) return;
+    updateBlock({ ...block, editingRaw: true });
+  };
+
   useEffect(() => {
     console.log('[BlockList] current blocks:', blocks);
   }, [blocks]);
 
-  /**
-   * If the lead block is in raw editing mode, hide the child blocks in that group.
-   */
   function shouldRenderBlock(block: Block, index: number): boolean {
     if (block.isGroupLead && block.editingRaw) {
       return true;
@@ -168,7 +223,6 @@ const BlockList: React.FC = () => {
           }
         }
 
-        // blockTailClass is e.g. 'block-tail block-tail-purple'
         const blockTailClass = getBlockTailClass(block);
 
         return (
@@ -176,41 +230,90 @@ const BlockList: React.FC = () => {
             key={block.id}
             className={`relative group p-4 shadow rounded flex flex-col gap-2 border border-gray-200 dark:border-gray-600 ${blockTailClass}`}
           >
-            {/* Float the reorder/delete buttons - show only on hover */}
+            {/* Top-right: reorder + delete icons, shown on hover */}
             {canReorderOrDelete && (
               <div className="absolute top-2 right-2 flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+                {/* Move Up button */}
                 <button
                   onClick={() => handleMoveUp(index)}
-                  className={`px-2 py-1 text-xs rounded ${
-                    index <= 0
-                      ? 'bg-gray-300 dark:bg-gray-600 cursor-not-allowed text-gray-500 dark:text-gray-400'
-                      : 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200'
-                  }`}
+                  className="p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={index <= 0}
                 >
-                  Up
+                  {/* Move up icon */}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="lucide lucide-move-up-icon lucide-move-up"
+                  >
+                    <path d="M8 6L12 2L16 6"></path>
+                    <path d="M12 2V22"></path>
+                  </svg>
                 </button>
+
+                {/* Move Down button */}
                 <button
                   onClick={() => handleMoveDown(index)}
-                  className={`px-2 py-1 text-xs rounded ${
-                    index >= blocks.length - 1
-                      ? 'bg-gray-300 dark:bg-gray-600 cursor-not-allowed text-gray-500 dark:text-gray-400'
-                      : 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200'
-                  }`}
+                  className="p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={index >= blocks.length - 1}
                 >
-                  Down
+                  {/* Move down icon */}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="lucide lucide-move-down-icon lucide-move-down"
+                  >
+                    <path d="M8 18L12 22L16 18"></path>
+                    <path d="M12 2V22"></path>
+                  </svg>
                 </button>
+
+                {/* Delete button (block or template) */}
+                {renderDeleteIcon(block, () => handleDelete(index))}
+              </div>
+            )}
+
+            {/* Bottom-right: raw edit pencil icon if template group lead */}
+            {block.type === 'template' && block.isGroupLead && !block.editingRaw && (
+              <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                 <button
-                  onClick={() => handleDelete(index)}
-                  className="px-2 py-1 text-xs rounded bg-red-200 hover:bg-red-300 text-red-800"
+                  onClick={() => handleRawEdit(block)}
+                  className="p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded"
                 >
-                  Delete
+                  {/* Pencil icon for raw edit */}
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="lucide lucide-pencil-icon lucide-pencil"
+                  >
+                    <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path>
+                    <path d="m15 5 4 4"></path>
+                  </svg>
                 </button>
               </div>
             )}
 
-            {/* Render the block editor */}
+            {/* The block editor content (text, template, or file) */}
             <BlockEditor
               block={block}
               onChange={(updated) => updateBlock(updated)}

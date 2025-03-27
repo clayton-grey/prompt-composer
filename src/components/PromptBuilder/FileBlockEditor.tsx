@@ -2,12 +2,11 @@
 /**
  * @file FileBlockEditor.tsx
  * @description
- * Provides an editing interface for a "files" type block.
+ * An editing interface for a "files" type block. Now we add a folder-tree icon
+ * at the start to visually identify it. 
  *
- * Changes:
- *  - Removed any display of block label or type, except we forcibly show 
- *    "File Block" in the UI.
- *  - Maintains the toggle for including the ASCII file map.
+ * Step X changes:
+ *  - Insert the "folder-tree" SVG at the beginning of the block, next to the heading "File Block".
  */
 
 import React, { ChangeEvent } from 'react';
@@ -19,9 +18,6 @@ interface FileBlockEditorProps {
 }
 
 const FileBlockEditor: React.FC<FileBlockEditorProps> = ({ block, onChange }) => {
-  /**
-   * Toggle whether we include the project map in final output
-   */
   const handleToggleIncludeMap = (e: ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.checked;
     const updated = {
@@ -38,9 +34,30 @@ const FileBlockEditor: React.FC<FileBlockEditorProps> = ({ block, onChange }) =>
 
   return (
     <div>
-      <h3 className="font-semibold text-gray-800 dark:text-gray-100 text-sm mb-2">
-        File Block
-      </h3>
+      {/* Heading with folder-tree icon */}
+      <div className="flex items-center mb-2">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="lucide lucide-folder-tree-icon lucide-folder-tree text-gray-700 dark:text-gray-200 mr-1"
+        >
+          <path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"></path>
+          <path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1Z"></path>
+          <path d="M3 5a2 2 0 0 0 2 2h3"></path>
+          <path d="M3 3v13a2 2 0 0 0 2 2h3"></path>
+        </svg>
+        <h3 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">
+          File Block
+        </h3>
+      </div>
+
       <label className="flex items-center space-x-2 text-xs text-gray-700 dark:text-gray-200">
         <input
           type="checkbox"
