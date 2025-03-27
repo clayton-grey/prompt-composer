@@ -2,14 +2,17 @@
 /**
  * @file BlockList.tsx
  * @description
- * We list blocks in order, each with its own editor. Blocks can be reordered or deleted,
- * but if they share a groupId, they must move or delete as a single unit.
+ * Lists blocks in order, each with its own editor. 
+ * Blocks can be reordered or deleted, but if they share a groupId, they
+ * move/delete as a single unit. 
  *
- * NEW: If the lead block of a template group is in raw editing mode (editingRaw=true),
- * we skip rendering all other blocks in that group, effectively hiding them so the user
- * only sees the lead block's raw edit UI.
- *
- * Also, we fix the reorder logic for grouped blocks. That remains the same.
+ * Changes:
+ *  - Removed the display of label and block type from the UI.
+ *  - Added background color differences for each block type to visually differentiate:
+ *    text => bg-blue-50,
+ *    template => bg-purple-50,
+ *    files => bg-green-50.
+ *  - Buttons remain, but we no longer show the block label or type in the header.
  */
 
 import React, { useEffect } from 'react';
@@ -28,12 +31,12 @@ const BlockList: React.FC = () => {
   const findGroupRange = (startIdx: number): [number, number] => {
     const b = blocks[startIdx];
     if (!b.groupId) {
-      // single block
       return [startIdx, startIdx];
     }
     const gid = b.groupId;
     // gather indices of all blocks that share the same groupId
-    const indices = blocks.map((x, i) => ({ block: x, idx: i }))
+    const indices = blocks
+      .map((x, i) => ({ block: x, idx: i }))
       .filter(x => x.block.groupId === gid)
       .map(x => x.idx);
     const minI = Math.min(...indices);
@@ -43,7 +46,7 @@ const BlockList: React.FC = () => {
 
   /**
    * handleMoveUp
-   * If block is group lead, move the entire group. Otherwise move just the block.
+   * If block is group lead, move entire group. Otherwise, move just the block.
    */
   const handleMoveUp = (index: number) => {
     if (index <= 0) return;
@@ -59,7 +62,7 @@ const BlockList: React.FC = () => {
 
   /**
    * handleMoveDown
-   * If block is group lead, move the entire group. Otherwise move just the block.
+   * If block is group lead, move entire group. Otherwise, move just the block.
    */
   const handleMoveDown = (index: number) => {
     if (index >= blocks.length - 1) return;
@@ -124,24 +127,19 @@ const BlockList: React.FC = () => {
   }, [blocks]);
 
   /**
-   * Rendering logic:
-   * If a lead block has editingRaw=true, we skip rendering all child blocks
-   * in that group. Only the lead block is shown. This way, the user only sees
-   * the raw editing UI for the lead block (in TemplateBlockEditor).
+   * If the lead block is in raw editing mode, we skip rendering the children in that group.
    */
   function shouldRenderBlock(block: Block, index: number): boolean {
-    // If this block is the group lead and has editingRaw, always render it
     if (block.isGroupLead && block.editingRaw) {
       return true;
     }
-    // If this block is in a group whose lead is editing raw, skip it
     if (block.groupId) {
-      // find the lead for this group
-      const leadIndex = blocks.findIndex(b => b.groupId === block.groupId && b.isGroupLead);
+      const leadIndex = blocks.findIndex(
+        b => b.groupId === block.groupId && b.isGroupLead
+      );
       if (leadIndex !== -1) {
         const leadBlock = blocks[leadIndex];
         if (leadBlock.editingRaw && leadIndex !== index) {
-          // It's a child block in an editing group => hide
           return false;
         }
       }
@@ -149,68 +147,81 @@ const BlockList: React.FC = () => {
     return true;
   }
 
+  /**
+   * Decide a background color based on block.type.
+   */
+  function getBlockBgClass(block: Block): string {
+    switch (block.type) {
+      case 'text':
+        return 'bg-blue-50';
+      case 'template':
+        return 'bg-purple-50';
+      case 'files':
+        return 'bg-green-50';
+      default:
+        return 'bg-gray-50';
+    }
+  }
+
   return (
     <div className="space-y-4">
       {blocks.map((block, index) => {
-        // Skip rendering if the group lead is in editingRaw mode and this is not the lead
         if (!shouldRenderBlock(block, index)) {
           return null;
         }
 
         let canReorderOrDelete = false;
         if (!block.locked) {
-          // If block.groupId => only if isGroupLead => reorder entire group
           if (block.groupId) {
             if (block.isGroupLead) {
               canReorderOrDelete = true;
             }
           } else {
-            // no group => normal block
             canReorderOrDelete = true;
           }
         }
 
-        return (
-          <div key={block.id} className="p-4 bg-white dark:bg-gray-700 shadow rounded flex flex-col gap-2">
-            {/* Top row: label + reorder/delete (if allowed) */}
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-medium text-gray-800 dark:text-gray-100">
-                {block.label} (Type: {block.type})
-              </h2>
+        // Determine block background
+        const blockBgClass = getBlockBgClass(block);
 
-              {canReorderOrDelete && (
-                <div className="space-x-2">
-                  <button
-                    onClick={() => handleMoveUp(index)}
-                    className={`px-2 py-1 text-sm rounded ${
-                      index <= 0
-                        ? 'bg-gray-300 dark:bg-gray-600 cursor-not-allowed text-gray-500 dark:text-gray-400'
-                        : 'bg-blue-500 hover:bg-blue-600 text-white'
-                    }`}
-                    disabled={index <= 0}
-                  >
-                    Up
-                  </button>
-                  <button
-                    onClick={() => handleMoveDown(index)}
-                    className={`px-2 py-1 text-sm rounded ${
-                      index >= blocks.length - 1
-                        ? 'bg-gray-300 dark:bg-gray-600 cursor-not-allowed text-gray-500 dark:text-gray-400'
-                        : 'bg-blue-500 hover:bg-blue-600 text-white'
-                    }`}
-                    disabled={index >= blocks.length - 1}
-                  >
-                    Down
-                  </button>
-                  <button
-                    onClick={() => handleDelete(index)}
-                    className="px-2 py-1 text-sm rounded bg-red-500 hover:bg-red-600 text-white"
-                  >
-                    Delete
-                  </button>
-                </div>
-              )}
-            </div>
+        return (
+          <div
+            key={block.id}
+            className={`${blockBgClass} p-4 shadow rounded flex flex-col gap-2 border border-gray-200 dark:border-gray-600`}
+          >
+            {/* Top row: reorder/delete if allowed */}
+            {canReorderOrDelete && (
+              <div className="flex items-center justify-end space-x-2">
+                <button
+                  onClick={() => handleMoveUp(index)}
+                  className={`px-2 py-1 text-xs rounded ${
+                    index <= 0
+                      ? 'bg-gray-300 dark:bg-gray-600 cursor-not-allowed text-gray-500 dark:text-gray-400'
+                      : 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200'
+                  }`}
+                  disabled={index <= 0}
+                >
+                  Up
+                </button>
+                <button
+                  onClick={() => handleMoveDown(index)}
+                  className={`px-2 py-1 text-xs rounded ${
+                    index >= blocks.length - 1
+                      ? 'bg-gray-300 dark:bg-gray-600 cursor-not-allowed text-gray-500 dark:text-gray-400'
+                      : 'bg-gray-200 hover:bg-gray-300 dark:bg-gray-600 dark:hover:bg-gray-500 text-gray-700 dark:text-gray-200'
+                  }`}
+                  disabled={index >= blocks.length - 1}
+                >
+                  Down
+                </button>
+                <button
+                  onClick={() => handleDelete(index)}
+                  className="px-2 py-1 text-xs rounded bg-red-200 hover:bg-red-300 text-red-800"
+                >
+                  Delete
+                </button>
+              </div>
+            )}
 
             {/* Block editor */}
             <BlockEditor

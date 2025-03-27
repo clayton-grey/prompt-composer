@@ -2,80 +2,55 @@
 /**
  * @file TemplateBlockEditor.tsx
  * @description
- * Provides an editing interface for a "template" type block. If this block is
- * the lead block of its group, we allow "Edit Raw" mode. When entering raw mode,
- * we reconstruct the entire template as a single text string. For each sub-block:
- *  - Template segments become literal text
- *  - Text blocks become {{TEXT_BLOCK=some content}}
- *  - File blocks become {{FILE_BLOCK}}
- *  - Nested templates become {{TEMPLATE_BLOCK=some content}} or inline references
- *    if they appear as "Inline Template: XYZ"
+ * Editing interface for "template" type blocks.
  *
- * On confirm, if the user changed anything from the original raw text, we call
- * replaceTemplateGroup to parse and replace the entire group. If they didn't change
- * anything, we skip re-parsing and just exit raw mode.
+ * Updated to ensure:
+ *  - The template block content is VISIBLE in normal (non-raw) mode, but only as read-only text.
+ *  - The user can only modify that content in raw edit mode.
  */
 
-import React, { ChangeEvent, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { TemplateBlock, Block } from '../../types/Block';
 import { usePrompt } from '../../context/PromptContext';
 
 /**
  * reconstructRawTemplateFromGroup
- * Gathers all blocks in the same groupId, in the order they appear in the global block list.
- * Returns a single string that uses placeholders for text/file/nested blocks.
- *
- * Implementation details:
- *  - For text blocks: use {{TEXT_BLOCK=<block.content>}}
- *  - For file blocks: use {{FILE_BLOCK}}
- *  - For nested template blocks:
- *       If label is "Nested Template Block", do {{TEMPLATE_BLOCK=block.content}}
- *       If label is "Inline Template: X", we might do {{X}} but we can't do a full expansion 
- *         without an async load. We'll just do {{X}} so the user can see it. 
- *  - For "Template Segment" blocks, we add them as literal text in the final string
+ * Gathers all blocks in the same groupId, in the order they appear in the global block list,
+ * then builds a single string with placeholders for text/file/nested template blocks.
  */
 function reconstructRawTemplateFromGroup(
   groupId: string,
   leadBlockId: string,
   allBlocks: Block[]
 ): string {
-  // We'll gather the blocks in order
-  const groupBlocksInOrder = allBlocks.filter((b) => b.groupId === groupId);
-
-  // We want them in the same order they appear in the global list
+  // Collect all blocks with groupId
   const sortedByIndex: { block: Block; index: number }[] = [];
   allBlocks.forEach((block, idx) => {
     if (block.groupId === groupId) {
       sortedByIndex.push({ block, index: idx });
     }
   });
+  // Sort them according to their actual index in the global list
   sortedByIndex.sort((a, b) => a.index - b.index);
 
   let raw = '';
   for (const { block } of sortedByIndex) {
     if (block.type === 'template') {
-      // If label is "Template Segment", we treat content as literal text
-      // If label is "Nested Template Block", we do {{TEMPLATE_BLOCK=...}}
-      // If label starts with "Inline Template:", we do e.g. {{HELLO}}
+      // Distinguish if label is "Template Segment", "Nested Template Block", or "Inline Template"
       if (block.label === 'Template Segment') {
         raw += block.content;
       } else if (block.label === 'Nested Template Block') {
         raw += `{{TEMPLATE_BLOCK=${block.content}}}`;
-      } else if (block.label.startsWith('Inline Template:')) {
-        // parse out the template name from the label e.g. "Inline Template: HELLO"
+      } else if (block.label?.startsWith('Inline Template:')) {
         const templateName = block.label.replace('Inline Template:', '').trim();
         raw += `{{${templateName}}}`;
       } else {
-        // fallback
+        // fallback: treat as literal text
         raw += block.content;
       }
     } else if (block.type === 'text') {
-      // Insert as {{TEXT_BLOCK=content}}
-      const content = block.content || '';
-      // We might want to escape braces if necessary, but let's do a direct insertion for now
-      raw += `{{TEXT_BLOCK=${content}}}`;
+      raw += `{{TEXT_BLOCK=${block.content}}}`;
     } else if (block.type === 'files') {
-      // Insert as {{FILE_BLOCK}}
       raw += `{{FILE_BLOCK}}`;
     }
   }
@@ -93,20 +68,17 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
   onChange
 }) => {
   const { blocks, replaceTemplateGroup } = usePrompt();
-  const [collapsed, setCollapsed] = useState<boolean>(false);
 
-  /**
-   * local "raw editing" UI:
-   *  - originalRawContent: stores the initial raw string from the group
-   *  - rawContent: user edits
-   *  - isEditingRaw: toggles UI
-   */
+  // Whether we're displaying raw editing mode
   const [isEditingRaw, setIsEditingRaw] = useState<boolean>(block.editingRaw || false);
+
+  // The raw content shown to the user in raw editing mode
   const [rawContent, setRawContent] = useState<string>('');
+  // For checking if user changed anything (to skip re-parse if no changes)
   const [originalRawContent, setOriginalRawContent] = useState<string>('');
 
+  // On entering raw mode, reconstruct the entire group as a single text
   useEffect(() => {
-    // If isEditingRaw just became true, reconstruct
     if (isEditingRaw) {
       const reconstructed = reconstructRawTemplateFromGroup(block.groupId!, block.id, blocks);
       setRawContent(reconstructed);
@@ -115,65 +87,40 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
   }, [isEditingRaw, block.groupId, block.id, blocks]);
 
   /**
-   * handleLabelChange
-   */
-  const handleLabelChange = (e: ChangeEvent<HTMLInputElement>) => {
-    onChange({ ...block, label: e.target.value });
-  };
-
-  /**
-   * handleContentChange
-   */
-  const handleContentChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
-    onChange({ ...block, content: e.target.value });
-  };
-
-  /**
    * handleFlipToRawClick
+   * Called when the user clicks "Edit Raw"
    */
   const handleFlipToRawClick = () => {
     if (!block.groupId) return;
     setIsEditingRaw(true);
-    // Also set editingRaw = true on the block
     onChange({ ...block, editingRaw: true });
   };
 
   /**
    * handleRawConfirm
-   * If the user changed the raw content, we parse & replace the group. Otherwise, skip.
+   * If user actually changed the raw text, we parse & replace the group; otherwise skip
    */
   const handleRawConfirm = () => {
     if (!block.groupId) {
+      // If no group, skip
       setIsEditingRaw(false);
       onChange({ ...block, editingRaw: false });
       return;
     }
     replaceTemplateGroup(block.id, block.groupId, rawContent, originalRawContent);
-    // We'll rely on replaceTemplateGroup to set editingRaw=false or re-initialize
     setIsEditingRaw(false);
   };
 
   /**
    * handleRawCancel
-   * We revert any changes, set editingRaw = false
+   * Cancel raw editing, revert to normal mode
    */
   const handleRawCancel = () => {
     setIsEditingRaw(false);
     onChange({ ...block, editingRaw: false });
   };
 
-  /**
-   * handleVariableDefaultChange
-   */
-  const handleVariableDefaultChange = (index: number, value: string) => {
-    const updatedVariables = [...block.variables];
-    updatedVariables[index] = { ...updatedVariables[index], default: value };
-    onChange({ ...block, variables: updatedVariables });
-  };
-
-  const toggleCollapsed = () => setCollapsed(!collapsed);
-
-  // If user is in raw editing mode, show only the raw editing UI
+  // If we are in raw edit mode, show the raw editing UI
   if (isEditingRaw) {
     return (
       <div className="p-3 border border-yellow-400 bg-yellow-50 rounded">
@@ -204,122 +151,27 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
     );
   }
 
+  // Otherwise, normal (non-raw) mode
+  // We show the block's content in a read-only manner
   return (
-    <div className="p-3 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800">
-      {/* Header Row */}
-      <div className="flex items-center justify-between">
-        {/* Label Field */}
-        <div className="mr-2 flex-1">
-          <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
-            Label:
-          </label>
-          <input
-            type="text"
-            className="w-full rounded border-gray-300 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-100"
-            value={block.label}
-            onChange={handleLabelChange}
-          />
-        </div>
-
-        {/* Collapse/Expand Button */}
-        <button
-          onClick={toggleCollapsed}
-          className="ml-2 p-1 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded"
-          title={collapsed ? 'Expand Template Details' : 'Collapse Template Details'}
-        >
-          {collapsed ? (
-            <svg
-              className="h-5 w-5 text-gray-700 dark:text-gray-200"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              viewBox="0 0 24 24"
-            >
-              {/* Down Arrow = Expand */}
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 9l6 6 6-6" />
-            </svg>
-          ) : (
-            <svg
-              className="h-5 w-5 text-gray-700 dark:text-gray-200"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              viewBox="0 0 24 24"
-            >
-              {/* Up Arrow = Collapse */}
-              <path strokeLinecap="round" strokeLinejoin="round" d="M18 15l-6-6-6 6" />
-            </svg>
-          )}
-        </button>
-
-        {/* Edit Raw if lead block */}
-        {block.isGroupLead && !block.editingRaw && (
+    <div>
+      {/* If this is the lead block and not locked in raw mode, show "Edit Raw" button */}
+      {block.isGroupLead && !block.editingRaw && (
+        <div className="flex items-center justify-end mb-2">
           <button
             onClick={handleFlipToRawClick}
-            className="ml-2 px-2 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
+            className="px-2 py-1 bg-blue-500 text-white text-xs rounded hover:bg-blue-600"
           >
             Edit Raw
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Template details hidden if collapsed */}
-      {!collapsed && (
-        <>
-          {/* Template Content */}
-          <div className="mt-4">
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-200 mb-1">
-              Template Content:
-            </label>
-            <textarea
-              rows={4}
-              className="w-full rounded border-gray-300 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-100"
-              value={block.content}
-              onChange={handleContentChange}
-            />
-            <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-              Use <code className="bg-gray-100 dark:bg-gray-900 px-1 py-0.5 rounded">
-                {"{{variableName}}"}
-              </code>{" "}
-              syntax for placeholders in content. Or define sub-block placeholders
-              like <code className="bg-gray-100 dark:bg-gray-900 px-1 py-0.5 rounded">
-                {"{{TEXT_BLOCK=...}}"}
-              </code>.
-            </p>
-          </div>
-
-          {/* Variables List */}
-          <div className="mt-4">
-            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">
-              Template Variables
-            </h3>
-            {block.variables.length === 0 ? (
-              <p className="text-xs text-gray-500 dark:text-gray-400">
-                No variables defined.
-              </p>
-            ) : (
-              <ul className="space-y-2">
-                {block.variables.map((v, idx) => (
-                  <li key={idx} className="text-sm">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-medium text-gray-700 dark:text-gray-300">
-                        {v.name}:
-                      </span>
-                      <input
-                        type="text"
-                        className="flex-1 rounded border-gray-300 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-100"
-                        value={v.default}
-                        onChange={(e) =>
-                          handleVariableDefaultChange(idx, e.target.value)
-                        }
-                      />
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </>
+      {/* Show the template content as read-only text */}
+      {block.content && (
+        <div className="whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded p-2">
+          {block.content}
+        </div>
       )}
     </div>
   );
