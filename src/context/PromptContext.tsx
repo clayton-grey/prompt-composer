@@ -4,15 +4,12 @@
  * @description
  * Provides global state management for the Prompt Composer's prompt blocks and settings.
  *
- * Newly added in Step 4 (Flip Editing):
- * - A method replaceTemplateGroup(leadBlockId, groupId, newText) that:
- *    1) Removes existing blocks with matching groupId,
- *    2) Calls parseTemplateBlocks() on the new text, forcing groupId & leadBlockId,
- *    3) Appends the newly parsed blocks to the composition.
- *
- * This allows "in-memory editing" or "flip" for a template block, letting the user see
- * the entire raw text, modify it, and re-initialize the group from that new text. The
- * original file on disk is not overwritten.
+ * Updated to support:
+ *  - replaceTemplateGroup with a splice-based approach to preserve block order exactly,
+ *    so if a user flips a template (group) at index 2, we remove that group's blocks
+ *    and reinsert the new blocks starting at index 2. This ensures other blocks remain
+ *    below it or above it as is.
+ *  - Skips re-parsing if the raw content is unchanged on confirm.
  */
 
 import React, {
@@ -27,8 +24,6 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Block, FilesBlock } from '../types/Block';
 import { initEncoder, estimateTokens } from '../utils/tokenizer';
 import { flattenBlocksAsync } from '../utils/flattenPrompt';
-
-// Import the parseTemplateBlocks so we can re-parse updated text if user flips a template
 import { parseTemplateBlocks } from '../utils/templateBlockParser';
 
 interface PromptSettings {
@@ -52,9 +47,6 @@ interface PromptContextType {
   setSettings: (newSettings: PromptSettings) => void;
   moveBlock: (oldIndex: number, newIndex: number) => void;
 
-  /**
-   * Creates or updates a single file block containing the selected file entries
-   */
   updateFileBlock: (
     fileEntries: { path: string; content: string; language: string }[],
     asciiMap?: string
@@ -65,11 +57,11 @@ interface PromptContextType {
   importComposition: (newBlocks: Block[], newSettings: PromptSettings) => void;
 
   /**
-   * Step 4: replaceTemplateGroup
-   * Given a leadBlockId, groupId, and new raw text, remove all old blocks with that groupId,
-   * parse the new text (forcing the same groupId), then ensure the first block has leadBlockId.
+   * replaceTemplateGroup
+   * Removes existing blocks with that groupId, splices new blocks in at the lead block's position.
+   * If the newText is unchanged from the old raw text, we skip re-parsing entirely.
    */
-  replaceTemplateGroup: (leadBlockId: string, groupId: string, newText: string) => void;
+  replaceTemplateGroup: (leadBlockId: string, groupId: string, newText: string, oldRawText: string) => void;
 }
 
 const defaultSettings: PromptSettings = {
@@ -104,7 +96,6 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
 
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize the token estimator for the specified model
   useEffect(() => {
     initEncoder(settings.model);
   }, [settings.model]);
@@ -234,7 +225,7 @@ ${f.content}
 
   /**
    * getFlattenedPrompt
-   * Returns a single multiline string that merges all blocks with nested template expansions
+   * Returns a single multiline string that merges all blocks with nested expansions
    */
   const getFlattenedPrompt = useCallback(async (): Promise<string> => {
     const flattened = await flattenBlocksAsync(blocks);
@@ -254,28 +245,55 @@ ${f.content}
   );
 
   /**
-   * Step 4: replaceTemplateGroup
-   * Removes existing blocks with the specified groupId, re-parses new text, ensures that
-   * the first block's ID matches leadBlockId, and appends them to the composition.
-   * This is the core logic behind the "flip" or "edit" in-memory template editing.
+   * replaceTemplateGroup
+   * If newText is identical to oldRawText, we do nothing, else we parse new text
+   * removing the old group's blocks and splicing in the newly parsed blocks
+   * at the same index the lead block was previously.
    */
-  const replaceTemplateGroup = useCallback((leadBlockId: string, groupId: string, newText: string) => {
-    setBlocks((prevBlocks) => {
-      // 1) remove all blocks with that groupId
-      const filtered = prevBlocks.filter((b) => b.groupId !== groupId);
-
-      // 2) parse new text, forcing the same groupId
-      const newParsed = parseTemplateBlocks(newText, groupId);
-
-      // 3) if we have any parsed blocks, set the first block's ID to leadBlockId
-      if (newParsed.length > 0) {
-        newParsed[0].id = leadBlockId;
+  const replaceTemplateGroup = useCallback(
+    (leadBlockId: string, groupId: string, newText: string, oldRawText: string) => {
+      // 1) If the text is unchanged, skip
+      if (newText === oldRawText) {
+        // Simply find the lead block and set editingRaw=false if it's still set
+        setBlocks((prev) => {
+          return prev.map((b) => {
+            if (b.id === leadBlockId && b.editingRaw) {
+              return { ...b, editingRaw: false };
+            }
+            return b;
+          });
+        });
+        return;
       }
 
-      // 4) combine
-      return [...filtered, ...newParsed];
-    });
-  }, []);
+      setBlocks((prev) => {
+        // Find the index range of the group
+        const groupIndices = [];
+        for (let i = 0; i < prev.length; i++) {
+          if (prev[i].groupId === groupId) {
+            groupIndices.push(i);
+          }
+        }
+        if (groupIndices.length === 0) {
+          // No blocks in that group, do nothing
+          return prev;
+        }
+
+        const startIndex = Math.min(...groupIndices);
+        const endIndex = Math.max(...groupIndices);
+
+        // Parse the new text
+        const newBlocks = parseTemplateBlocks(newText, groupId, leadBlockId);
+
+        // Remove [startIndex..endIndex], then splice in newBlocks at startIndex
+        const updated = [...prev];
+        updated.splice(startIndex, endIndex - startIndex + 1, ...newBlocks);
+
+        return updated;
+      });
+    },
+    []
+  );
 
   const contextValue: PromptContextType = {
     blocks,

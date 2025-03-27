@@ -2,64 +2,83 @@
 /**
  * @file TemplateBlockEditor.tsx
  * @description
- * Provides an editing interface for a "template" type block. Now if this block
- * is the lead block of its group (isGroupLead=true), we allow "Edit Raw" mode.
- * When entering raw mode, we set block.editingRaw = true so child blocks are
- * hidden in the BlockList. On cancel or confirm, we revert or remove that state.
+ * Provides an editing interface for a "template" type block. If this block is
+ * the lead block of its group, we allow "Edit Raw" mode. When entering raw mode,
+ * we reconstruct the entire template as a single text string. For each sub-block:
+ *  - Template segments become literal text
+ *  - Text blocks become {{TEXT_BLOCK=some content}}
+ *  - File blocks become {{FILE_BLOCK}}
+ *  - Nested templates become {{TEMPLATE_BLOCK=some content}} or inline references
+ *    if they appear as "Inline Template: XYZ"
  *
- * We also continue to support label, content, and variable editing for normal usage.
- * 
- * Additionally, we do not overwrite the disk version of the template; it's purely 
- * an in-memory transformation for this session.
+ * On confirm, if the user changed anything from the original raw text, we call
+ * replaceTemplateGroup to parse and replace the entire group. If they didn't change
+ * anything, we skip re-parsing and just exit raw mode.
  */
 
-import React, { ChangeEvent, useState } from 'react';
-import { TemplateBlock } from '../../types/Block';
+import React, { ChangeEvent, useState, useEffect } from 'react';
+import { TemplateBlock, Block } from '../../types/Block';
 import { usePrompt } from '../../context/PromptContext';
 
 /**
- * We assume placeholders to reconstruct if they're locked sub-blocks of the group.
- * In raw mode, child blocks are hidden from BlockList. We'll flip editingRaw
- * on the lead block so the user sees only this block while raw editing.
+ * reconstructRawTemplateFromGroup
+ * Gathers all blocks in the same groupId, in the order they appear in the global block list.
+ * Returns a single string that uses placeholders for text/file/nested blocks.
+ *
+ * Implementation details:
+ *  - For text blocks: use {{TEXT_BLOCK=<block.content>}}
+ *  - For file blocks: use {{FILE_BLOCK}}
+ *  - For nested template blocks:
+ *       If label is "Nested Template Block", do {{TEMPLATE_BLOCK=block.content}}
+ *       If label is "Inline Template: X", we might do {{X}} but we can't do a full expansion 
+ *         without an async load. We'll just do {{X}} so the user can see it. 
+ *  - For "Template Segment" blocks, we add them as literal text in the final string
  */
 function reconstructRawTemplateFromGroup(
   groupId: string,
   leadBlockId: string,
-  allBlocks: any[]
+  allBlocks: Block[]
 ): string {
-  // Sort the blocks in the order they appear in 'allBlocks'
-  const blockOrder: { block: any; index: number }[] = [];
-  allBlocks.forEach((b: any, idx: number) => {
-    if (b.groupId === groupId) {
-      blockOrder.push({ block: b, index: idx });
+  // We'll gather the blocks in order
+  const groupBlocksInOrder = allBlocks.filter((b) => b.groupId === groupId);
+
+  // We want them in the same order they appear in the global list
+  const sortedByIndex: { block: Block; index: number }[] = [];
+  allBlocks.forEach((block, idx) => {
+    if (block.groupId === groupId) {
+      sortedByIndex.push({ block, index: idx });
     }
   });
-  blockOrder.sort((a, b) => a.index - b.index);
+  sortedByIndex.sort((a, b) => a.index - b.index);
 
   let raw = '';
-
-  blockOrder.forEach(({ block }) => {
-    // If it's the lead or a "template" block not labeled "Nested Template Block", we treat content as literal text
+  for (const { block } of sortedByIndex) {
     if (block.type === 'template') {
-      if (block.label === 'Nested Template Block') {
-        raw += '{{TEMPLATE_BLOCK}}';
+      // If label is "Template Segment", we treat content as literal text
+      // If label is "Nested Template Block", we do {{TEMPLATE_BLOCK=...}}
+      // If label starts with "Inline Template:", we do e.g. {{HELLO}}
+      if (block.label === 'Template Segment') {
+        raw += block.content;
+      } else if (block.label === 'Nested Template Block') {
+        raw += `{{TEMPLATE_BLOCK=${block.content}}}`;
+      } else if (block.label.startsWith('Inline Template:')) {
+        // parse out the template name from the label e.g. "Inline Template: HELLO"
+        const templateName = block.label.replace('Inline Template:', '').trim();
+        raw += `{{${templateName}}}`;
       } else {
-        // treat as text
+        // fallback
         raw += block.content;
       }
     } else if (block.type === 'text') {
-      if (block.locked) {
-        // locked text sub-block => was originally {{TEXT_BLOCK}}
-        raw += '{{TEXT_BLOCK}}';
-      } else {
-        // Possibly the lead block? We'll just treat it as text
-        raw += block.content;
-      }
+      // Insert as {{TEXT_BLOCK=content}}
+      const content = block.content || '';
+      // We might want to escape braces if necessary, but let's do a direct insertion for now
+      raw += `{{TEXT_BLOCK=${content}}}`;
     } else if (block.type === 'files') {
-      // locked => was originally {{FILE_BLOCK}}
-      raw += '{{FILE_BLOCK}}';
+      // Insert as {{FILE_BLOCK}}
+      raw += `{{FILE_BLOCK}}`;
     }
-  });
+  }
 
   return raw;
 }
@@ -77,11 +96,23 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
   const [collapsed, setCollapsed] = useState<boolean>(false);
 
   /**
-   * Step 4 / 5: local "raw editing" UI
-   * But now we also set block.editingRaw on the block itself so that child blocks get hidden.
+   * local "raw editing" UI:
+   *  - originalRawContent: stores the initial raw string from the group
+   *  - rawContent: user edits
+   *  - isEditingRaw: toggles UI
    */
   const [isEditingRaw, setIsEditingRaw] = useState<boolean>(block.editingRaw || false);
-  const [rawTemplateContent, setRawTemplateContent] = useState<string>('');
+  const [rawContent, setRawContent] = useState<string>('');
+  const [originalRawContent, setOriginalRawContent] = useState<string>('');
+
+  useEffect(() => {
+    // If isEditingRaw just became true, reconstruct
+    if (isEditingRaw) {
+      const reconstructed = reconstructRawTemplateFromGroup(block.groupId!, block.id, blocks);
+      setRawContent(reconstructed);
+      setOriginalRawContent(reconstructed);
+    }
+  }, [isEditingRaw, block.groupId, block.id, blocks]);
 
   /**
    * handleLabelChange
@@ -98,6 +129,40 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
   };
 
   /**
+   * handleFlipToRawClick
+   */
+  const handleFlipToRawClick = () => {
+    if (!block.groupId) return;
+    setIsEditingRaw(true);
+    // Also set editingRaw = true on the block
+    onChange({ ...block, editingRaw: true });
+  };
+
+  /**
+   * handleRawConfirm
+   * If the user changed the raw content, we parse & replace the group. Otherwise, skip.
+   */
+  const handleRawConfirm = () => {
+    if (!block.groupId) {
+      setIsEditingRaw(false);
+      onChange({ ...block, editingRaw: false });
+      return;
+    }
+    replaceTemplateGroup(block.id, block.groupId, rawContent, originalRawContent);
+    // We'll rely on replaceTemplateGroup to set editingRaw=false or re-initialize
+    setIsEditingRaw(false);
+  };
+
+  /**
+   * handleRawCancel
+   * We revert any changes, set editingRaw = false
+   */
+  const handleRawCancel = () => {
+    setIsEditingRaw(false);
+    onChange({ ...block, editingRaw: false });
+  };
+
+  /**
    * handleVariableDefaultChange
    */
   const handleVariableDefaultChange = (index: number, value: string) => {
@@ -106,53 +171,7 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
     onChange({ ...block, variables: updatedVariables });
   };
 
-  /**
-   * toggleCollapsed
-   */
   const toggleCollapsed = () => setCollapsed(!collapsed);
-
-  /**
-   * handleEditRawClick
-   * We set editingRaw to true on the block, so the child blocks are hidden in the list,
-   * and we reconstruct the entire raw text from the group.
-   */
-  const handleEditRawClick = () => {
-    if (!block.groupId) return;
-    // 1) reconstruct
-    const reconstructed = reconstructRawTemplateFromGroup(block.groupId, block.id, blocks);
-    setRawTemplateContent(reconstructed);
-
-    // 2) set local state
-    setIsEditingRaw(true);
-
-    // 3) update the block to have editingRaw = true
-    const updated = { ...block, editingRaw: true };
-    onChange(updated);
-  };
-
-  /**
-   * handleRawConfirm
-   * We call replaceTemplateGroup. That removes all sub-blocks and re-parses from new text.
-   * The new lead block will come in fresh, with editingRaw = false by default.
-   */
-  const handleRawConfirm = () => {
-    if (!block.groupId) {
-      setIsEditingRaw(false);
-      return;
-    }
-    replaceTemplateGroup(block.id, block.groupId, rawTemplateContent);
-    // We rely on the newly created blocks having editingRaw = false by default.
-  };
-
-  /**
-   * handleRawCancel
-   * We revert any changes, set editingRaw = false on the lead block,
-   * so the child blocks become visible again.
-   */
-  const handleRawCancel = () => {
-    setIsEditingRaw(false);
-    onChange({ ...block, editingRaw: false });
-  };
 
   // If user is in raw editing mode, show only the raw editing UI
   if (isEditingRaw) {
@@ -164,8 +183,8 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
         <textarea
           rows={8}
           className="w-full rounded border-gray-300 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-100"
-          value={rawTemplateContent}
-          onChange={(e) => setRawTemplateContent(e.target.value)}
+          value={rawContent}
+          onChange={(e) => setRawContent(e.target.value)}
         />
         <div className="mt-2 flex gap-2">
           <button
@@ -236,7 +255,7 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
         {/* Edit Raw if lead block */}
         {block.isGroupLead && !block.editingRaw && (
           <button
-            onClick={handleEditRawClick}
+            onClick={handleFlipToRawClick}
             className="ml-2 px-2 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
           >
             Edit Raw
@@ -262,7 +281,10 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
               Use <code className="bg-gray-100 dark:bg-gray-900 px-1 py-0.5 rounded">
                 {"{{variableName}}"}
               </code>{" "}
-              syntax for placeholders.
+              syntax for placeholders in content. Or define sub-block placeholders
+              like <code className="bg-gray-100 dark:bg-gray-900 px-1 py-0.5 rounded">
+                {"{{TEXT_BLOCK=...}}"}
+              </code>.
             </p>
           </div>
 
