@@ -1,54 +1,23 @@
+
 /**
  * @file TemplateSelectorModal.tsx
  * @description
- * A modal component that displays a consolidated list of template files found in:
- *  (a) Global (~/.prompt-composer)
- *  (b) Project (<cwd>/.prompt-composer)
- * When the user selects one, we load its contents (via readGlobalPromptComposerFile or readPromptComposerFile),
- * parse them into multiple blocks with parseTemplateBlocks, then insert them into the composition.
- *
- * Key Responsibilities:
- *  - On mount, call window.electronAPI.listAllTemplateFiles() to get an array of available templates.
- *  - Display them in a list, grouped by source or sorted in alphabetical order. (Implementation is simple, alphabetical.)
- *  - On user click, read the file from the appropriate location, parse with parseTemplateBlocks, and then call onTemplateSelected(blocks).
- *  - Provide a Cancel button or background overlay to close the modal without insertion.
- *
- * Edge Cases:
- *  - If no template files are found, we show "No templates found."
- *  - If reading or parsing fails, we log a console error and remain in place.
- *
- * Usage:
- *  - <TemplateSelectorModal
- *      isOpen={showModal}
- *      onClose={() => setShowModal(false)}
- *      onInsertBlocks={(blocks) => addBlocks(blocks)}
- *    />
- *
- * Implementation:
- *  - We hold local state 'templateFiles' for the list of { fileName, source } items.
- *  - On mount, we fetch them. If loading fails, we set an error or show an empty list.
- *  - When the user picks one, we do readGlobalPromptComposerFile (if source=global) or readPromptComposerFile (if source=project).
- *    Then parse with parseTemplateBlocks(sourceText). Then pass result to onInsertBlocks.
+ * A modal component that displays a consolidated list of template files from
+ * global + project .prompt-composer directories. Step 3 changes:
+ *  - We now retrieve the active project folders from ProjectContext and pass them
+ *    to electronAPI.listAllTemplateFiles({ projectFolders }).
+ *  - This ensures that if a folder is removed from the context, its templates
+ *    won't appear.
  */
 
 import React, { useEffect, useState } from 'react';
 import { parseTemplateBlocks } from '../../utils/templateBlockParser';
 import { Block } from '../../types/Block';
+import { useProject } from '../../context/ProjectContext';
 
 interface TemplateSelectorModalProps {
-  /**
-   * Whether the modal is currently visible
-   */
   isOpen: boolean;
-
-  /**
-   * Callback to close the modal (user canceled or inserted a template)
-   */
   onClose: () => void;
-
-  /**
-   * Callback invoked when user selects a template, producing multiple sub-blocks
-   */
   onInsertBlocks: (blocks: Block[]) => void;
 }
 
@@ -65,6 +34,9 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   const [templateFiles, setTemplateFiles] = useState<TemplateFileEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Step 3: we get projectFolders from context
+  const { projectFolders } = useProject();
+
   useEffect(() => {
     if (isOpen) {
       // When modal opens, fetch the list of template files
@@ -79,8 +51,16 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   async function loadTemplates() {
     try {
       setLoading(true);
-      const files = await window.electronAPI.listAllTemplateFiles();
-      // Sort them alphabetically by fileName
+      if (!window.electronAPI?.listAllTemplateFiles) {
+        console.warn('[TemplateSelectorModal] electronAPI.listAllTemplateFiles not available');
+        setTemplateFiles([]);
+        setLoading(false);
+        return;
+      }
+
+      // Pass current projectFolders
+      const files = await window.electronAPI.listAllTemplateFiles({ projectFolders });
+      // Sort them alphabetically
       const sorted = files.slice().sort((a, b) => a.fileName.localeCompare(b.fileName));
       setTemplateFiles(sorted);
     } catch (err) {
@@ -97,7 +77,11 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
       if (entry.source === 'global') {
         content = await window.electronAPI.readGlobalPromptComposerFile(entry.fileName);
       } else {
-        // source = 'project'
+        // 'project'
+        // We read from "some" project .prompt-composer. Actually the electron side
+        // tries each project folder. But there's no direct single path read here,
+        // so we do the default "readPromptComposerFile" from process.cwd() if needed.
+        // This is a known limitation. We keep the logic as is for now:
         content = await window.electronAPI.readPromptComposerFile(entry.fileName);
       }
       if (!content) {
@@ -106,11 +90,7 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
       }
 
       const parsedBlocks = parseTemplateBlocks(content);
-
-      // Insert them via the callback
       onInsertBlocks(parsedBlocks);
-
-      // Then close the modal
       onClose();
     } catch (err) {
       console.error('[TemplateSelectorModal] handleSelectTemplate error:', err);
@@ -125,7 +105,6 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
       onClick={(e) => {
-        // close if user clicks the backdrop
         if (e.target === e.currentTarget) {
           onClose();
         }
@@ -140,13 +119,15 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
         </h2>
 
         {loading && (
-          <p className="text-sm text-gray-600 dark:text-gray-300">Loading templates...</p>
+          <p className="text-sm text-gray-600 dark:text-gray-300">
+            Loading templates...
+          </p>
         )}
-
         {!loading && templateFiles.length === 0 && (
-          <p className="text-sm text-gray-600 dark:text-gray-300">No templates found.</p>
+          <p className="text-sm text-gray-600 dark:text-gray-300">
+            No templates found.
+          </p>
         )}
-
         {!loading && templateFiles.length > 0 && (
           <ul className="max-h-60 overflow-auto border border-gray-300 dark:border-gray-700 rounded p-2">
             {templateFiles.map((entry, idx) => (
@@ -180,3 +161,4 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
 };
 
 export default TemplateSelectorModal;
+
