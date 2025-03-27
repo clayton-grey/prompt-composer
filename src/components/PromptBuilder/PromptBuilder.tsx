@@ -2,24 +2,22 @@
 /**
  * @file PromptBuilder.tsx
  * @description
- * Provides the UI for adding text, template, and file blocks, plus a toggle
- * for plain text preview. We now update the "Add Template Block" functionality
- * to open a modal (TemplateSelectorModal) listing available templates from
- * global + project sources, rather than just inserting an empty template block.
+ * Provides the UI for adding text, template, and file blocks, plus a toggle for plain text preview.
+ * 
+ * Step 5a Changes:
+ *  - We introduce a resizable preview area at the bottom, separated by a horizontal drag handle.
+ *  - The user can toggle the preview on/off with the "Show/Hide Plain Text View" button. If shown,
+ *    the bottom area appears with a given height (previewHeight). The user can drag to resize it.
  *
- * Step 2 Changes:
- *  - Import TemplateSelectorModal
- *  - Add state showTemplateModal
- *  - When user clicks "Add Template Block," we set showTemplateModal = true
- *  - On selection, we parse the chosen .txt or .md file into multiple blocks
- *    with parseTemplateBlocks, then call addBlocks(newBlocks).
- *
- * Implementation Details:
- *  - The rest of PromptBuilder remains the same except for handleAddTemplateBlock, which
- *    now toggles the modal.
+ * Implementation:
+ *  1. We keep the top bar with "Add Text / Template / File" buttons as before.
+ *  2. The main portion now is a flex container with a column for the block list (scrollable),
+ *     then a small "div" that acts as a horizontal drag handle, then the preview container.
+ *  3. We replicate the logic from the sidebar resizing approach: track isResizingPreview, 
+ *     lastClientY, and handle mousemove globally to apply the new height.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { nanoid } from 'nanoid';
 import BlockList from './BlockList';
 import { usePrompt } from '../../context/PromptContext';
@@ -30,9 +28,19 @@ import TemplateSelectorModal from './TemplateSelectorModal';
 export const PromptBuilder: React.FC = () => {
   const { addBlock, addBlocks, updateFileBlock } = usePrompt();
   const { getSelectedFileEntries, generateAsciiTree, directoryCache } = useProject();
+
   const [showPreview, setShowPreview] = useState(false);
+
+  // For "Add Template Block" pop-up
   const [showTemplateModal, setShowTemplateModal] = useState(false);
+
+  // List of root folders from directoryCache
   const [rootFolders, setRootFolders] = useState<string[]>([]);
+
+  // For the preview resizing
+  const [previewHeight, setPreviewHeight] = useState<number>(300);
+  const isResizingPreviewRef = useRef<boolean>(false);
+  const lastClientYRef = useRef<number>(0);
 
   useEffect(() => {
     const folderPaths = Object.keys(directoryCache);
@@ -41,6 +49,9 @@ export const PromptBuilder: React.FC = () => {
     }
   }, [directoryCache]);
 
+  /**
+   * Adding blocks
+   */
   const handleAddTextBlock = () => {
     addBlock({
       id: nanoid(),
@@ -50,16 +61,10 @@ export const PromptBuilder: React.FC = () => {
     });
   };
 
-  /**
-   * Instead of creating a blank template, we now open a modal to select from available .txt/.md files.
-   */
   const handleAddTemplateBlock = () => {
     setShowTemplateModal(true);
   };
 
-  /**
-   * Insert or update the File Block with selected file entries
-   */
   const handleAddFileBlock = async () => {
     const fileEntries = getSelectedFileEntries();
     if (fileEntries.length === 0) {
@@ -85,9 +90,6 @@ export const PromptBuilder: React.FC = () => {
     updateFileBlock(fileEntries, simpleMap);
   };
 
-  /**
-   * Helper: findRootFolderForFiles
-   */
   function findRootFolderForFiles(
     files: Array<{ path: string }>,
     rootFolders: string[]
@@ -135,20 +137,66 @@ export const PromptBuilder: React.FC = () => {
     return map;
   }
 
-  const togglePreview = () => setShowPreview(!showPreview);
+  /**
+   * show/hide the preview
+   */
+  const togglePreview = () => {
+    setShowPreview(!showPreview);
+  };
 
   /**
    * handleInsertTemplateBlocks
-   * Called by TemplateSelectorModal once the user picks a file, it's parsed into blocks,
-   * we simply add them all here with addBlocks.
+   * Called by TemplateSelectorModal once the user picks a file. We parse that content
+   * into multiple blocks (possibly sub-blocks) and add them to the composition.
    */
   const handleInsertTemplateBlocks = (parsedBlocks: any[]) => {
     addBlocks(parsedBlocks);
   };
 
+  /**
+   * Resizing logic for the preview area
+   */
+  const onMouseDownPreviewHandle = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    isResizingPreviewRef.current = true;
+    lastClientYRef.current = e.clientY;
+  };
+
+  const onMouseMove = (e: MouseEvent) => {
+    if (!isResizingPreviewRef.current) return;
+    const delta = e.clientY - lastClientYRef.current;
+    lastClientYRef.current = e.clientY;
+    setPreviewHeight((prev) => {
+      const newVal = prev - delta;
+      // Min/Max clamp
+      if (newVal < 100) return 100;
+      if (newVal > 800) return 800;
+      return newVal;
+    });
+  };
+
+  const onMouseUp = () => {
+    isResizingPreviewRef.current = false;
+  };
+
+  useEffect(() => {
+    function handleGlobalMouseMove(ev: MouseEvent) {
+      onMouseMove(ev);
+    }
+    function handleGlobalMouseUp() {
+      onMouseUp();
+    }
+    window.addEventListener('mousemove', handleGlobalMouseMove);
+    window.addEventListener('mouseup', handleGlobalMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleGlobalMouseMove);
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+  }, []);
+
   return (
     <div className="flex flex-col h-full">
-      {/* Header row */}
+      {/* Header row for add-block buttons */}
       <div className="flex justify-between items-center p-4 border-b dark:border-gray-600">
         <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
           Prompt Builder
@@ -183,13 +231,43 @@ export const PromptBuilder: React.FC = () => {
         </div>
       </div>
 
-      {/* Scrolling area for blocks */}
-      <div className="flex-1 overflow-auto p-4 bg-gray-100 dark:bg-gray-800">
-        <BlockList />
-        {showPreview && <PromptPreview />}
+      {/* Main content area includes block list and, optionally, the preview at bottom. */}
+      <div className="flex-1 overflow-hidden bg-gray-100 dark:bg-gray-800 flex flex-col">
+        {/* Block list region: if the preview is shown, we set a flex layout that 
+            leaves space at the bottom for the preview. We do not rely on a separate 
+            container's height if preview is hidden. */}
+        <div
+          className="flex-1 overflow-auto p-4"
+          style={{ 
+            // if not showing preview, let this take full height
+            // if showing, we reduce height by previewHeight (minus handle size) via flex approach
+            // but here we rely on flex + the handle + preview container to handle layout
+          }}
+        >
+          <BlockList />
+        </div>
+
+        {/* If the preview is shown, we have a drag handle and a preview area. */}
+        {showPreview && (
+          <>
+            {/* Horizontal drag handle */}
+            <div
+              className="preview-drag-handle h-2"
+              onMouseDown={onMouseDownPreviewHandle}
+            />
+
+            {/* Preview container with scroll */}
+            <div
+              className="bg-white dark:bg-gray-700 border-t border-gray-300 dark:border-gray-600 overflow-auto"
+              style={{ height: `${previewHeight}px` }}
+            >
+              <PromptPreview />
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Step 2: Template selector modal */}
+      {/* Template selector modal */}
       <TemplateSelectorModal
         isOpen={showTemplateModal}
         onClose={() => setShowTemplateModal(false)}

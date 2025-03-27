@@ -4,15 +4,17 @@
  * @description
  * Lists blocks in order, each with its own editor. 
  * Blocks can be reordered or deleted, but if they share a groupId, they
- * move/delete as a single unit. 
+ * move/delete as a single unit.
  *
- * Changes:
- *  - Removed the display of label and block type from the UI.
- *  - Added background color differences for each block type to visually differentiate:
- *    text => bg-blue-50,
- *    template => bg-purple-50,
- *    files => bg-green-50.
- *  - Buttons remain, but we no longer show the block label or type in the header.
+ * In this update (Step 5a):
+ *  - We add a "group hover" approach so the reorder/delete buttons float
+ *    and only show on mouse hover. 
+ *  - We add "block tail" styling classes to each block to visually match
+ *    the reference design with a "tail" shape, indicating that sub-blocks
+ *    belong to a parent template.
+ *  - We unify the prior background color logic into these block-tail classes
+ *    so that the user sees the new design with pastel backgrounds and the
+ *    triangular shape on the left for each block.
  */
 
 import React, { useEffect } from 'react';
@@ -20,39 +22,53 @@ import { usePrompt } from '../../context/PromptContext';
 import type { Block } from '../../types/Block';
 import BlockEditor from './BlockEditor';
 
+/**
+ * Finds the min and max index for blocks sharing a groupId with the block at startIdx.
+ */
+function findGroupRange(blocks: Block[], startIdx: number): [number, number] {
+  const b = blocks[startIdx];
+  if (!b.groupId) {
+    return [startIdx, startIdx];
+  }
+  const gid = b.groupId;
+  const indices = blocks
+    .map((x, i) => ({ block: x, idx: i }))
+    .filter((x) => x.block.groupId === gid)
+    .map((x) => x.idx);
+  const minI = Math.min(...indices);
+  const maxI = Math.max(...indices);
+  return [minI, maxI];
+}
+
+/**
+ * Helper to produce the CSS classes for block "tail" + color, based on type.
+ */
+function getBlockTailClass(block: Block): string {
+  switch (block.type) {
+    case 'text':
+      return 'block-tail block-tail-blue';
+    case 'template':
+      return 'block-tail block-tail-purple';
+    case 'files':
+      return 'block-tail block-tail-green';
+    default:
+      return 'block-tail block-tail-blue'; // fallback
+  }
+}
+
 const BlockList: React.FC = () => {
   const { blocks, addBlock, removeBlock, updateBlock, moveBlock } = usePrompt();
 
   /**
-   * findGroupRange
-   * If the block has a groupId, gather all blocks that share that groupId.
-   * We'll return the min and max indices so we can move them as a chunk.
-   */
-  const findGroupRange = (startIdx: number): [number, number] => {
-    const b = blocks[startIdx];
-    if (!b.groupId) {
-      return [startIdx, startIdx];
-    }
-    const gid = b.groupId;
-    // gather indices of all blocks that share the same groupId
-    const indices = blocks
-      .map((x, i) => ({ block: x, idx: i }))
-      .filter(x => x.block.groupId === gid)
-      .map(x => x.idx);
-    const minI = Math.min(...indices);
-    const maxI = Math.max(...indices);
-    return [minI, maxI];
-  };
-
-  /**
-   * handleMoveUp
-   * If block is group lead, move entire group. Otherwise, move just the block.
+   * handleMoveUp / handleMoveDown / handleDelete:
+   * We move or delete the entire group if it's a group lead,
+   * otherwise we only affect the single block if groupId is not defined or locked is false.
    */
   const handleMoveUp = (index: number) => {
     if (index <= 0) return;
     const block = blocks[index];
     if (block.groupId && block.isGroupLead) {
-      const [groupStart, groupEnd] = findGroupRange(index);
+      const [groupStart, groupEnd] = findGroupRange(blocks, index);
       if (groupStart <= 0) return;
       reorderChunk(groupStart, groupEnd, 'up');
     } else if (!block.groupId && !block.locked) {
@@ -60,15 +76,11 @@ const BlockList: React.FC = () => {
     }
   };
 
-  /**
-   * handleMoveDown
-   * If block is group lead, move entire group. Otherwise, move just the block.
-   */
   const handleMoveDown = (index: number) => {
     if (index >= blocks.length - 1) return;
     const block = blocks[index];
     if (block.groupId && block.isGroupLead) {
-      const [groupStart, groupEnd] = findGroupRange(index);
+      const [groupStart, groupEnd] = findGroupRange(blocks, index);
       if (groupEnd >= blocks.length - 1) return;
       reorderChunk(groupStart, groupEnd, 'down');
     } else if (!block.groupId && !block.locked) {
@@ -76,10 +88,6 @@ const BlockList: React.FC = () => {
     }
   };
 
-  /**
-   * reorderChunk
-   * Moves the chunk [start, end] up or down by 1 in blocks array
-   */
   const reorderChunk = (start: number, end: number, direction: 'up' | 'down') => {
     const newBlocks = [...blocks];
     const chunk = newBlocks.splice(start, end - start + 1);
@@ -88,7 +96,6 @@ const BlockList: React.FC = () => {
     } else {
       newBlocks.splice(start + 1, 0, ...chunk);
     }
-    // forcibly reset context blocks
     const oldBlocks = [...blocks];
     for (let i = oldBlocks.length - 1; i >= 0; i--) {
       removeBlock(oldBlocks[i].id);
@@ -98,14 +105,10 @@ const BlockList: React.FC = () => {
     }
   };
 
-  /**
-   * handleDelete
-   * If block is group lead, we delete the entire group. Otherwise, just the single block.
-   */
   const handleDelete = (index: number) => {
     const block = blocks[index];
     if (block.groupId && block.isGroupLead) {
-      const [groupStart, groupEnd] = findGroupRange(index);
+      const [groupStart, groupEnd] = findGroupRange(blocks, index);
       const size = groupEnd - groupStart + 1;
       const newBlocks = [...blocks];
       newBlocks.splice(groupStart, size);
@@ -127,7 +130,7 @@ const BlockList: React.FC = () => {
   }, [blocks]);
 
   /**
-   * If the lead block is in raw editing mode, we skip rendering the children in that group.
+   * If the lead block is in raw editing mode, hide the child blocks in that group.
    */
   function shouldRenderBlock(block: Block, index: number): boolean {
     if (block.isGroupLead && block.editingRaw) {
@@ -135,7 +138,7 @@ const BlockList: React.FC = () => {
     }
     if (block.groupId) {
       const leadIndex = blocks.findIndex(
-        b => b.groupId === block.groupId && b.isGroupLead
+        (b) => b.groupId === block.groupId && b.isGroupLead
       );
       if (leadIndex !== -1) {
         const leadBlock = blocks[leadIndex];
@@ -145,22 +148,6 @@ const BlockList: React.FC = () => {
       }
     }
     return true;
-  }
-
-  /**
-   * Decide a background color based on block.type.
-   */
-  function getBlockBgClass(block: Block): string {
-    switch (block.type) {
-      case 'text':
-        return 'bg-blue-50';
-      case 'template':
-        return 'bg-purple-50';
-      case 'files':
-        return 'bg-green-50';
-      default:
-        return 'bg-gray-50';
-    }
   }
 
   return (
@@ -181,17 +168,17 @@ const BlockList: React.FC = () => {
           }
         }
 
-        // Determine block background
-        const blockBgClass = getBlockBgClass(block);
+        // blockTailClass is e.g. 'block-tail block-tail-purple'
+        const blockTailClass = getBlockTailClass(block);
 
         return (
           <div
             key={block.id}
-            className={`${blockBgClass} p-4 shadow rounded flex flex-col gap-2 border border-gray-200 dark:border-gray-600`}
+            className={`relative group p-4 shadow rounded flex flex-col gap-2 border border-gray-200 dark:border-gray-600 ${blockTailClass}`}
           >
-            {/* Top row: reorder/delete if allowed */}
+            {/* Float the reorder/delete buttons - show only on hover */}
             {canReorderOrDelete && (
-              <div className="flex items-center justify-end space-x-2">
+              <div className="absolute top-2 right-2 flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                 <button
                   onClick={() => handleMoveUp(index)}
                   className={`px-2 py-1 text-xs rounded ${
@@ -223,7 +210,7 @@ const BlockList: React.FC = () => {
               </div>
             )}
 
-            {/* Block editor */}
+            {/* Render the block editor */}
             <BlockEditor
               block={block}
               onChange={(updated) => updateBlock(updated)}
