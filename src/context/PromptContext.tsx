@@ -3,15 +3,16 @@
  * @file PromptContext.tsx
  * @description
  * Provides global state management for the Prompt Composer's prompt blocks and settings.
- * We now support an `addBlocks()` method that can insert multiple blocks in sequence, useful
- * for multi-block template expansions.
  *
- * Key changes for enabling multi-block template expansions:
- *  - Introduced addBlocks(...) to insert multiple grouped blocks at once.
- *  - A "groupId" on blocks identifies them as part of a multi-block group, with the first (isGroupLead)
- *    block controlling reorder/delete of the entire group.
+ * Newly added in Step 4 (Flip Editing):
+ * - A method replaceTemplateGroup(leadBlockId, groupId, newText) that:
+ *    1) Removes existing blocks with matching groupId,
+ *    2) Calls parseTemplateBlocks() on the new text, forcing groupId & leadBlockId,
+ *    3) Appends the newly parsed blocks to the composition.
  *
- * The rest is standard block management: adding, removing, updating, token usage, flattening, etc.
+ * This allows "in-memory editing" or "flip" for a template block, letting the user see
+ * the entire raw text, modify it, and re-initialize the group from that new text. The
+ * original file on disk is not overwritten.
  */
 
 import React, {
@@ -26,6 +27,9 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Block, FilesBlock } from '../types/Block';
 import { initEncoder, estimateTokens } from '../utils/tokenizer';
 import { flattenBlocksAsync } from '../utils/flattenPrompt';
+
+// Import the parseTemplateBlocks so we can re-parse updated text if user flips a template
+import { parseTemplateBlocks } from '../utils/templateBlockParser';
 
 interface PromptSettings {
   maxTokens: number;
@@ -43,24 +47,29 @@ interface PromptContextType {
 
   addBlock: (block: Block) => void;
   addBlocks: (newBlocks: Block[]) => void;
-
   removeBlock: (blockId: string) => void;
   updateBlock: (updatedBlock: Block) => void;
   setSettings: (newSettings: PromptSettings) => void;
   moveBlock: (oldIndex: number, newIndex: number) => void;
 
+  /**
+   * Creates or updates a single file block containing the selected file entries
+   */
   updateFileBlock: (
-    fileEntries: {
-      path: string;
-      content: string;
-      language: string;
-    }[],
+    fileEntries: { path: string; content: string; language: string }[],
     asciiMap?: string
   ) => void;
 
   tokenUsage: TokenUsage;
   getFlattenedPrompt: () => Promise<string>;
   importComposition: (newBlocks: Block[], newSettings: PromptSettings) => void;
+
+  /**
+   * Step 4: replaceTemplateGroup
+   * Given a leadBlockId, groupId, and new raw text, remove all old blocks with that groupId,
+   * parse the new text (forcing the same groupId), then ensure the first block has leadBlockId.
+   */
+  replaceTemplateGroup: (leadBlockId: string, groupId: string, newText: string) => void;
 }
 
 const defaultSettings: PromptSettings = {
@@ -80,7 +89,8 @@ const PromptContext = createContext<PromptContextType>({
   updateFileBlock: () => {},
   tokenUsage: { blockTokenUsage: {}, totalTokens: 0 },
   getFlattenedPrompt: async () => '',
-  importComposition: () => {}
+  importComposition: () => {},
+  replaceTemplateGroup: () => {}
 });
 
 export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
@@ -156,10 +166,6 @@ ${f.content}
     setBlocks((prev) => [...prev, block]);
   }, []);
 
-  /**
-   * addBlocks
-   * Inserts multiple blocks in the order provided. Useful for multi-block expansions.
-   */
   const addBlocks = useCallback((newBlocks: Block[]) => {
     setBlocks((prev) => [...prev, ...newBlocks]);
   }, []);
@@ -247,6 +253,30 @@ ${f.content}
     []
   );
 
+  /**
+   * Step 4: replaceTemplateGroup
+   * Removes existing blocks with the specified groupId, re-parses new text, ensures that
+   * the first block's ID matches leadBlockId, and appends them to the composition.
+   * This is the core logic behind the "flip" or "edit" in-memory template editing.
+   */
+  const replaceTemplateGroup = useCallback((leadBlockId: string, groupId: string, newText: string) => {
+    setBlocks((prevBlocks) => {
+      // 1) remove all blocks with that groupId
+      const filtered = prevBlocks.filter((b) => b.groupId !== groupId);
+
+      // 2) parse new text, forcing the same groupId
+      const newParsed = parseTemplateBlocks(newText, groupId);
+
+      // 3) if we have any parsed blocks, set the first block's ID to leadBlockId
+      if (newParsed.length > 0) {
+        newParsed[0].id = leadBlockId;
+      }
+
+      // 4) combine
+      return [...filtered, ...newParsed];
+    });
+  }, []);
+
   const contextValue: PromptContextType = {
     blocks,
     settings,
@@ -259,7 +289,8 @@ ${f.content}
     updateFileBlock,
     tokenUsage,
     getFlattenedPrompt,
-    importComposition
+    importComposition,
+    replaceTemplateGroup
   };
 
   return (

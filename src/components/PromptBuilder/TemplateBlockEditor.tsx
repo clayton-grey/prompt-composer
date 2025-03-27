@@ -2,37 +2,83 @@
 /**
  * @file TemplateBlockEditor.tsx
  * @description
- * Provides an editing interface for a "template" type block. This includes
- * a label, a multiline text area for the template content, and a list of
- * variables (with default values) used in the template.
+ * Provides an editing interface for a "template" type block. Before Step 4, we only
+ * allowed labeling, content editing, and variable editing. Now we add a "flip" or "Edit
+ * Raw Template" feature for the lead block. This allows the user to see the entire
+ * reconstructed raw template text (including placeholders like {{TEXT_BLOCK}}), edit it,
+ * and confirm to re-parse all sub-blocks in the group. This does NOT overwrite the
+ * underlying file on disk; it's purely an in-memory transformation.
  *
- * Step 6: Expand/Collapse Template Fields
- * ---------------------------------------
- * We now add a local 'collapsed' state, along with an arrow icon button
- * near the block heading. When collapsed, we hide the content textarea
- * and the variable list. This lets the user quickly minimize clutter if
- * they don't need to see the template details. The label remains visible.
+ * Step 4 Implementation:
+ *  - If block.isGroupLead, show an "Edit Raw Template" button. On click, we gather all
+ *    blocks that share this block's groupId and reconstruct the raw text from them:
+ *       e.g. for sub-block type text => {{TEXT_BLOCK}}, etc.
+ *  - The user sees a <textarea> with the entire raw text. On confirm, we call
+ *    promptContext.replaceTemplateGroup(leadBlockId=block.id, groupId=block.groupId, newText=...) 
+ *    to remove and re-parse that group. Then we exit "edit mode."
  *
- * Key Responsibilities:
- *  - Show and update the block's label
- *  - Show and update the block's template content (now hideable)
- *  - Display each variable in a simple list with default-value editing (also hideable)
- *  - Provide a simple arrow toggle to expand/collapse these sections
- *
- * Inputs:
- *  - block (TemplateBlock): The template block data
- *  - onChange (function): Callback invoked when the block data changes
- *
- * Outputs:
- *  - Renders an interactive UI allowing label, content, and variable modifications
- *
- * Edge Cases & Notes:
- *  - If the block has zero variables, the variable list remains empty
- *  - Collapsing is purely a UI convenience; no data is lost
+ * There's some existing code here for label + content + variable editing. That remains.
+ * The "flip" mode is in addition to that. 
  */
 
 import React, { ChangeEvent, useState } from 'react';
 import { TemplateBlock } from '../../types/Block';
+import { usePrompt } from '../../context/PromptContext';
+
+/**
+ * We assume these placeholders to reverse-engineer from block types:
+ *  - text block with locked => '{{TEXT_BLOCK}}'
+ *  - files block => '{{FILE_BLOCK}}'
+ *  - template block with label "Nested Template Block" => '{{TEMPLATE_BLOCK}}'
+ */
+function reconstructRawTemplateFromGroup(
+  groupId: string,
+  leadBlockId: string,
+  allBlocks: any[]
+): string {
+  // 1) Filter blocks in that group
+  const groupBlocks = allBlocks.filter((b: any) => b.groupId === groupId);
+
+  // 2) Sort them in the order they appear in the main blocks array
+  //    We'll rely on their index in allBlocks
+  const blockOrder: { block: any; index: number }[] = [];
+  allBlocks.forEach((b: any, idx: number) => {
+    if (b.groupId === groupId) {
+      blockOrder.push({ block: b, index: idx });
+    }
+  });
+  blockOrder.sort((a, b) => a.index - b.index);
+
+  // 3) Build up the raw text in sequence
+  let raw = '';
+
+  blockOrder.forEach(({ block }) => {
+    // If it's the lead block (or a template block that isn't specifically a placeholder), we treat
+    // its text as "template segment." Unless the label is "Nested Template Block."
+    if (block.type === 'template') {
+      if (block.label === 'Nested Template Block') {
+        raw += '{{TEMPLATE_BLOCK}}';
+      } else {
+        // We treat this as a chunk of literal text
+        raw += block.content;
+      }
+    } else if (block.type === 'text') {
+      // If it's locked and part of the group => we interpret it as a placeholder
+      // We assume this was originally {{TEXT_BLOCK}}
+      if (block.locked) {
+        raw += '{{TEXT_BLOCK}}';
+      } else {
+        // If it wasn't locked, it might be a lead block... but normally the lead block is template.
+        raw += block.content;
+      }
+    } else if (block.type === 'files') {
+      // We treat this as a {{FILE_BLOCK}}
+      raw += '{{FILE_BLOCK}}';
+    }
+  });
+
+  return raw;
+}
 
 interface TemplateBlockEditorProps {
   /**
@@ -50,10 +96,18 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
   block,
   onChange
 }) => {
+  const { blocks, replaceTemplateGroup } = usePrompt();
+
   /**
-   * Local state for expand/collapse
+   * Collapsed UI states from prior implementation
    */
   const [collapsed, setCollapsed] = useState<boolean>(false);
+
+  /**
+   * Step 4: Local editing ("flip") state
+   */
+  const [isEditingRaw, setIsEditingRaw] = useState<boolean>(false);
+  const [rawTemplateContent, setRawTemplateContent] = useState<string>('');
 
   /**
    * handleLabelChange
@@ -89,9 +143,71 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
     setCollapsed((prev) => !prev);
   };
 
+  /**
+   * Step 4: Flip or "Edit Raw Template" for the lead block
+   */
+  const handleEditRawClick = () => {
+    // Reconstruct from all blocks in that group
+    if (!block.groupId) {
+      console.warn('[TemplateBlockEditor] No groupId for block, cannot flip edit');
+      return;
+    }
+    const reconstructed = reconstructRawTemplateFromGroup(block.groupId, block.id, blocks);
+    setRawTemplateContent(reconstructed);
+    setIsEditingRaw(true);
+  };
+
+  /**
+   * handleRawConfirm
+   * On confirm, we call replaceTemplateGroup to re-parse everything from rawTemplateContent.
+   */
+  const handleRawConfirm = () => {
+    if (!block.groupId) return;
+    replaceTemplateGroup(block.id, block.groupId, rawTemplateContent);
+    setIsEditingRaw(false);
+  };
+
+  /**
+   * handleRawCancel
+   */
+  const handleRawCancel = () => {
+    setIsEditingRaw(false);
+  };
+
+  // If we are in raw editing mode, show only the text area + confirm/cancel
+  if (isEditingRaw) {
+    return (
+      <div className="p-3 border border-yellow-400 bg-yellow-50 rounded">
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">
+          Edit Raw Template
+        </h3>
+        <textarea
+          rows={8}
+          className="w-full rounded border-gray-300 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-100"
+          value={rawTemplateContent}
+          onChange={(e) => setRawTemplateContent(e.target.value)}
+        />
+        <div className="mt-2 flex gap-2">
+          <button
+            onClick={handleRawConfirm}
+            className="px-3 py-1 text-sm rounded bg-green-500 hover:bg-green-600 text-white"
+          >
+            Confirm
+          </button>
+          <button
+            onClick={handleRawCancel}
+            className="px-3 py-1 text-sm rounded bg-gray-400 hover:bg-gray-500 text-white"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-3 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800">
-      {/* Header Row: Label + Expand/Collapse Toggle */}
+      {/* Header Row: Label + Expand/Collapse Toggle + (Optionally) "Edit Raw" button */}
       <div className="flex items-center justify-between">
         {/* Label Field */}
         <div className="mr-2 flex-1">
@@ -136,9 +252,20 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
             </svg>
           )}
         </button>
+
+        {/* Step 4: "Edit Raw Template" button if this block is the group lead */}
+        {block.isGroupLead && (
+          <button
+            onClick={handleEditRawClick}
+            className="ml-2 px-2 py-1 bg-blue-500 text-white text-sm rounded hover:bg-blue-600"
+            title="Edit Raw Template Text"
+          >
+            Edit Raw
+          </button>
+        )}
       </div>
 
-      {/* Template details are hidden if collapsed is true */}
+      {/* Template details hidden if collapsed */}
       {!collapsed && (
         <>
           {/* Template Content */}
@@ -153,7 +280,10 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
               onChange={handleContentChange}
             />
             <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
-              Use <code className="bg-gray-100 dark:bg-gray-900 px-1 py-0.5 rounded">{"{{variableName}}"}</code> syntax for placeholders.
+              Use <code className="bg-gray-100 dark:bg-gray-900 px-1 py-0.5 rounded">
+                {"{{variableName}}"}
+              </code>{" "}
+              syntax for placeholders.
             </p>
           </div>
 
