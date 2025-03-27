@@ -3,12 +3,29 @@
  * @file PromptBuilder.tsx
  * @description
  * Provides the UI for adding text/template/file blocks, plus a toggle
- * for plain text preview and a prefab insertion. We now ensure the
- * builder area can scroll by setting "flex-1 overflow-auto" on the
- * block list container.
+ * for plain text preview. Previously, we also had an "Add Prefab" button
+ * and related state/menu for prefabs; that has now been removed.
  *
- * We'll remove the partial "min-h-0" approach from the previous step
- * and rely on the layout in App -> MainContent for the overall structure.
+ * Step 1 Changes (Refactor Prefab → Template):
+ *  - Removed all references to "prefab," including:
+ *    - Removed the "Add Prefab" button
+ *    - Removed showPrefabMenu, handleAddPrefabClick, handleInsertExamplePrefab, examplePrefab
+ *    - Removed import { parsePrefab } from '../../utils/prefabParser'
+ *  - Preserved "Add Template Block" button as is.
+ *
+ * Key Responsibilities:
+ *  - Add text blocks, add template blocks, add file block
+ *  - Toggling a plain text preview of the current prompt
+ *  - The actual layout (BlockList, PromptPreview) is below
+ *
+ * Dependencies:
+ *  - usePrompt from PromptContext for block management
+ *  - useProject from ProjectContext for file selection
+ *  - nanoid for unique IDs
+ *
+ * @notes
+ *  - The next steps will handle the consolidated “Add Template Block” pop-up and
+ *    other template logic.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -17,7 +34,6 @@ import BlockList from './BlockList';
 import { usePrompt } from '../../context/PromptContext';
 import PromptPreview from './PromptPreview';
 import { useProject } from '../../context/ProjectContext';
-import { parsePrefab } from '../../utils/prefabParser';
 
 export const PromptBuilder: React.FC = () => {
   const { addBlock, addBlocks, updateFileBlock, tokenUsage } = usePrompt();
@@ -25,6 +41,7 @@ export const PromptBuilder: React.FC = () => {
   const [showPreview, setShowPreview] = useState(false);
   const [rootFolders, setRootFolders] = useState<string[]>([]);
 
+  // Gather project root folder paths from directoryCache on mount/updates
   useEffect(() => {
     const folderPaths = Object.keys(directoryCache);
     if (folderPaths.length > 0) {
@@ -32,6 +49,9 @@ export const PromptBuilder: React.FC = () => {
     }
   }, [directoryCache]);
 
+  /**
+   * Add a new text block
+   */
   const handleAddTextBlock = () => {
     addBlock({
       id: nanoid(),
@@ -41,6 +61,9 @@ export const PromptBuilder: React.FC = () => {
     });
   };
 
+  /**
+   * Add a new template block (currently just empty content)
+   */
   const handleAddTemplateBlock = () => {
     addBlock({
       id: nanoid(),
@@ -51,6 +74,9 @@ export const PromptBuilder: React.FC = () => {
     });
   };
 
+  /**
+   * Add or update the single File Block using the selected file entries
+   */
   const handleAddFileBlock = async () => {
     const fileEntries = getSelectedFileEntries();
     if (fileEntries.length === 0) {
@@ -70,11 +96,16 @@ export const PromptBuilder: React.FC = () => {
     } catch (err) {
       console.error('[PromptBuilder] generateAsciiTree error:', err);
     }
-    // Fallback
+
+    // If generating a fancy ASCII map fails, fallback to a simple file list
     const simpleMap = generateSimpleFileList(fileEntries);
     updateFileBlock(fileEntries, simpleMap);
   };
 
+  /**
+   * Helper to find which root folder all files belong to (if any).
+   * Returns the longest matching root. If none match, returns null.
+   */
   function findRootFolderForFiles(
     files: Array<{ path: string }>,
     rootFolders: string[]
@@ -92,6 +123,9 @@ export const PromptBuilder: React.FC = () => {
     return null;
   }
 
+  /**
+   * If the fancy tree generation fails, produce a minimal listing
+   */
   function generateSimpleFileList(
     files: { path: string; content: string; language: string }[]
   ): string {
@@ -122,25 +156,10 @@ export const PromptBuilder: React.FC = () => {
     return map;
   }
 
+  /**
+   * Toggle to show/hide plain text preview
+   */
   const togglePreview = () => setShowPreview(!showPreview);
-
-  // Example prefab text
-  const examplePrefab = `The start of a template.
-This would create a user text block {{TEXT_BLOCK}}.
-This would create a {{FILE_BLOCK}}.
-And this would wrap up the template.`;
-
-  const [showPrefabMenu, setShowPrefabMenu] = useState(false);
-
-  const handleAddPrefabClick = () => {
-    setShowPrefabMenu(!showPrefabMenu);
-  };
-
-  const handleInsertExamplePrefab = () => {
-    setShowPrefabMenu(false);
-    const newBlocks = parsePrefab(examplePrefab);
-    addBlocks(newBlocks);
-  };
 
   return (
     <div className="flex flex-col h-full">
@@ -169,12 +188,7 @@ And this would wrap up the template.`;
             >
               Add File Block
             </button>
-            <button
-              onClick={handleAddPrefabClick}
-              className="px-4 py-2 bg-orange-500 text-white rounded hover:bg-orange-600"
-            >
-              Add Prefab
-            </button>
+            {/* Removed the "Add Prefab" button */}
             <button
               onClick={togglePreview}
               className="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600"
@@ -182,21 +196,6 @@ And this would wrap up the template.`;
               {showPreview ? 'Hide Plain Text View' : 'Show Plain Text View'}
             </button>
           </div>
-
-          {showPrefabMenu && (
-            <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-700 shadow-lg rounded z-50">
-              <ul className="py-1">
-                <li>
-                  <button
-                    onClick={handleInsertExamplePrefab}
-                    className="w-full text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 dark:text-gray-200"
-                  >
-                    Insert Example Prefab
-                  </button>
-                </li>
-              </ul>
-            </div>
-          )}
         </div>
       </div>
 

@@ -1,47 +1,64 @@
 
 /**
- * @file prefabParser.ts
+ * @file templateBlockParser.ts
  * @description
- * Implements a parsing function for "prefab templates." A prefab template is
- * a single multiline string that may contain placeholders like {{TEXT_BLOCK}},
- * {{FILE_BLOCK}}, or {{TEMPLATE_BLOCK}}. We split the text around these placeholders,
- * creating a series of locked blocks. 
+ * Implements a parsing function for multi-block template expansions. Previously this was
+ * "prefabParser.ts" and used "prefab" terminology. Now we unify everything under "template."
  *
- * In addition, we group them into a single "groupId" so that they move and delete
- * as a unit. The FIRST block is assigned isGroupLead=true, so only it can show
- * reorder/delete controls. The rest are isGroupLead=false, meaning they follow
- * the group lead's ordering.
+ * Key Responsibilities:
+ *  - Parse a single multiline text (sourceText) that may contain placeholders like {{TEXT_BLOCK}},
+ *    {{FILE_BLOCK}}, or {{TEMPLATE_BLOCK}}. We split the text around these placeholders,
+ *    creating locked blocks that share a groupId.
+ *  - The first block in that group is the "group lead" (isGroupLead = true), allowing reorder or delete
+ *    of the entire group. All others are locked to that group.
+ *
+ * Placeholder patterns:
+ *    {{TEXT_BLOCK}}    -> Creates a new text block
+ *    {{FILE_BLOCK}}    -> Creates a new file block
+ *    {{TEMPLATE_BLOCK}}-> Creates a new template block
+ *
+ * Implementation Details:
+ *  - We assign a unique groupId to all blocks created from this source text.
+ *  - For any plain text between placeholders, we create a locked TemplateBlock to hold that text.
+ *  - The placeholders themselves produce a text, file, or nested template block, each locked as well.
+ *  - The user cannot reorder or delete these blocks individually outside the group.
+ *
+ * @notes
+ *  - This is an in-memory expansion only; a future "Flip" editing may let users alter the text post-hoc.
  */
 
 import { v4 as uuidv4 } from 'uuid';
 import { Block, TemplateBlock, TextBlock, FilesBlock } from '../types/Block';
 
-export function parsePrefab(prefabText: string): Block[] {
-  // Regex to match placeholders like {{TEXT_BLOCK}}, etc.
+/**
+ * parseTemplateBlocks
+ * @param sourceText - A multiline string with placeholders like {{TEXT_BLOCK}} or {{FILE_BLOCK}}
+ * @returns an array of Block objects, each locked and sharing a groupId.
+ *          The first block has isGroupLead = true.
+ */
+export function parseTemplateBlocks(sourceText: string): Block[] {
+  // Regex to match placeholders like {{TEXT_BLOCK}}, {{FILE_BLOCK}}, or {{TEMPLATE_BLOCK}}
   const placeholderRegex = /(\{\{(TEXT_BLOCK|FILE_BLOCK|TEMPLATE_BLOCK)\}\})/g;
 
   const blocks: Block[] = [];
   let currentIndex = 0;
   let match: RegExpExecArray | null;
 
-  // We'll assign a unique group ID for all blocks in this prefab.
+  // Unique group ID for all blocks in this template expansion
   const groupId = uuidv4();
+  let hasLead = false; // tracks if we've assigned a "group lead" block
 
-  // We'll track whether we've assigned a group lead yet.
-  let hasLead = false;
-
-  // Helper to create new IDs for each block
+  // Helper: generate new IDs
   const newId = () => uuidv4();
 
   /**
-   * Helper: createTextBlockSegment
-   * Returns a TemplateBlock with the given text as content, locked, same groupId.
+   * Creates a locked TemplateBlock for any plain text segment
    */
   function createTextBlockSegment(textSegment: string): TemplateBlock {
     return {
       id: newId(),
       type: 'template',
-      label: 'Prefab Template Block',
+      label: 'Template Segment',
       content: textSegment,
       variables: [],
       locked: true,
@@ -50,16 +67,15 @@ export function parsePrefab(prefabText: string): Block[] {
     };
   }
 
-  while ((match = placeholderRegex.exec(prefabText)) !== null) {
+  while ((match = placeholderRegex.exec(sourceText)) !== null) {
     const placeholderFull = match[1]; // e.g. "{{TEXT_BLOCK}}"
     const placeholderType = match[2]; // e.g. "TEXT_BLOCK"
     const matchIndex = match.index;
 
     // 1) Capture the text leading up to this placeholder
-    const textSegment = prefabText.slice(currentIndex, matchIndex);
+    const textSegment = sourceText.slice(currentIndex, matchIndex);
     if (textSegment.trim().length > 0) {
       const textBlock = createTextBlockSegment(textSegment);
-      // If we haven't chosen a lead yet, make this block the lead
       if (!hasLead) {
         textBlock.isGroupLead = true;
         hasLead = true;
@@ -111,11 +127,11 @@ export function parsePrefab(prefabText: string): Block[] {
         break;
       }
       default:
-        // Fallback
+        // Fallback (shouldn't happen given our regex)
         const fallbackBlock: TemplateBlock = {
           id: newId(),
           type: 'template',
-          label: 'Unknown Prefab Placeholder',
+          label: 'Unknown Template Placeholder',
           content: placeholderFull,
           variables: [],
           locked: true,
@@ -126,7 +142,7 @@ export function parsePrefab(prefabText: string): Block[] {
         break;
     }
 
-    // If we haven't chosen a lead yet, let's mark this placeholder block as lead
+    // If we haven't assigned a lead yet, do it now
     if (!hasLead) {
       placeholderBlock.isGroupLead = true;
       hasLead = true;
@@ -137,8 +153,8 @@ export function parsePrefab(prefabText: string): Block[] {
   }
 
   // 3) Handle any trailing text after the last placeholder
-  if (currentIndex < prefabText.length) {
-    const trailingText = prefabText.slice(currentIndex);
+  if (currentIndex < sourceText.length) {
+    const trailingText = sourceText.slice(currentIndex);
     if (trailingText.trim().length > 0) {
       const trailingBlock = createTextBlockSegment(trailingText);
       if (!hasLead) {

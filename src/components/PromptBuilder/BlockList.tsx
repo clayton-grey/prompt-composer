@@ -2,28 +2,25 @@
 /**
  * @file BlockList.tsx
  * @description
- * We revert to a simpler approach: we list blocks in order. 
+ * We list blocks in order, each with its own editor. Blocks can be reordered or deleted,
+ * but if they share a groupId, they must move or delete as a single unit.
+ *
  * For each block:
- *   - If it has a groupId, we treat it as part of a prefab:
+ *   - If it has a groupId, we treat it as part of a multi-block group:
  *       - If isGroupLead: show reorder/delete for the entire group
  *       - If not lead: no reorder/delete
  *   - If it has no groupId: it's a standalone block with reorder/delete (unless locked).
  *
- * We still want to reorder the entire group if we move the lead block. We'll gather all
- * blocks that share that groupId, move them as a chunk. If the block is standalone (no groupId),
- * we just move that single block. 
- * Deletion is likewise chunk-based if there's a groupId lead, or single if no group.
- *
- * This approach ensures the user can reorder or delete normal blocks (not locked). If a block is locked
- * but no groupId, it's individually locked. If a block is locked and has a groupId, that means it's
- * from a prefab. 
- *
  * Implementation details:
  *   - "moveBlockUp / moveBlockDown" either moves one block or the entire group in the array.
  *   - "deleteBlock" either deletes that single block or the entire group if groupId is set (and isGroupLead).
+ *
+ * This approach ensures the user can reorder or delete normal blocks (not locked) individually.
+ * If a block is locked and has a groupId, that means it's part of a multi-block template group,
+ * which moves/deletes together.
  */
 
-import React, { useEffect, useCallback } from 'react';
+import React, { useEffect } from 'react';
 import { usePrompt } from '../../context/PromptContext';
 import type { Block } from '../../types/Block';
 import BlockEditor from './BlockEditor';
@@ -33,8 +30,8 @@ const BlockList: React.FC = () => {
 
   /**
    * findGroupRange
-   * If the block has a groupId, gather the range of consecutive blocks that share that groupId.
-   * Returns [startIndex, endIndex].
+   * If the block has a groupId, gather all blocks that share that groupId.
+   * We'll return the min and max indices so we can move them as a chunk.
    */
   const findGroupRange = (startIdx: number): [number, number] => {
     const b = blocks[startIdx];
@@ -43,15 +40,7 @@ const BlockList: React.FC = () => {
       return [startIdx, startIdx];
     }
     const gid = b.groupId;
-    // We want to find all consecutive blocks from 'startIdx' onward that share groupId,
-    // and also from 'startIdx' backward. However, the user might not want them scattered
-    // if the user inserted them in certain ways. Usually prefab blocks are consecutive,
-    // but let's be certain. We'll gather *all* blocks in the entire array that share groupId.
-    // The user specifically wants them to move as a chunk. We can do a simpler approach:
-    // We'll find all blocks with groupId in the entire array. We'll find the min index and max index
-    // among them. That means the group is not necessarily consecutive, but let's do it anyway,
-    // because the user wants them all to move together.
-    // So let's gather indices:
+    // gather indices of all blocks in this array that share the same groupId
     const indices = blocks.map((x, i) => ({ block: x, idx: i }))
       .filter(x => x.block.groupId === gid)
       .map(x => x.idx);
@@ -62,83 +51,69 @@ const BlockList: React.FC = () => {
 
   /**
    * handleMoveUp
-   * If the block is group lead, we move the entire group. Otherwise, if it's a normal block, we move it alone.
+   * If block is group lead, move the entire group. Otherwise move just the block.
    */
   const handleMoveUp = (index: number) => {
     if (index <= 0) return;
     const block = blocks[index];
     if (block.groupId && block.isGroupLead) {
-      // move entire group
       const [groupStart, groupEnd] = findGroupRange(index);
       if (groupStart <= 0) return;
-      // Move the entire chunk up by 1
-      // We'll do a naive approach: move each block in that chunk one step up, from groupStart to groupEnd
-      // But we want them to remain consecutive. The easiest is to do a "remove chunk then reinsert" approach
       reorderChunk(groupStart, groupEnd, 'up');
     } else if (!block.groupId && !block.locked) {
-      // single block, move up
       moveBlock(index, index - 1);
     }
   };
 
+  /**
+   * handleMoveDown
+   */
   const handleMoveDown = (index: number) => {
     if (index >= blocks.length - 1) return;
     const block = blocks[index];
     if (block.groupId && block.isGroupLead) {
-      // move entire group
       const [groupStart, groupEnd] = findGroupRange(index);
       if (groupEnd >= blocks.length - 1) return;
       reorderChunk(groupStart, groupEnd, 'down');
     } else if (!block.groupId && !block.locked) {
-      // single block
       moveBlock(index, index + 1);
     }
   };
 
   /**
    * reorderChunk
-   * Moves the chunk [start, end] up or down by 1 in the array of blocks, preserving order within the chunk.
+   * Moves the chunk [start, end] up or down by 1 in blocks array
    */
   const reorderChunk = (start: number, end: number, direction: 'up' | 'down') => {
-    // We'll do a local array copy, remove the chunk, then reinsert.
     const newBlocks = [...blocks];
-    const chunk = newBlocks.splice(start, end - start + 1); // the chunk
-
+    const chunk = newBlocks.splice(start, end - start + 1);
     if (direction === 'up') {
-      // reinsert at start-1
       newBlocks.splice(start - 1, 0, ...chunk);
     } else {
-      // reinsert at end+1
       newBlocks.splice(start + 1, 0, ...chunk);
     }
-
-    // Now we remove everything from the context in the old order, then re-add them in the new order:
-    // We'll do a quick hack: removeBlock from the end forward, then add them in new order. 
-    // This is what we did previously. It's a bit hacky but works for now.
+    // forcibly reset context blocks
     const oldBlocks = [...blocks];
     for (let i = oldBlocks.length - 1; i >= 0; i--) {
       removeBlock(oldBlocks[i].id);
     }
     for (const b of newBlocks) {
-      // We can do addBlock(b) if we have addBlock. We'll replicate the block data. 
-      // We'll do a small omit or keep it as is. 
       addBlock({ ...b });
     }
   };
 
   /**
    * handleDelete
-   * If the block is group lead, we delete the entire group. Else if it's a single block, delete it alone.
+   * If block is group lead, we delete the entire group. Otherwise, just the single block.
    */
   const handleDelete = (index: number) => {
     const block = blocks[index];
     if (block.groupId && block.isGroupLead) {
-      // delete entire group
       const [groupStart, groupEnd] = findGroupRange(index);
-      const groupSize = groupEnd - groupStart + 1;
+      const size = groupEnd - groupStart + 1;
       const newBlocks = [...blocks];
-      newBlocks.splice(groupStart, groupSize);
-      // forcibly replace in context
+      newBlocks.splice(groupStart, size);
+
       const oldBlocks = [...blocks];
       for (let i = oldBlocks.length - 1; i >= 0; i--) {
         removeBlock(oldBlocks[i].id);
@@ -147,7 +122,6 @@ const BlockList: React.FC = () => {
         addBlock({ ...b });
       }
     } else if (!block.groupId && !block.locked) {
-      // single block
       removeBlock(block.id);
     }
   };
@@ -162,12 +136,9 @@ const BlockList: React.FC = () => {
         const isFirst = index === 0;
         const isLast = index === blocks.length - 1;
 
-        // Determine if we show reorder/delete:
         let canReorderOrDelete = false;
-
-        // If block is locked => no
         if (!block.locked) {
-          // If block.groupId => only if block.isGroupLead => reorder entire group
+          // If block.groupId => only if isGroupLead => reorder entire group
           if (block.groupId) {
             if (block.isGroupLead) {
               canReorderOrDelete = true;

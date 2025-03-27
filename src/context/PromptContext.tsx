@@ -3,13 +3,15 @@
  * @file PromptContext.tsx
  * @description
  * Provides global state management for the Prompt Composer's prompt blocks and settings.
- * We now support an `addBlocks()` method that can insert multiple blocks in sequence.
+ * We now support an `addBlocks()` method that can insert multiple blocks in sequence, useful
+ * for multi-block template expansions.
  *
- * Key changes for enabling prefab templates:
- *  - Introduced addBlocks(newBlocks: Block[]): Adds an array of blocks (e.g. from prefab parsing)
- *    to the current list in the order provided.
+ * Key changes for enabling multi-block template expansions:
+ *  - Introduced addBlocks(...) to insert multiple grouped blocks at once.
+ *  - A "groupId" on blocks identifies them as part of a multi-block group, with the first (isGroupLead)
+ *    block controlling reorder/delete of the entire group.
  *
- * The rest is unchanged from the previous steps, except for the new addBlocks function.
+ * The rest is standard block management: adding, removing, updating, token usage, flattening, etc.
  */
 
 import React, {
@@ -40,9 +42,6 @@ interface PromptContextType {
   settings: PromptSettings;
 
   addBlock: (block: Block) => void;
-  /**
-   * addBlocks inserts multiple blocks at once in sequence.
-   */
   addBlocks: (newBlocks: Block[]) => void;
 
   removeBlock: (blockId: string) => void;
@@ -159,7 +158,7 @@ ${f.content}
 
   /**
    * addBlocks
-   * Inserts multiple blocks in the order provided. Useful for prefab expansions.
+   * Inserts multiple blocks in the order provided. Useful for multi-block expansions.
    */
   const addBlocks = useCallback((newBlocks: Block[]) => {
     setBlocks((prev) => [...prev, ...newBlocks]);
@@ -188,6 +187,10 @@ ${f.content}
     });
   }, []);
 
+  /**
+   * updateFileBlock
+   * Creates or updates a single file block containing the selected file entries
+   */
   const updateFileBlock = useCallback(
     (fileEntries: { path: string; content: string; language: string }[], asciiMap?: string) => {
       setBlocks((prev) => {
@@ -223,11 +226,19 @@ ${f.content}
     []
   );
 
+  /**
+   * getFlattenedPrompt
+   * Returns a single multiline string that merges all blocks with nested template expansions
+   */
   const getFlattenedPrompt = useCallback(async (): Promise<string> => {
     const flattened = await flattenBlocksAsync(blocks);
     return flattened;
   }, [blocks]);
 
+  /**
+   * importComposition
+   * Replaces existing blocks and settings with those from an imported composition
+   */
   const importComposition = useCallback(
     (newBlocks: Block[], newSettings: PromptSettings) => {
       setBlocks(newBlocks);
