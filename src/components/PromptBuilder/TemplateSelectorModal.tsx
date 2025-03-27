@@ -2,16 +2,23 @@
 /**
  * @file TemplateSelectorModal.tsx
  * @description
- * A modal component that displays a consolidated list of template files from
- * global + project .prompt-composer directories. Step 3 changes:
- *  - We now retrieve the active project folders from ProjectContext and pass them
- *    to electronAPI.listAllTemplateFiles({ projectFolders }).
- *  - This ensures that if a folder is removed from the context, its templates
- *    won't appear.
+ * A modal component that displays a consolidated list of template files
+ * from global + project .prompt-composer directories. Upon user selection,
+ * it reads the file content and uses our parser to generate blocks.
+ *
+ * Previously, it imported "parseTemplateBlocks" from "templateBlockParser.ts".
+ * Now we import "parseTemplateBlocksAsync" from "templateBlockParserAsync.ts"
+ * so that nested templates are expanded at parse time.
+ *
+ * Implementation details:
+ *  - On open, fetch list of templates from electronAPI.listAllTemplateFiles(...)
+ *  - Display them in a scrollable list. 
+ *  - On select, read the chosen file content, parse it, and call onInsertBlocks(parsedBlocks).
+ *  - Then close the modal.
  */
 
 import React, { useEffect, useState } from 'react';
-import { parseTemplateBlocks } from '../../utils/templateBlockParser';
+import { parseTemplateBlocksAsync } from '../../utils/templateBlockParserAsync';
 import { Block } from '../../types/Block';
 import { useProject } from '../../context/ProjectContext';
 
@@ -34,15 +41,14 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   const [templateFiles, setTemplateFiles] = useState<TemplateFileEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Step 3: we get projectFolders from context
+  // We read from project context to get the currently tracked projectFolders
   const { projectFolders } = useProject();
 
   useEffect(() => {
     if (isOpen) {
-      // When modal opens, fetch the list of template files
       loadTemplates();
     } else {
-      // If modal closes, reset
+      // reset
       setTemplateFiles([]);
       setLoading(true);
     }
@@ -57,10 +63,8 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
         setLoading(false);
         return;
       }
-
-      // Pass current projectFolders
+      // pass current projectFolders
       const files = await window.electronAPI.listAllTemplateFiles({ projectFolders });
-      // Sort them alphabetically
       const sorted = files.slice().sort((a, b) => a.fileName.localeCompare(b.fileName));
       setTemplateFiles(sorted);
     } catch (err) {
@@ -77,11 +81,6 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
       if (entry.source === 'global') {
         content = await window.electronAPI.readGlobalPromptComposerFile(entry.fileName);
       } else {
-        // 'project'
-        // We read from "some" project .prompt-composer. Actually the electron side
-        // tries each project folder. But there's no direct single path read here,
-        // so we do the default "readPromptComposerFile" from process.cwd() if needed.
-        // This is a known limitation. We keep the logic as is for now:
         content = await window.electronAPI.readPromptComposerFile(entry.fileName);
       }
       if (!content) {
@@ -89,25 +88,26 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
         return;
       }
 
-      const parsedBlocks = parseTemplateBlocks(content);
+      // Now parse the file content using the new async parser
+      const parsedBlocks = await parseTemplateBlocksAsync(content);
+
+      // Insert the resulting blocks into the composition
       onInsertBlocks(parsedBlocks);
+
+      // Close the modal
       onClose();
     } catch (err) {
       console.error('[TemplateSelectorModal] handleSelectTemplate error:', err);
     }
   }
 
-  if (!isOpen) {
-    return null;
-  }
+  if (!isOpen) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
       onClick={(e) => {
-        if (e.target === e.currentTarget) {
-          onClose();
-        }
+        if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
@@ -161,4 +161,3 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
 };
 
 export default TemplateSelectorModal;
-

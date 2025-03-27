@@ -4,12 +4,10 @@
  * @description
  * Provides global state management for the Prompt Composer's prompt blocks and settings.
  *
- * Updated to support:
- *  - replaceTemplateGroup with a splice-based approach to preserve block order exactly,
- *    so if a user flips a template (group) at index 2, we remove that group's blocks
- *    and reinsert the new blocks starting at index 2. This ensures other blocks remain
- *    below it or above it as is.
- *  - Skips re-parsing if the raw content is unchanged on confirm.
+ * Updated to:
+ *  - Use parseTemplateBlocksAsync for nested expansions at parse time, 
+ *    so nested templates become actual sub-blocks rather than placeholders.
+ *  - replaceTemplateGroup is now async, we do an await parse before splicing blocks.
  */
 
 import React, {
@@ -24,7 +22,9 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Block, FilesBlock } from '../types/Block';
 import { initEncoder, estimateTokens } from '../utils/tokenizer';
 import { flattenBlocksAsync } from '../utils/flattenPrompt';
-import { parseTemplateBlocks } from '../utils/templateBlockParser';
+
+// Replaced import from old parser with new async parser
+import { parseTemplateBlocksAsync } from '../utils/templateBlockParserAsync';
 
 interface PromptSettings {
   maxTokens: number;
@@ -58,10 +58,15 @@ interface PromptContextType {
 
   /**
    * replaceTemplateGroup
-   * Removes existing blocks with that groupId, splices new blocks in at the lead block's position.
-   * If the newText is unchanged from the old raw text, we skip re-parsing entirely.
+   * Async, removing old group blocks and splicing in newly parsed blocks.
+   * If newText === oldRawText, we skip re-parse. 
    */
-  replaceTemplateGroup: (leadBlockId: string, groupId: string, newText: string, oldRawText: string) => void;
+  replaceTemplateGroup: (
+    leadBlockId: string,
+    groupId: string,
+    newText: string,
+    oldRawText: string
+  ) => Promise<void>;
 }
 
 const defaultSettings: PromptSettings = {
@@ -82,7 +87,7 @@ const PromptContext = createContext<PromptContextType>({
   tokenUsage: { blockTokenUsage: {}, totalTokens: 0 },
   getFlattenedPrompt: async () => '',
   importComposition: () => {},
-  replaceTemplateGroup: () => {}
+  replaceTemplateGroup: async () => {}
 });
 
 export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
@@ -100,7 +105,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     initEncoder(settings.model);
   }, [settings.model]);
 
-  // Debounced token usage recalculation
+  // Recalc tokens
   useEffect(() => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
@@ -152,7 +157,7 @@ ${f.content}
     };
   }, [blocks, settings.model]);
 
-  // CRUD actions for blocks
+  // CRUD
   const addBlock = useCallback((block: Block) => {
     setBlocks((prev) => [...prev, block]);
   }, []);
@@ -184,10 +189,6 @@ ${f.content}
     });
   }, []);
 
-  /**
-   * updateFileBlock
-   * Creates or updates a single file block containing the selected file entries
-   */
   const updateFileBlock = useCallback(
     (fileEntries: { path: string; content: string; language: string }[], asciiMap?: string) => {
       setBlocks((prev) => {
@@ -215,7 +216,7 @@ ${f.content}
         } else {
           const newBlocks = [...prev];
           newBlocks[existingIndex] = candidate;
-          // remove any other file blocks
+          // remove any others
           return newBlocks.filter((b, idx) => (b.type !== 'files' || idx === existingIndex));
         }
       });
@@ -223,19 +224,11 @@ ${f.content}
     []
   );
 
-  /**
-   * getFlattenedPrompt
-   * Returns a single multiline string that merges all blocks with nested expansions
-   */
   const getFlattenedPrompt = useCallback(async (): Promise<string> => {
     const flattened = await flattenBlocksAsync(blocks);
     return flattened;
   }, [blocks]);
 
-  /**
-   * importComposition
-   * Replaces existing blocks and settings with those from an imported composition
-   */
   const importComposition = useCallback(
     (newBlocks: Block[], newSettings: PromptSettings) => {
       setBlocks(newBlocks);
@@ -244,17 +237,11 @@ ${f.content}
     []
   );
 
-  /**
-   * replaceTemplateGroup
-   * If newText is identical to oldRawText, we do nothing, else we parse new text
-   * removing the old group's blocks and splicing in the newly parsed blocks
-   * at the same index the lead block was previously.
-   */
+  // replaceTemplateGroup => now async
   const replaceTemplateGroup = useCallback(
-    (leadBlockId: string, groupId: string, newText: string, oldRawText: string) => {
-      // 1) If the text is unchanged, skip
+    async (leadBlockId: string, groupId: string, newText: string, oldRawText: string) => {
       if (newText === oldRawText) {
-        // Simply find the lead block and set editingRaw=false if it's still set
+        // skip
         setBlocks((prev) => {
           return prev.map((b) => {
             if (b.id === leadBlockId && b.editingRaw) {
@@ -266,8 +253,9 @@ ${f.content}
         return;
       }
 
+      // find the old group
       setBlocks((prev) => {
-        // Find the index range of the group
+        // gather indices
         const groupIndices = [];
         for (let i = 0; i < prev.length; i++) {
           if (prev[i].groupId === groupId) {
@@ -275,20 +263,34 @@ ${f.content}
           }
         }
         if (groupIndices.length === 0) {
-          // No blocks in that group, do nothing
+          // no blocks to remove
           return prev;
         }
+        // parse new text
+        // We'll do this parse outside setState so we can splice it in
+        return prev;
+      });
 
+      const newParsed = await parseTemplateBlocksAsync(newText, groupId, leadBlockId);
+      
+      // Now we splice them in
+      setBlocks((prev) => {
+        const groupIndices = [];
+        for (let i = 0; i < prev.length; i++) {
+          if (prev[i].groupId === groupId) {
+            groupIndices.push(i);
+          }
+        }
+        if (groupIndices.length === 0) {
+          // no blocks to remove
+          // just add newParsed at the end?
+          return [...prev, ...newParsed];
+        }
         const startIndex = Math.min(...groupIndices);
         const endIndex = Math.max(...groupIndices);
 
-        // Parse the new text
-        const newBlocks = parseTemplateBlocks(newText, groupId, leadBlockId);
-
-        // Remove [startIndex..endIndex], then splice in newBlocks at startIndex
         const updated = [...prev];
-        updated.splice(startIndex, endIndex - startIndex + 1, ...newBlocks);
-
+        updated.splice(startIndex, endIndex - startIndex + 1, ...newParsed);
         return updated;
       });
     },
