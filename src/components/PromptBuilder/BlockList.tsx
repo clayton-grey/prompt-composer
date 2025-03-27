@@ -6,37 +6,27 @@
  * but if they share a groupId, they move/delete as a single unit. We also handle special icons:
  *  - Move Up/Down
  *  - Block vs. Template Delete
- *  - Raw Edit icon (pencil) for template group leads only
+ *  - Raw Edit icon (pencil) for template block leads only
  *
- * Step X changes:
- *  - Swapped out the old text-based "Up / Down / Delete" buttons for the new SVG icons:
- *    move-up-icon, move-down-icon, and square-x-icon or grid-2x2-x-icon for template block leads.
- *  - Added a bottom-right floating pencil (raw edit) icon for template block leads only, hidden by default,
- *    shown on hover with absolute positioning inside the block container.
- *  - Removed the old "Edit Raw" top-right button from TemplateBlockEditor (we let the parent handle it).
+ * Step 2 Changes:
+ *  - We remove the inline reorder logic (findGroupRange, reorderChunk) and place it in a separate
+ *    file called blockReorderHelpers.ts. We import findGroupRange and reorderBlocksInRange from there.
+ *  - The rest of the logic remains the same, ensuring no user-facing changes.
  */
 
 import React, { useEffect } from 'react';
 import { usePrompt } from '../../context/PromptContext';
 import type { Block } from '../../types/Block';
 import BlockEditor from './BlockEditor';
-
-function findGroupRange(blocks: Block[], startIdx: number): [number, number] {
-  const b = blocks[startIdx];
-  if (!b.groupId) return [startIdx, startIdx];
-  const gid = b.groupId;
-  const indices = blocks
-    .map((x, i) => ({ block: x, idx: i }))
-    .filter((x) => x.block.groupId === gid)
-    .map((x) => x.idx);
-  const minI = Math.min(...indices);
-  const maxI = Math.max(...indices);
-  return [minI, maxI];
-}
+// Import from our new helper
+import { findGroupRange, reorderBlocksInRange } from '../../utils/blockReorderHelpers';
 
 /**
  * getBlockTailClass
  * Returns the pastel color classes for the block background + tail, by block type.
+ * 
+ * @param block - The block whose style we are determining
+ * @returns The combined className string for styling
  */
 function getBlockTailClass(block: Block): string {
   switch (block.type) {
@@ -52,15 +42,23 @@ function getBlockTailClass(block: Block): string {
 }
 
 /**
+ * renderDeleteIcon
  * Renders the correct SVG for the delete button:
- *  - If it's a group lead template block, show the template delete icon
+ *  - If it's a template block lead, show the "template delete" icon
  *  - Otherwise, show the standard block delete icon
+ *
+ * @param block - The block being considered
+ * @param onClick - The click handler to invoke on delete
+ * @returns JSX for the delete icon
  */
 function renderDeleteIcon(block: Block, onClick: () => void) {
   // If it's a template block lead, we show the "template delete" icon
   if (block.type === 'template' && block.isGroupLead) {
     return (
-      <button onClick={onClick} className="p-1 text-gray-700 dark:text-gray-200 hover:bg-red-100 dark:hover:bg-red-600 rounded">
+      <button
+        onClick={onClick}
+        className="p-1 text-gray-700 dark:text-gray-200 hover:bg-red-100 dark:hover:bg-red-600 rounded"
+      >
         {/* Template delete icon (grid2x2-x) */}
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -84,7 +82,10 @@ function renderDeleteIcon(block: Block, onClick: () => void) {
 
   // Otherwise, standard block delete icon (square-x)
   return (
-    <button onClick={onClick} className="p-1 text-gray-700 dark:text-gray-200 hover:bg-red-100 dark:hover:bg-red-600 rounded">
+    <button
+      onClick={onClick}
+      className="p-1 text-gray-700 dark:text-gray-200 hover:bg-red-100 dark:hover:bg-red-600 rounded"
+    >
       {/* block delete icon (square-x) */}
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -109,59 +110,92 @@ function renderDeleteIcon(block: Block, onClick: () => void) {
 const BlockList: React.FC = () => {
   const { blocks, addBlock, removeBlock, updateBlock, moveBlock, replaceTemplateGroup } = usePrompt();
 
+  /**
+   * handleMoveUp
+   * Moves the block or block group at index up one position if possible.
+   *
+   * @param index - The index of the block to move
+   */
   const handleMoveUp = (index: number) => {
     if (index <= 0) return;
     const block = blocks[index];
+
+    // If it's a group lead, we find the group range
     if (block.groupId && block.isGroupLead) {
       const [groupStart, groupEnd] = findGroupRange(blocks, index);
       if (groupStart <= 0) return;
       reorderChunk(groupStart, groupEnd, 'up');
     } else if (!block.groupId && !block.locked) {
+      // Single block, just move up
       moveBlock(index, index - 1);
     }
   };
 
+  /**
+   * handleMoveDown
+   * Moves the block or block group at index down one position if possible.
+   *
+   * @param index - The index of the block to move
+   */
   const handleMoveDown = (index: number) => {
     if (index >= blocks.length - 1) return;
     const block = blocks[index];
+
     if (block.groupId && block.isGroupLead) {
       const [groupStart, groupEnd] = findGroupRange(blocks, index);
       if (groupEnd >= blocks.length - 1) return;
       reorderChunk(groupStart, groupEnd, 'down');
     } else if (!block.groupId && !block.locked) {
+      // Single block, just move down
       moveBlock(index, index + 1);
     }
   };
 
-  const reorderChunk = (start: number, end: number, direction: 'up' | 'down') => {
-    const newBlocks = [...blocks];
-    const chunk = newBlocks.splice(start, end - start + 1);
-    if (direction === 'up') {
-      newBlocks.splice(start - 1, 0, ...chunk);
-    } else {
-      newBlocks.splice(start + 1, 0, ...chunk);
-    }
+  /**
+   * reorderChunk
+   * Internal function to reorder a chunk of blocks from start->end up or down by one step.
+   * After computing the new array, we remove all old blocks, then add them back in the new order.
+   *
+   * @param start - starting index of the chunk
+   * @param end - ending index of the chunk
+   * @param direction - 'up' or 'down'
+   */
+  function reorderChunk(start: number, end: number, direction: 'up' | 'down') {
+    const newBlocks = reorderBlocksInRange(blocks, start, end, direction);
+
+    // Remove all old blocks from the PromptContext
     const oldBlocks = [...blocks];
     for (let i = oldBlocks.length - 1; i >= 0; i--) {
       removeBlock(oldBlocks[i].id);
     }
+
+    // Add the updated blocks back
     for (const b of newBlocks) {
       addBlock({ ...b });
     }
-  };
+  }
 
+  /**
+   * handleDelete
+   * Deletes a block or block group from the composition.
+   * 
+   * @param index - The index of the block to delete
+   */
   const handleDelete = (index: number) => {
     const block = blocks[index];
+
     if (block.groupId && block.isGroupLead) {
       const [groupStart, groupEnd] = findGroupRange(blocks, index);
       const size = groupEnd - groupStart + 1;
       const newBlocks = [...blocks];
       newBlocks.splice(groupStart, size);
 
+      // Clear old blocks
       const oldBlocks = [...blocks];
       for (let i = oldBlocks.length - 1; i >= 0; i--) {
         removeBlock(oldBlocks[i].id);
       }
+      // Add the new array back
       for (const b of newBlocks) {
         addBlock({ ...b });
       }
@@ -171,11 +205,10 @@ const BlockList: React.FC = () => {
   };
 
   /**
-   * Raw edit flow:
-   * We replicate the logic that used to be in TemplateBlockEditor.
-   * This button only appears for template block leads.
-   * On click, we set block.editingRaw = true, then the user sees the raw editor
-   * in TemplateBlockEditor. 
+   * handleRawEdit
+   * Toggles raw edit mode for a template block lead.
+   *
+   * @param block - The block to flip into raw editing
    */
   const handleRawEdit = (block: Block) => {
     // Only valid for template leads
@@ -183,10 +216,15 @@ const BlockList: React.FC = () => {
     updateBlock({ ...block, editingRaw: true });
   };
 
+  // Debugging: print current blocks
   useEffect(() => {
     console.log('[BlockList] current blocks:', blocks);
   }, [blocks]);
 
+  /**
+   * shouldRenderBlock
+   * If the block is in a group where the lead is editing raw, we hide all other blocks.
+   */
   function shouldRenderBlock(block: Block, index: number): boolean {
     if (block.isGroupLead && block.editingRaw) {
       return true;

@@ -3,20 +3,19 @@
  * @file ProjectContext.tsx
  * @description
  * Provides a centralized, in-memory "Project Manager" context for folder/file data,
- * tri-state selection, expansions, ASCII map generation, and now also tracks the
+ * tri-state selection, expansions, ASCII map generation, and also tracks the
  * list of "active" project folders for .prompt-composer template scanning.
  *
- * Step 3 Changes:
- *  - Introduce a `projectFolders` array in context with addProjectFolder() and removeProjectFolder().
- *  - The Sidebar will call these methods instead of keeping local state. 
- *  - Other parts (like TemplateSelectorModal) can access `projectFolders` to pass to 
- *    the new `listAllTemplateFiles({ projectFolders })` call, ensuring that if a folder is
- *    removed, its templates won't appear in the "Add Template Block" pop-up.
+ * Step 1 changes:
+ *  - We replaced old references to '../utils/tokenizer' with '../utils/tokenEstimator'
+ *    so we only rely on one official approach for token estimation.
  *
- * Implementation:
- *  1) Add `projectFolders` to state.
- *  2) Expose addProjectFolder(folderPath: string) and removeProjectFolder(folderPath: string).
- *  3) Modify refreshFolders to handle them as well if needed.
+ * Key functionalities:
+ *  - tri-state file selection
+ *  - caching directory trees
+ *  - generating ASCII maps
+ *  - verifying file existence
+ *  - summing up tokens from selected files
  */
 
 import React, {
@@ -27,9 +26,9 @@ import React, {
   useEffect,
   useRef
 } from 'react';
-import { initEncoder, estimateTokens } from '../utils/tokenizer';
+// CHANGED HERE: was '../utils/tokenizer' => now '../utils/tokenEstimator'
+import { initEncoder, estimateTokens } from '../utils/tokenEstimator';
 
-// Window interface for electron APIs
 declare global {
   interface Window {
     electronAPI?: {
@@ -77,10 +76,6 @@ interface ProjectContextType {
   }>;
   refreshFolders: (folderPaths: string[]) => Promise<void>;
 
-  /**
-   * Step 3: Now we track projectFolders in this context so that the entire app can
-   * know which project folders are currently active for .prompt-composer scanning.
-   */
   projectFolders: string[];
   addProjectFolder: (folderPath: string) => void;
   removeProjectFolder: (folderPath: string) => void;
@@ -105,47 +100,52 @@ const ProjectContext = createContext<ProjectContextType>({
 });
 
 export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
-  // Directory cache for the tri-state file tree
   const [directoryCache, setDirectoryCache] = useState<Record<string, DirectoryListing>>({});
-
-  // Tri-state selection
   const [nodeStates, setNodeStates] = useState<Record<string, NodeState>>({});
-
-  // Expand/collapse states
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
-
-  // File path => file content for all 'all'-selected files
   const [selectedFileContents, setSelectedFileContents] = useState<Record<string, string>>({});
-
-  // Summation of tokens for all selected files
   const [selectedFilesTokenCount, setSelectedFilesTokenCount] = useState<number>(0);
 
-  // Step 3: Track the active project folders
+  // Step 3.1: track project folders
   const [projectFolders, setProjectFolders] = useState<string[]>([]);
 
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // Use GPT-4o as the default model for token estimation
+    // Initialize the encoder for the model "gpt-4o" by default (for selected files)
     initEncoder('gpt-4o');
   }, []);
 
-  // Recalculate selectedFilesTokenCount whenever selectedFileContents changes
+  // Recompute token usage for selected files
   useEffect(() => {
-    let total = 0;
-    const model = 'gpt-4o';
-    
-    for (const [filePath, content] of Object.entries(selectedFileContents)) {
-      const extMatch = filePath.match(/\.(\w+)$/);
-      const ext = extMatch ? extMatch[1] : 'txt';
-      const formatted = `<file_contents>\nFile: ${filePath}\n\`\`\`${ext}\n${content}\n\`\`\`\n</file_contents>`;
-      const fileTokens = estimateTokens(formatted, model);
-      total += fileTokens;
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
     }
+    debounceRef.current = setTimeout(() => {
+      let total = 0;
+      const model = 'gpt-4o';
 
-    // small correction factor
-    total = Math.ceil(total * 1.04);
-    setSelectedFilesTokenCount(total);
+      for (const [filePath, content] of Object.entries(selectedFileContents)) {
+        let ext = 'txt';
+        const extMatch = filePath.match(/\.(\w+)$/);
+        if (extMatch) {
+          ext = extMatch[1];
+        }
+        // Format as in final prompt
+        const formatted = `<file_contents>\nFile: ${filePath}\n\`\`\`${ext}\n${content}\n\`\`\`\n</file_contents>`;
+        const fileTokens = estimateTokens(formatted, model);
+        total += fileTokens;
+      }
+      // small correction factor
+      total = Math.ceil(total * 1.04);
+      setSelectedFilesTokenCount(total);
+    }, 300);
+
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
+    };
   }, [selectedFileContents]);
 
   const getDirectoryListing = useCallback(async (dirPath: string) => {
@@ -157,7 +157,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       return null;
     }
     try {
-      const result = (await window.electronAPI.listDirectory(dirPath)) as DirectoryListing;
+      const result = await window.electronAPI.listDirectory(dirPath);
       setDirectoryCache((prev) => ({ ...prev, [dirPath]: result }));
       return result;
     } catch (err) {
@@ -202,20 +202,6 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     }
 
     return updated[node.path];
-  }
-
-  function recalcAllRootStates(updated: Record<string, NodeState>) {
-    for (const key in directoryCache) {
-      const listing = directoryCache[key];
-      if (!listing) continue;
-      const rootNode: TreeNode = {
-        name: listing.baseName,
-        path: listing.absolutePath,
-        type: 'directory',
-        children: listing.children
-      };
-      recalcSubtreeState(rootNode, updated);
-    }
   }
 
   async function readFile(filePath: string): Promise<string> {
@@ -305,6 +291,20 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       return updated;
     });
   }, [directoryCache]);
+
+  function recalcAllRootStates(updated: Record<string, NodeState>) {
+    for (const key in directoryCache) {
+      const listing = directoryCache[key];
+      if (!listing) continue;
+      const rootNode: TreeNode = {
+        name: listing.baseName,
+        path: listing.absolutePath,
+        type: 'directory',
+        children: listing.children
+      };
+      recalcSubtreeState(rootNode, updated);
+    }
+  }
 
   const toggleExpansion = useCallback((nodePath: string) => {
     setExpandedPaths((prev) => ({
@@ -399,6 +399,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       else if (filePath.endsWith('.json')) language = 'json';
       else if (filePath.endsWith('.css')) language = 'css';
       else if (filePath.endsWith('.html')) language = 'html';
+
       results.push({ path: filePath, content, language });
     }
     return results;
@@ -435,12 +436,6 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     }
   }, [recalcAllRootStates, syncSelectedFilesFromNodeStates]);
 
-  /**
-   * Step 3: Add / remove active project folders. 
-   * If we add a folder, we store it if not already present.
-   * If we remove a folder, we remove it from the array. 
-   * This array is used by TemplateSelectorModal to fetch .prompt-composer files.
-   */
   const addProjectFolder = useCallback((folderPath: string) => {
     setProjectFolders((prev) => {
       if (!prev.includes(folderPath)) {
@@ -482,4 +477,3 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
 export function useProject(): ProjectContextType {
   return useContext(ProjectContext);
 }
-

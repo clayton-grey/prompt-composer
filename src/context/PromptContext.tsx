@@ -4,10 +4,15 @@
  * @description
  * Provides global state management for the Prompt Composer's prompt blocks and settings.
  *
- * Updated to:
- *  - Use parseTemplateBlocksAsync for nested expansions at parse time, 
- *    so nested templates become actual sub-blocks rather than placeholders.
- *  - replaceTemplateGroup is now async, we do an await parse before splicing blocks.
+ * Updated in Step 1 to unify token estimation logic:
+ *  - We now import { initEncoder, estimateTokens } from '../utils/tokenEstimator' 
+ *    instead of the old tokenizer.
+ *
+ * Key functionalities:
+ *  - Manage the array of blocks (text, template, files).
+ *  - Provide synchronous or asynchronous updates, reordering, removing, etc.
+ *  - Estimate tokens for each block in real time (with a debounce).
+ *  - Flatten the entire composition into a single string (getFlattenedPrompt).
  */
 
 import React, {
@@ -20,11 +25,10 @@ import React, {
 } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Block, FilesBlock } from '../types/Block';
-import { initEncoder, estimateTokens } from '../utils/tokenizer';
 import { flattenBlocksAsync } from '../utils/flattenPrompt';
-
-// Replaced import from old parser with new async parser
 import { parseTemplateBlocksAsync } from '../utils/templateBlockParserAsync';
+// CHANGED HERE: was '../utils/tokenizer', now official tokenEstimator
+import { initEncoder, estimateTokens } from '../utils/tokenEstimator';
 
 interface PromptSettings {
   maxTokens: number;
@@ -55,12 +59,6 @@ interface PromptContextType {
   tokenUsage: TokenUsage;
   getFlattenedPrompt: () => Promise<string>;
   importComposition: (newBlocks: Block[], newSettings: PromptSettings) => void;
-
-  /**
-   * replaceTemplateGroup
-   * Async, removing old group blocks and splicing in newly parsed blocks.
-   * If newText === oldRawText, we skip re-parse. 
-   */
   replaceTemplateGroup: (
     leadBlockId: string,
     groupId: string,
@@ -102,10 +100,11 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
+    // We re-initialize the encoder whenever the model changes
     initEncoder(settings.model);
   }, [settings.model]);
 
-  // Recalc tokens
+  // Recalc tokens with a small debounce
   useEffect(() => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
@@ -127,7 +126,9 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
           case 'files': {
             const fb = block as FilesBlock;
             const shouldIncludeMap = fb.includeProjectMap ?? true;
-            const mapText = shouldIncludeMap && fb.projectAsciiMap ? fb.projectAsciiMap : '';
+            const mapText = shouldIncludeMap && fb.projectAsciiMap
+              ? fb.projectAsciiMap
+              : '';
             const fileTexts = fb.files.map((f) => {
               return `<file_contents>
 File: ${f.path}
@@ -137,7 +138,9 @@ ${f.content}
 </file_contents>`;
             });
             const filesConcatenated = fileTexts.join('\n\n');
-            blockText = shouldIncludeMap ? (mapText + '\n' + filesConcatenated) : filesConcatenated;
+            blockText = shouldIncludeMap
+              ? (mapText + '\n' + filesConcatenated)
+              : filesConcatenated;
             break;
           }
         }
@@ -217,7 +220,9 @@ ${f.content}
           const newBlocks = [...prev];
           newBlocks[existingIndex] = candidate;
           // remove any others
-          return newBlocks.filter((b, idx) => (b.type !== 'files' || idx === existingIndex));
+          return newBlocks.filter(
+            (b, idx) => (b.type !== 'files' || idx === existingIndex)
+          );
         }
       });
     },
@@ -237,7 +242,6 @@ ${f.content}
     []
   );
 
-  // replaceTemplateGroup => now async
   const replaceTemplateGroup = useCallback(
     async (leadBlockId: string, groupId: string, newText: string, oldRawText: string) => {
       if (newText === oldRawText) {
@@ -253,27 +257,10 @@ ${f.content}
         return;
       }
 
-      // find the old group
-      setBlocks((prev) => {
-        // gather indices
-        const groupIndices = [];
-        for (let i = 0; i < prev.length; i++) {
-          if (prev[i].groupId === groupId) {
-            groupIndices.push(i);
-          }
-        }
-        if (groupIndices.length === 0) {
-          // no blocks to remove
-          return prev;
-        }
-        // parse new text
-        // We'll do this parse outside setState so we can splice it in
-        return prev;
-      });
-
+      // parse new text
       const newParsed = await parseTemplateBlocksAsync(newText, groupId, leadBlockId);
-      
-      // Now we splice them in
+
+      // remove the old group blocks and splice in the new
       setBlocks((prev) => {
         const groupIndices = [];
         for (let i = 0; i < prev.length; i++) {
@@ -282,8 +269,7 @@ ${f.content}
           }
         }
         if (groupIndices.length === 0) {
-          // no blocks to remove
-          // just add newParsed at the end?
+          // just add newParsed at the end if no old group found
           return [...prev, ...newParsed];
         }
         const startIndex = Math.min(...groupIndices);
