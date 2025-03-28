@@ -23,6 +23,7 @@ import type { Block, FilesBlock } from '../types/Block';
 import { flattenBlocksAsync } from '../utils/flattenPrompt';
 import { parseTemplateBlocksAsync } from '../utils/templateBlockParserAsync';
 import { initEncoder, estimateTokens } from '../utils/tokenEstimator';
+import { useProject } from './ProjectContext';
 
 interface PromptSettings {
   maxTokens: number;
@@ -30,8 +31,11 @@ interface PromptSettings {
 }
 
 interface TokenUsage {
-  blockTokenUsage: Record<string, number>;
-  totalTokens: number;
+  total: number;
+  byBlock: Array<{
+    blockId: string;
+    tokens: number;
+  }>;
 }
 
 interface PromptContextType {
@@ -80,7 +84,7 @@ const PromptContext = createContext<PromptContextType>({
   setSettings: () => {},
   // moveBlock is removed in the new design
   updateFileBlock: () => {},
-  tokenUsage: { blockTokenUsage: {}, totalTokens: 0 },
+  tokenUsage: { total: 0, byBlock: [] },
   getFlattenedPrompt: async () => '',
   importComposition: () => {},
   replaceTemplateGroup: async () => {},
@@ -89,11 +93,9 @@ const PromptContext = createContext<PromptContextType>({
 export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [settings, setSettingsState] = useState<PromptSettings>(defaultSettings);
+  const { getSelectedFileEntries } = useProject();
 
-  const [tokenUsage, setTokenUsage] = useState<TokenUsage>({
-    blockTokenUsage: {},
-    totalTokens: 0,
-  });
+  const [tokenUsage, setTokenUsage] = useState<TokenUsage>({ total: 0, byBlock: [] });
 
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -102,57 +104,104 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     initEncoder(settings.model);
   }, [settings.model]);
 
-  // Recalc tokens with a small debounce
+  // Single effect for token calculation
   useEffect(() => {
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current);
-    }
-    debounceRef.current = setTimeout(() => {
-      initEncoder(settings.model);
+    const calculateTokenUsage = async () => {
+      if (!settings.model) {
+        setTokenUsage({ total: 0, byBlock: [] });
+        return;
+      }
 
-      const blockTokenUsage: Record<string, number> = {};
-      let totalTokens = 0;
+      try {
+        // Wait for electronAPI to be available
+        if (!window?.electronAPI) {
+          return;
+        }
 
-      blocks.forEach(block => {
-        let blockText = '';
+        const selectedFileEntries = getSelectedFileEntries();
+        const fileContents = await Promise.all(
+          selectedFileEntries.map(async entry => {
+            try {
+              const content = await window.electronAPI.readFile(entry.path);
+              return {
+                path: entry.path,
+                content,
+                language: entry.language || 'text',
+              };
+            } catch (error) {
+              console.error(`Error reading file ${entry.path}:`, error);
+              return null;
+            }
+          })
+        );
 
-        switch (block.type) {
-          case 'text':
-          case 'template':
-            blockText = block.content || '';
-            break;
-          case 'files': {
-            const fb = block as FilesBlock;
-            const shouldIncludeMap = fb.includeProjectMap ?? true;
-            const mapText = shouldIncludeMap && fb.projectAsciiMap ? fb.projectAsciiMap : '';
-            const fileTexts = fb.files.map(f => {
-              return `<file_contents>
+        const validFileContents = fileContents.filter(
+          (entry): entry is NonNullable<typeof entry> => entry !== null
+        );
+
+        // Calculate tokens for all blocks
+        const newTokenUsage: TokenUsage = {
+          total: 0,
+          byBlock: [],
+        };
+
+        for (const block of blocks) {
+          let content = '';
+
+          switch (block.type) {
+            case 'text':
+            case 'template':
+              content = block.content || '';
+              break;
+            case 'files': {
+              const fb = block as FilesBlock;
+              const shouldIncludeMap = fb.includeProjectMap ?? true;
+              const mapText = shouldIncludeMap && fb.projectAsciiMap ? fb.projectAsciiMap : '';
+              const fileTexts = validFileContents.map(f => {
+                return `<file_contents>
 File: ${f.path}
 \`\`\`${f.language}
 ${f.content}
 \`\`\`
 </file_contents>`;
-            });
-            const filesConcatenated = fileTexts.join('\n\n');
-            blockText = shouldIncludeMap ? mapText + '\n' + filesConcatenated : filesConcatenated;
-            break;
+              });
+              const filesConcatenated = fileTexts.join('\n\n');
+              content = shouldIncludeMap ? mapText + '\n' + filesConcatenated : filesConcatenated;
+              break;
+            }
+            case 'promptResponse':
+              content = block.content;
+              break;
           }
+
+          const tokens = estimateTokens(content, settings.model);
+          newTokenUsage.total += tokens;
+          newTokenUsage.byBlock.push({ blockId: block.id, tokens });
         }
 
-        const count = estimateTokens(blockText, settings.model);
-        blockTokenUsage[block.id] = count;
-        totalTokens += count;
-      });
+        setTokenUsage(newTokenUsage);
+      } catch (error) {
+        console.error('Error calculating token usage:', error);
+        setTokenUsage({ total: 0, byBlock: [] });
+      }
+    };
 
-      setTokenUsage({ blockTokenUsage, totalTokens });
-    }, 300);
+    // Run calculation immediately
+    calculateTokenUsage();
+
+    // Also set up debounced calculation for subsequent updates
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+
+    debounceRef.current = setTimeout(calculateTokenUsage, 500);
 
     return () => {
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
       }
     };
-  }, [blocks, settings.model]);
+  }, [blocks, settings.model, getSelectedFileEntries]);
 
   // Basic CRUD
   const addBlock = useCallback((block: Block) => {
@@ -259,7 +308,7 @@ ${f.content}
 
       // remove old group blocks, splice new
       setBlocks(prev => {
-        const groupIndices = [];
+        const groupIndices: number[] = [];
         for (let i = 0; i < prev.length; i++) {
           if (prev[i].groupId === groupId) {
             groupIndices.push(i);

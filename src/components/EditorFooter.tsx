@@ -13,10 +13,10 @@ const EditorFooter: React.FC = () => {
   const { tokenUsage, settings } = usePrompt();
   const { darkMode, toggleDarkMode } = useTheme();
 
-  const { totalTokens } = tokenUsage;
+  const { total } = tokenUsage;
   const { maxTokens } = settings;
 
-  const isOverLimit = totalTokens > maxTokens;
+  const isOverLimit = total > maxTokens;
   const barBgColor = isOverLimit ? 'bg-red-100 dark:bg-red-800' : 'bg-white dark:bg-gray-800';
   const textColor = isOverLimit
     ? 'text-red-600 dark:text-red-300 font-semibold'
@@ -48,7 +48,7 @@ const EditorFooter: React.FC = () => {
           <path d="m16.71 13.88.7.71-2.82 2.82" />
         </svg>
         <span>
-          {totalTokens} / {maxTokens}
+          {total} / {maxTokens}
         </span>
       </div>
 
