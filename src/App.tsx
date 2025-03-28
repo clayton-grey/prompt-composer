@@ -14,7 +14,7 @@ import { usePrompt } from './context/PromptContext';
 import { TemplateBlock } from './types/Block';
 import EditorFooter from './components/EditorFooter';
 
-const MIN_SIDEBAR_WIDTH = 250; // changed from 180 to 250
+const MIN_SIDEBAR_WIDTH = 270; // changed from 180 to 250
 const MAX_SIDEBAR_WIDTH = 1200;
 
 const App: React.FC = () => {
