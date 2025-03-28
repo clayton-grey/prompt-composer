@@ -2,22 +2,11 @@
  * @file TemplateListView.tsx
  * @description
  * A fallback view shown when no blocks are loaded in the PromptBuilder. This component
- * displays a list of available template files (both global and from all projectFolders),
- * letting the user pick one to parse and load into the composition.
+ * displays a list of available template files (both global and from project .prompt-composer).
+ * When the user picks one, we read from disk and parse it.
  *
- * In this update:
- *  - We have moved the Refresh button BELOW the scrollable list, aligned to the bottom-right corner.
- *    This better aligns with the user's request for layout changes.
- *
- * Steps to accomplish:
- *  1) Maintain the container for the template list with a fixed height (h-80).
- *  2) Place the Refresh button in a separate container below the list container.
- *     We style it with flex justify-end so that it appears at the bottom-right.
- *  3) Keep the same refresh icon, 'title' = "Refresh templates", and aria-label = "Refresh templates".
- *
- * Edge Cases:
- *  - If no templates are found, we display "No templates found." above the list container.
- *  - The button is always available, even if the list is empty or loading, so the user can attempt a refresh.
+ * Updated to explicitly call parseTemplateBlocksAsync with flatten=true,
+ * ensuring we do read from disk references only during initial load.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -41,7 +30,6 @@ const TemplateListView: React.FC = () => {
   // Load templates on mount or whenever projectFolders changes
   useEffect(() => {
     fetchTemplates();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectFolders]);
 
   const fetchTemplates = async () => {
@@ -65,6 +53,11 @@ const TemplateListView: React.FC = () => {
     }
   };
 
+  /**
+   * handleSelectTemplate
+   * Reads the selected template file, then calls parseTemplateBlocksAsync
+   * with flatten=true to do a full read of nested references from disk.
+   */
   const handleSelectTemplate = async (entry: TemplateFileEntry) => {
     const { fileName, source } = entry;
     try {
@@ -79,8 +72,16 @@ const TemplateListView: React.FC = () => {
         console.warn(`[TemplateListView] Could not read content from: ${source}/${fileName}`);
         return;
       }
-      // parse the template
-      const parsedBlocks = await parseTemplateBlocksAsync(content);
+      // parse the template with flatten=true
+      const parsedBlocks = await parseTemplateBlocksAsync(
+        content,
+        undefined,
+        undefined,
+        msg => {
+          console.error('[TemplateListView] parse error:', msg);
+        },
+        true /* flatten */
+      );
       // add them to the composition
       addBlocks(parsedBlocks as Block[]);
     } catch (err) {
@@ -92,7 +93,6 @@ const TemplateListView: React.FC = () => {
     fetchTemplates();
   };
 
-  // If no templates found
   const noTemplates = !loading && templateFiles.length === 0;
 
   return (
@@ -125,7 +125,6 @@ const TemplateListView: React.FC = () => {
         ))}
       </div>
 
-      {/* Bottom-right-aligned refresh button, but below the list container */}
       <div className="w-full max-w-lg mt-2 flex justify-end">
         <button
           onClick={handleRefreshClick}

@@ -1,52 +1,56 @@
 /**
  * @file templateBlockParserAsync.ts
  * @description
- * Parses a (now-flattened) template string into blocks for TEXT_BLOCK, FILE_BLOCK,
- * PROMPT_RESPONSE, or leftover placeholders.
+ * Parses a (possibly flattened) template string into blocks for TEXT_BLOCK, FILE_BLOCK,
+ * PROMPT_RESPONSE, or leftover placeholders. We now revert to an approach
+ * that does NOT skip or remove newlines automatically, preserving user-typed
+ * spacing and line breaks in the raw text.
  *
- * Major change: we no longer handle recursion or references to other templates here.
- * That is delegated to flattenTemplate.ts.
- * This parser simply does one pass:
- *   - If it's {{TEXT_BLOCK=...}}, we create a text block
- *   - If it's {{FILE_BLOCK}}, we create a file block
- *   - If it's {{PROMPT_RESPONSE=filename.txt}}, we create a promptResponse block
- *   - Otherwise, if there's a leftover placeholder, we create a minimal "Unknown Placeholder" block
- *     or "template" block with that text.
- *
- * The final result is a single-level array of blocks.
+ * If you want to hide a purely blank line after a placeholder for visual reasons,
+ * do that in the UI (e.g., TemplateBlockEditor).
  */
 
 import { v4 as uuidv4 } from 'uuid';
 import { Block, TextBlock, TemplateBlock, FilesBlock, PromptResponseBlock } from '../types/Block';
-import { tryReadTemplateFile } from './readTemplateFile';
 import { flattenTemplate } from './flattenTemplate';
-
-const placeholderRegex = /(\{\{([A-Za-z0-9_\-]+)(?:=([^}]*))?\}\})/g;
 
 type ErrorCallback = (message: string) => void;
 
 /**
  * parseTemplateBlocksAsync
- * 1) Flatten the template to remove nested references
- * 2) Parse the final text for placeholders that are special blocks (TEXT_BLOCK, FILE_BLOCK, PROMPT_RESPONSE)
- *    or unknown placeholders we treat as "template" style blocks
+ * @param sourceText - The raw template text to parse
+ * @param forceGroupId - If provided, all resulting blocks share this groupId
+ * @param forceLeadBlockId - If provided, the first block in that group is the lead with this ID
+ * @param onError - Optional callback for parse errors or unknown placeholders
+ * @param flatten - If true (default), we run flattenTemplate, referencing disk. If false, skip flatten.
+ *
+ * @returns An array of blocks (Text, Template, Files, or PromptResponse).
  */
 export async function parseTemplateBlocksAsync(
   sourceText: string,
   forceGroupId?: string,
   forceLeadBlockId?: string,
-  onError?: ErrorCallback
+  onError?: ErrorCallback,
+  flatten: boolean = true
 ): Promise<Block[]> {
-  // 1) Flatten the template first
-  let flattenedText = await flattenTemplate(sourceText);
+  let finalText = sourceText;
+  if (flatten) {
+    finalText = await flattenTemplate(sourceText);
+  }
 
-  // 2) Now parse placeholders in flattenedText for known tags
   const groupId = forceGroupId || uuidv4();
   let blocks: Block[] = [];
   let currentIndex = 0;
   let match: RegExpExecArray | null;
   let leadAssigned = false;
 
+  // Regex capturing {{SOMETHING=maybeValue}}
+  const placeholderRegex = /(\{\{([A-Za-z0-9_\-]+)(?:=([^}]*))?\}\})/g;
+
+  /**
+   * Creates a new TemplateBlock segment from a chunk of text.
+   * By default locked=true, isGroupLead=false, unless it's the first block in the group.
+   */
   function newTemplateSegmentBlock(textSegment: string): TemplateBlock {
     return {
       id: uuidv4(),
@@ -60,14 +64,14 @@ export async function parseTemplateBlocksAsync(
     };
   }
 
-  while ((match = placeholderRegex.exec(flattenedText)) !== null) {
-    const fullPlaceholder = match[1];
-    const placeholderName = match[2];
-    const placeholderValue = match[3];
+  while ((match = placeholderRegex.exec(finalText)) !== null) {
+    const fullPlaceholder = match[1]; // e.g. "{{FILE_BLOCK}}"
+    const placeholderName = match[2]; // e.g. "FILE_BLOCK"
+    const placeholderValue = match[3]; // e.g. undefined or "some text"
     const matchIndex = match.index;
 
-    // text up to this placeholder => create template segment block
-    const textSegment = flattenedText.slice(currentIndex, matchIndex);
+    // text up to this placeholder => create a template segment block
+    const textSegment = finalText.slice(currentIndex, matchIndex);
     if (textSegment.length > 0) {
       const segBlock = newTemplateSegmentBlock(textSegment);
       if (!leadAssigned) {
@@ -79,7 +83,7 @@ export async function parseTemplateBlocksAsync(
       blocks.push(segBlock);
     }
 
-    // parse the placeholder
+    // parse the placeholder => might be a known special block or unknown
     const placeholderBlocks = parsePlaceholder(
       placeholderName,
       placeholderValue,
@@ -87,8 +91,9 @@ export async function parseTemplateBlocksAsync(
       !leadAssigned && forceLeadBlockId,
       onError
     );
+
     if (placeholderBlocks.length === 0) {
-      // fallback
+      // fallback => unknown placeholder
       const unknown: TemplateBlock = {
         id: uuidv4(),
         type: 'template',
@@ -117,12 +122,13 @@ export async function parseTemplateBlocksAsync(
       blocks = blocks.concat(placeholderBlocks);
     }
 
+    // Advance past the placeholder
     currentIndex = matchIndex + fullPlaceholder.length;
   }
 
-  // trailing text
-  if (currentIndex < flattenedText.length) {
-    const trailing = flattenedText.slice(currentIndex);
+  // trailing text after the last placeholder
+  if (currentIndex < finalText.length) {
+    const trailing = finalText.slice(currentIndex);
     if (trailing.length > 0) {
       const trailingBlock = newTemplateSegmentBlock(trailing);
       if (!leadAssigned) {
@@ -135,7 +141,7 @@ export async function parseTemplateBlocksAsync(
     }
   }
 
-  // If no blocks, create an empty one
+  // If we ended up with no blocks, create an empty block
   if (blocks.length === 0) {
     const emptyBlock: TemplateBlock = {
       id: forceLeadBlockId || uuidv4(),
@@ -155,8 +161,14 @@ export async function parseTemplateBlocksAsync(
 
 /**
  * parsePlaceholder
- * Given something like placeholderName= "TEXT_BLOCK" + placeholderValue="some text",
- * we return the corresponding block(s).
+ * Converts a recognized placeholder into the correct block(s).
+ * @param placeholderName - e.g. "TEXT_BLOCK", "FILE_BLOCK", "PROMPT_RESPONSE"
+ * @param placeholderValue - the optional string after the '='
+ * @param groupId - group id to apply to resulting blocks
+ * @param makeLeadBlockId - if truthy, apply isGroupLead & locked=false & use that as ID
+ * @param onError - callback for parse errors
+ *
+ * @returns An array of blocks for that placeholder
  */
 function parsePlaceholder(
   placeholderName: string,
@@ -214,7 +226,7 @@ function parsePlaceholder(
       type: 'promptResponse',
       label: 'Prompt Response',
       sourceFile: filename,
-      content: '', // We'll fill it from file if needed later, or leave blank
+      content: '',
       locked: true,
       groupId,
       isGroupLead: false,
@@ -227,8 +239,7 @@ function parsePlaceholder(
     return [prb];
   }
 
-  // Otherwise -> unknown placeholder
-  // Possibly leftover from something we couldn't expand or a custom user tag
+  // Otherwise => unknown placeholder
   const unknown: TemplateBlock = {
     id: newId(),
     type: 'template',
