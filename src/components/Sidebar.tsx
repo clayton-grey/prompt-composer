@@ -2,12 +2,9 @@
 /**
  * @file Sidebar.tsx
  * @description
- * The main sidebar for managing project folders. Step 3 changes:
- *  - We remove the local 'additionalFolders' state and instead use
- *    ProjectContext's projectFolders, plus addProjectFolder() / removeProjectFolder().
- *  - This ensures that if we remove a folder from the sidebar, the template
- *    aggregator in TemplateSelectorModal won't include that folder's
- *    .prompt-composer files anymore.
+ * The main sidebar for managing project folders. 
+ * Now updated to call `await addProjectFolder(...)` so we can ensure 
+ * the folder is fully expanded and selected upon addition.
  */
 
 import React from 'react';
@@ -15,7 +12,6 @@ import FileTree from './Sidebar/FileTree';
 import { useProject } from '../context/ProjectContext';
 
 const Sidebar: React.FC = () => {
-  // Instead of local state, we rely on ProjectContext
   const {
     projectFolders,
     addProjectFolder,
@@ -44,7 +40,9 @@ const Sidebar: React.FC = () => {
       }
       const folderPath = result.filePaths[0];
       console.log('[Sidebar] Selected folder:', folderPath);
-      addProjectFolder(folderPath);
+
+      //  We now await this call, so the logic inside addProjectFolder has time to complete
+      await addProjectFolder(folderPath);
     } catch (err) {
       console.error('[Sidebar] addFolder error:', err);
     }
@@ -136,4 +134,3 @@ const Sidebar: React.FC = () => {
 };
 
 export default Sidebar;
-

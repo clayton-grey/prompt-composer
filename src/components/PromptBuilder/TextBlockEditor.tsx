@@ -7,7 +7,10 @@
  * Changes:
  *  - Removed the label display and input, as per user request 
  *    ("Remove the labels and type descriptions").
- *  - We keep the content <textarea> for user editing. 
+ *  - We keep the content <textarea> for user editing.
+ *
+ * Step 5 Changes (Accessibility):
+ *  - Added aria-label to the <textarea> so screen readers know it is a text block editor.
  */
 
 import React, { ChangeEvent } from 'react';
@@ -35,6 +38,7 @@ const TextBlockEditor: React.FC<TextBlockEditorProps> = ({ block, onChange }) =>
         value={block.content}
         onChange={handleContentChange}
         placeholder="Enter text..."
+        aria-label="Text Block Editor"
       />
     </div>
   );

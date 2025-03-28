@@ -7,6 +7,9 @@
  *
  * Step X changes:
  *  - Insert the "folder-tree" SVG at the beginning of the block, next to the heading "File Block".
+ *
+ * Step 5 Changes (Accessibility):
+ *  - Added htmlFor / id pairing for the "Include File Map" checkbox to make the label accessible.
  */
 
 import React, { ChangeEvent } from 'react';
@@ -58,8 +61,12 @@ const FileBlockEditor: React.FC<FileBlockEditorProps> = ({ block, onChange }) =>
         </h3>
       </div>
 
-      <label className="flex items-center space-x-2 text-xs text-gray-700 dark:text-gray-200">
+      <label
+        className="flex items-center space-x-2 text-xs text-gray-700 dark:text-gray-200"
+        htmlFor={`${block.id}-includeMap`}
+      >
         <input
+          id={`${block.id}-includeMap`}
           type="checkbox"
           className="w-4 h-4"
           checked={block.includeProjectMap ?? true}

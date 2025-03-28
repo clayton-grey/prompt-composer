@@ -246,7 +246,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       depth > 0 ? 'pl-4' : ''
     } hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors duration-100`;
 
-    if (node.type === 'directory') {
+      if (node.type === 'directory') {
       return (
         <div key={node.path}>
           <div className={className}>
@@ -305,12 +305,12 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
     const listing = directoryCache[folderPath];
     
     if (!listing) {
-      return (
+    return (
         <div key={folderPath} className="text-gray-500 text-xs mb-2">
           Loading {folderPath}...
-        </div>
-      );
-    }
+      </div>
+    );
+  }
 
     // Convert directory listing to a tree node
     const node: TreeNode = {
@@ -343,7 +343,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           {/* Folder icon */}
           <span onClick={onFolderClick} className="cursor-pointer flex items-center">
             {renderFolderIcon(node)}
-          </span>
+        </span>
 
           {/* Folder name */}
           <span 
@@ -351,11 +351,11 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
             onClick={onFolderClick}
           >
             {node.name}
-          </span>
+        </span>
 
           {/* Buttons */}
           <div className="flex items-center ml-2">
-            <button
+        <button
               onClick={handleCollapseClick}
               className="mr-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
               title="Collapse entire subtree"
@@ -365,8 +365,8 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
                 <path d="m18 13-6-6-6 6"/>
                 <path d="M12 7v14"/>
               </svg>
-            </button>
-            <button
+        </button>
+        <button
               onClick={handleRemoveFolder}
               className="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
               title="Remove folder"
@@ -382,7 +382,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
                 <path d="m12 6-6 6"/>
                 <path d="m6 6 6 6"/>
               </svg>
-            </button>
+        </button>
           </div>
         </div>
 
@@ -396,7 +396,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
     );
   }
 
-  return (
+      return (
     <div className="w-full h-full text-xs text-gray-800 dark:text-gray-100">
       {folders.length === 0 && (
         <div className="text-gray-500 italic">

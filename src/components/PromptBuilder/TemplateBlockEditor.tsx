@@ -12,7 +12,9 @@
  * Step X changes:
  *  - Removed the old "Flip" or "Edit Raw" button from the top bar. Instead, the parent
  *    container in BlockList shows a pencil icon in the bottom-right corner on hover.
- *  - We keep the confirmation/cancel logic for handleRawConfirm / handleRawCancel.
+ *
+ * Step 5 Changes (Accessibility):
+ *  - Added aria-label to the raw editing <textarea>.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -111,6 +113,7 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
           className="w-full rounded border-gray-300 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-100"
           value={rawContent}
           onChange={(e) => setRawContent(e.target.value)}
+          aria-label="Raw Template Editor"
         />
         <div className="mt-2 flex gap-2">
           <button

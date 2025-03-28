@@ -8,12 +8,15 @@
  *
  * Step 4 Changes (Error Feedback):
  *  - We now import and use the `useToast` hook from ToastContext to display error messages.
- *  - We pass an `onError` callback to parseTemplateBlocksAsync so that any parse errors 
- *    (cyclic references, missing placeholders) can be displayed to the user.
- *  - We also catch any file read errors to show a toast if something fails.
+ *
+ * Step 5 Changes (Accessibility):
+ *  - Added role="dialog" aria-modal="true" to the inner modal.
+ *  - Use a ref for focus management when the modal opens.
+ *  - `aria-labelledby` referencing the title <h2> element.
+ *  - Return focus to previously active element on close.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { parseTemplateBlocksAsync } from '../../utils/templateBlockParserAsync';
 import { Block } from '../../types/Block';
 import { useProject } from '../../context/ProjectContext';
@@ -44,13 +47,35 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   // Step 4: We use the toast for error feedback
   const { showToast } = useToast();
 
+  // Step 5: Accessibility - track modal content ref and previously focused element
+  const modalContentRef = useRef<HTMLDivElement>(null);
+  const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
+
   useEffect(() => {
     if (isOpen) {
       loadTemplates();
+      // Save previously focused element
+      if (document.activeElement instanceof HTMLElement) {
+        previouslyFocusedElementRef.current = document.activeElement;
+      }
     } else {
-      // reset
       setTemplateFiles([]);
       setLoading(true);
+    }
+  }, [isOpen]);
+
+  // Focus the modal content when open
+  useEffect(() => {
+    if (isOpen) {
+      // Delay focusing to avoid potential race conditions
+      setTimeout(() => {
+        modalContentRef.current?.focus();
+      }, 50);
+    } else {
+      // Return focus to previously focused element if possible
+      if (previouslyFocusedElementRef.current) {
+        previouslyFocusedElementRef.current.focus();
+      }
     }
   }, [isOpen]);
 
@@ -79,7 +104,6 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   /**
    * handleSelectTemplate
    * Reads the selected template file, then calls parseTemplateBlocksAsync.
-   * If parsing or reading fails, we show an error toast. Otherwise, we insert the blocks.
    */
   async function handleSelectTemplate(entry: TemplateFileEntry) {
     try {
@@ -95,8 +119,6 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
         return;
       }
 
-      // Now parse the file content using the new async parser
-      // Provide an onError callback that shows a toast if there's a parsing issue
       const parsedBlocks = await parseTemplateBlocksAsync(content, undefined, undefined, (msg) => {
         showToast(msg, 'error');
       });
@@ -124,8 +146,16 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
       <div
         className="bg-white dark:bg-gray-800 w-full max-w-md p-4 rounded shadow-lg"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="templateSelectorModalTitle"
+        ref={modalContentRef}
+        tabIndex={-1}
       >
-        <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4">
+        <h2
+          className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4"
+          id="templateSelectorModalTitle"
+        >
           Select a Template
         </h2>
 

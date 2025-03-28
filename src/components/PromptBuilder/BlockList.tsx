@@ -12,6 +12,10 @@
  *  - We remove the inline reorder logic (findGroupRange, reorderChunk) and place it in a separate
  *    file called blockReorderHelpers.ts. We import findGroupRange and reorderBlocksInRange from there.
  *  - The rest of the logic remains the same, ensuring no user-facing changes.
+ *
+ * Step 5 Changes (Accessibility):
+ *  - Added aria-label attributes for reorder and delete buttons
+ *  - Added aria-label for raw edit pencil icon
  */
 
 import React, { useEffect } from 'react';
@@ -58,6 +62,7 @@ function renderDeleteIcon(block: Block, onClick: () => void) {
       <button
         onClick={onClick}
         className="p-1 text-gray-700 dark:text-gray-200 hover:bg-red-100 dark:hover:bg-red-600 rounded"
+        aria-label="Delete template group"
       >
         {/* Template delete icon (grid2x2-x) */}
         <svg
@@ -85,6 +90,7 @@ function renderDeleteIcon(block: Block, onClick: () => void) {
     <button
       onClick={onClick}
       className="p-1 text-gray-700 dark:text-gray-200 hover:bg-red-100 dark:hover:bg-red-600 rounded"
+      aria-label="Delete block"
     >
       {/* block delete icon (square-x) */}
       <svg
@@ -108,7 +114,7 @@ function renderDeleteIcon(block: Block, onClick: () => void) {
 }
 
 const BlockList: React.FC = () => {
-  const { blocks, addBlock, removeBlock, updateBlock, moveBlock, replaceTemplateGroup } = usePrompt();
+  const { blocks, addBlock, removeBlock, updateBlock, moveBlock } = usePrompt();
 
   /**
    * handleMoveUp
@@ -276,6 +282,7 @@ const BlockList: React.FC = () => {
                   onClick={() => handleMoveUp(index)}
                   className="p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={index <= 0}
+                  aria-label="Move block or group up"
                 >
                   {/* Move up icon */}
                   <svg
@@ -300,6 +307,7 @@ const BlockList: React.FC = () => {
                   onClick={() => handleMoveDown(index)}
                   className="p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                   disabled={index >= blocks.length - 1}
+                  aria-label="Move block or group down"
                 >
                   {/* Move down icon */}
                   <svg
@@ -330,6 +338,7 @@ const BlockList: React.FC = () => {
                 <button
                   onClick={() => handleRawEdit(block)}
                   className="p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded"
+                  aria-label="Edit raw template"
                 >
                   {/* Pencil icon for raw edit */}
                   <svg

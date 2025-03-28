@@ -172,10 +172,10 @@ export function registerIpcHandlers(): void {
   // list-directory (async)
   ipcMain.handle('list-directory', async (_event, dirPath: string) => {
     try {
-      let targetPath = dirPath;
-      if (!path.isAbsolute(dirPath)) {
-        targetPath = path.join(process.cwd(), dirPath);
-      }
+    let targetPath = dirPath;
+    if (!path.isAbsolute(dirPath)) {
+      targetPath = path.join(process.cwd(), dirPath);
+    }
 
       console.log('[list-directory] Processing directory (async):', targetPath);
 
