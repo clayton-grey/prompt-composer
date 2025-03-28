@@ -1,3 +1,4 @@
+
 /**
  * @file flattenPrompt.ts
  * @description
@@ -18,7 +19,7 @@ import { resolveNestedTemplates } from './templateResolver';
 /**
  * Flatten the array of blocks into a single string, asynchronously substituting nested templates.
  */
-export async function flattenBlocksAsync(blocks: Block[]): Promise < string > {
+export async function flattenBlocksAsync(blocks: Block[]): Promise<string> {
   let finalString = '';
 
   for (const block of blocks) {
@@ -27,7 +28,8 @@ export async function flattenBlocksAsync(blocks: Block[]): Promise < string > {
       // Just pass the content directly into nested placeholders if any
       const resolved = await resolveNestedTemplates(textBlock.content);
       finalString += resolved + '\n\n';
-    } else if (block.type === 'template') {
+    }
+    else if (block.type === 'template') {
       const templateBlock = block as TemplateBlock;
 
       // 1) Apply variable substitution
@@ -41,7 +43,8 @@ export async function flattenBlocksAsync(blocks: Block[]): Promise < string > {
       // 2) Now handle any nested references to .prompt-composer files
       const resolved = await resolveNestedTemplates(substituted);
       finalString += resolved + '\n\n';
-    } else if (block.type === 'files') {
+    }
+    else if (block.type === 'files') {
       const filesBlock = block as FilesBlock;
 
       // If includeProjectMap is true, add the ascii map first

@@ -1,3 +1,4 @@
+
 /**
  * @file PromptPreview.tsx
  * @description
@@ -12,7 +13,7 @@ import { usePrompt } from '../../context/PromptContext';
 
 const PromptPreview: React.FC = () => {
   const { blocks, getFlattenedPrompt } = usePrompt();
-  const [previewText, setPreviewText] = useState < string > ('Loading...');
+  const [previewText, setPreviewText] = useState<string>('Loading...');
 
   useEffect(() => {
     let isMounted = true;
@@ -38,15 +39,15 @@ const PromptPreview: React.FC = () => {
     };
   }, [blocks, getFlattenedPrompt]);
 
-  return ( <
-    div className = "h-full w-full px-4 py-2 overflow-auto" >
-    <
-    h3 className = "text-md font-semibold mb-2 text-gray-700 dark:text-gray-200" >
-    Prompt Preview <
-    /h3> <
-    pre className = "text-sm whitespace-pre-wrap break-words text-gray-800 dark:text-gray-100" > { previewText } <
-    /pre> <
-    /div>
+  return (
+    <div className="h-full w-full px-4 py-2 overflow-auto">
+      <h3 className="text-md font-semibold mb-2 text-gray-700 dark:text-gray-200">
+        Prompt Preview
+      </h3>
+      <pre className="text-sm whitespace-pre-wrap break-words text-gray-800 dark:text-gray-100">
+        {previewText}
+      </pre>
+    </div>
   );
 };
 

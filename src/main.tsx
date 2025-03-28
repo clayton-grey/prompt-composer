@@ -1,3 +1,4 @@
+
 /**
  * @file main.tsx
  * @description
@@ -26,18 +27,15 @@ import { ThemeProvider } from './context/ThemeContext';
 import { PromptProvider } from './context/PromptContext';
 import { ProjectProvider } from './context/ProjectContext';
 
-ReactDOM.createRoot(document.getElementById('root') !).render( <
-  React.StrictMode >
-  <
-  ThemeProvider > { /* The ProjectProvider caches directory data for FileTree */ } <
-  ProjectProvider >
-  <
-  PromptProvider >
-  <
-  App / >
-  <
-  /PromptProvider> <
-  /ProjectProvider> <
-  /ThemeProvider> <
-  /React.StrictMode>
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <ThemeProvider>
+      {/* The ProjectProvider caches directory data for FileTree */}
+      <ProjectProvider>
+        <PromptProvider>
+          <App />
+        </PromptProvider>
+      </ProjectProvider>
+    </ThemeProvider>
+  </React.StrictMode>
 );

@@ -1,3 +1,4 @@
+
 /**
  * @file fileMapBuilder.ts
  * @description
@@ -21,7 +22,7 @@ interface TreeNode {
   name: string;
   path: string;
   type: 'file' | 'directory';
-  children ? : TreeNode[];
+  children?: TreeNode[];
 }
 
 interface ListDirectoryResult {
@@ -68,7 +69,7 @@ function buildAsciiLines(node: TreeNode, prefix: string = '', isLast: boolean = 
  *  1) calls electronAPI.listDirectory(rootPath) to get the directory tree
  *  2) builds lines from the root node
  */
-export async function generateProjectAsciiMap(rootPath: string = '.'): Promise < string > {
+export async function generateProjectAsciiMap(rootPath: string = '.'): Promise<string> {
   if (!window.electronAPI?.listDirectory) {
     console.warn('[fileMapBuilder] No electronAPI.listDirectory found. Returning empty.');
     return '';

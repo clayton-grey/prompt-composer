@@ -1,3 +1,4 @@
+
 /**
  * @file templateResolver.ts
  * @description
@@ -31,8 +32,8 @@ const PLACEHOLDER_REGEX = /\{\{([A-Za-z0-9_\-]+(\.[A-Za-z0-9]+)?)\}\}/g;
  */
 export async function resolveNestedTemplates(
   content: string,
-  visited: Set < string > = new Set()
-): Promise < string > {
+  visited: Set<string> = new Set()
+): Promise<string> {
   if (!content) return content;
 
   let match: RegExpExecArray | null;
@@ -40,8 +41,8 @@ export async function resolveNestedTemplates(
 
   // We keep looping to handle newly introduced placeholders after replacements
   while ((match = PLACEHOLDER_REGEX.exec(resolvedContent)) !== null) {
-    const placeholderFull = match[0]; // e.g. "{{HELLO}}"
-    const placeholderName = match[1]; // e.g. "HELLO" or "HELLO.txt"
+    const placeholderFull = match[0];     // e.g. "{{HELLO}}"
+    const placeholderName = match[1];     // e.g. "HELLO" or "HELLO.txt"
 
     if (visited.has(placeholderName)) {
       console.warn(

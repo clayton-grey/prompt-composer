@@ -1,3 +1,4 @@
+
 /**
  * @file TemplateBlockEditor.tsx
  * @description
@@ -47,7 +48,7 @@ function reconstructRawTemplateFromGroup(
   leadBlockId: string,
   allBlocks: Block[]
 ): string {
-  const sortedByIndex: { block: Block;index: number } [] = [];
+  const sortedByIndex: { block: Block; index: number }[] = [];
   allBlocks.forEach((block, idx) => {
     if (block.groupId === groupId) {
       sortedByIndex.push({ block, index: idx });
@@ -75,14 +76,14 @@ interface TemplateBlockEditorProps {
   onChange: (updatedBlock: TemplateBlock) => void;
 }
 
-const TemplateBlockEditor: React.FC < TemplateBlockEditorProps > = ({
+const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
   block,
   onChange
 }) => {
   const { blocks, replaceTemplateGroup } = usePrompt();
-  const [isEditingRaw, setIsEditingRaw] = useState < boolean > (block.editingRaw || false);
-  const [rawContent, setRawContent] = useState < string > ('');
-  const [originalRawContent, setOriginalRawContent] = useState < string > ('');
+  const [isEditingRaw, setIsEditingRaw] = useState<boolean>(block.editingRaw || false);
+  const [rawContent, setRawContent] = useState<string>('');
+  const [originalRawContent, setOriginalRawContent] = useState<string>('');
 
   // If block.editingRaw becomes true, reconstruct the entire raw text
   useEffect(() => {
@@ -122,39 +123,45 @@ const TemplateBlockEditor: React.FC < TemplateBlockEditorProps > = ({
   };
 
   if (isEditingRaw) {
-    return ( <
-      div className = "p-3 border border-yellow-400 bg-yellow-50 rounded" >
-      <
-      h3 className = "text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2" >
-      Edit Raw Template <
-      /h3> <
-      textarea rows = { 8 } className = "w-full rounded border-gray-300 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-100"
-      value = { rawContent } onChange = {
-        (e) => setRawContent(e.target.value) } aria - label = "Raw Template Editor" /
-      >
-      <
-      div className = "mt-2 flex gap-2" >
-      <
-      button onClick = { handleRawConfirm } className = "px-3 py-1 text-sm rounded bg-green-500 hover:bg-green-600 text-white" >
-      Confirm <
-      /button> <
-      button onClick = { handleRawCancel } className = "px-3 py-1 text-sm rounded bg-gray-400 hover:bg-gray-500 text-white" >
-      Cancel <
-      /button> <
-      /div> <
-      /div>
+    return (
+      <div className="p-3 border border-yellow-400 bg-yellow-50 rounded">
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-2">
+          Edit Raw Template
+        </h3>
+        <textarea
+          rows={8}
+          className="w-full rounded border-gray-300 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-100"
+          value={rawContent}
+          onChange={(e) => setRawContent(e.target.value)}
+          aria-label="Raw Template Editor"
+        />
+        <div className="mt-2 flex gap-2">
+          <button
+            onClick={handleRawConfirm}
+            className="px-3 py-1 text-sm rounded bg-green-500 hover:bg-green-600 text-white"
+          >
+            Confirm
+          </button>
+          <button
+            onClick={handleRawCancel}
+            className="px-3 py-1 text-sm rounded bg-gray-400 hover:bg-gray-500 text-white"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     );
   }
 
   // Normal (non-raw) mode:
-  return ( <
-    div > {
-      block.content && ( <
-        div className = "whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded p-2" > { block.content } <
-        /div>
-      )
-    } <
-    /div>
+  return (
+    <div>
+      {block.content && (
+        <div className="whitespace-pre-wrap text-sm text-gray-800 dark:text-gray-100 border border-gray-300 dark:border-gray-600 rounded p-2">
+          {block.content}
+        </div>
+      )}
+    </div>
   );
 };
 

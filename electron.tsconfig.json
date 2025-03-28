@@ -25,4 +25,3 @@
   "include": ["electron-main/**/*"],
   "exclude": ["node_modules", "dist"]
 }
- 

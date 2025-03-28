@@ -1,3 +1,4 @@
+
 /**
  * @file readTemplateFile.ts
  * @description
@@ -25,14 +26,14 @@
  *  - Caller is responsible for handling the null case (missing file).
  */
 
-/**
- * Tries to read a file from project .prompt-composer or global .prompt-composer. 
- * If the passed-in baseName has no extension, it also tries appending .txt and .md.
- * 
- * @param baseName - The file name or name+extension (e.g. "HELLO.txt" or "HELLO")
- * @returns A Promise resolving to the file contents, or null if not found.
- */
-export async function tryReadTemplateFile(baseName: string): Promise < string | null > {
+ /**
+  * Tries to read a file from project .prompt-composer or global .prompt-composer. 
+  * If the passed-in baseName has no extension, it also tries appending .txt and .md.
+  * 
+  * @param baseName - The file name or name+extension (e.g. "HELLO.txt" or "HELLO")
+  * @returns A Promise resolving to the file contents, or null if not found.
+  */
+export async function tryReadTemplateFile(baseName: string): Promise<string | null> {
   if (!window.electronAPI) {
     console.warn('[readTemplateFile] electronAPI not available. Returning null.');
     return null;

@@ -1,3 +1,4 @@
+
 /**
  * @file MainContent.tsx
  * @description
@@ -13,12 +14,10 @@ import React from 'react';
 import { PromptBuilder } from './PromptBuilder/PromptBuilder';
 
 const MainContent: React.FC = () => {
-  return ( <
-    main className = "flex flex-col h-full overflow-hidden" >
-    <
-    PromptBuilder / >
-    <
-    /main>
+  return (
+    <main className="flex flex-col h-full overflow-hidden">
+      <PromptBuilder />
+    </main>
   );
 };
 

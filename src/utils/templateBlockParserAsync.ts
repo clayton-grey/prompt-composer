@@ -1,3 +1,4 @@
+
 /**
  * @file templateBlockParserAsync.ts
  * @description
@@ -31,10 +32,10 @@ const placeholderRegex = /(\{\{([A-Za-z0-9_\-]+)(?:=([^}]*))?\}\})/g;
 type ErrorCallback = (message: string) => void;
 
 interface ParseOptions {
-  forceGroupId ? : string;
-  forceLeadBlockId ? : string;
-  visitedTemplates ? : Set < string > ;
-  onError ? : ErrorCallback;
+  forceGroupId?: string;
+  forceLeadBlockId?: string;
+  visitedTemplates?: Set<string>;
+  onError?: ErrorCallback;
 }
 
 /**
@@ -51,14 +52,14 @@ interface ParseOptions {
  */
 export async function parseTemplateBlocksAsync(
   sourceText: string,
-  forceGroupId ? : string,
-  forceLeadBlockId ? : string,
-  onError ? : ErrorCallback
-): Promise < Block[] > {
+  forceGroupId?: string,
+  forceLeadBlockId?: string,
+  onError?: ErrorCallback
+): Promise<Block[]> {
   const options: ParseOptions = {
     forceGroupId,
     forceLeadBlockId,
-    visitedTemplates: new Set < string > (),
+    visitedTemplates: new Set<string>(),
     onError
   };
   return parseTemplateBlocksInternalAsync(sourceText, options);
@@ -67,11 +68,11 @@ export async function parseTemplateBlocksAsync(
 async function parseTemplateBlocksInternalAsync(
   sourceText: string,
   options: ParseOptions
-): Promise < Block[] > {
+): Promise<Block[]> {
   const {
     forceGroupId,
     forceLeadBlockId,
-    visitedTemplates = new Set < string > (),
+    visitedTemplates = new Set<string>(),
     onError
   } = options;
 
@@ -216,10 +217,10 @@ async function parsePlaceholderAsync(
   placeholderName: string,
   placeholderValue: string | undefined,
   groupId: string,
-  visitedTemplates: Set < string > ,
+  visitedTemplates: Set<string>,
   makeLeadBlockId: string | false | undefined,
-  onError ? : ErrorCallback
-): Promise < Block[] > {
+  onError?: ErrorCallback
+): Promise<Block[]> {
   const newBlockId = () => uuidv4();
 
   // TEXT_BLOCK

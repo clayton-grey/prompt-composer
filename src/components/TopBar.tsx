@@ -1,3 +1,4 @@
+
 /**
  * @file TopBar.tsx
  * @description
@@ -89,35 +90,46 @@ const TopBar: React.FC = () => {
     toggleDarkMode();
   };
 
-  return ( <
-    header className = "w-full h-14 bg-white dark:bg-gray-800 flex items-center px-4 shadow" >
-    <
-    h1 className = "text-xl font-semibold text-gray-800 dark:text-gray-100" >
-    Prompt Composer <
-    /h1>
+  return (
+    <header className="w-full h-14 bg-white dark:bg-gray-800 flex items-center px-4 shadow">
+      <h1 className="text-xl font-semibold text-gray-800 dark:text-gray-100">
+        Prompt Composer
+      </h1>
 
-    <
-    div className = "ml-auto flex items-center gap-3" > { /* Copy Prompt (async) */ } <
-    button onClick = { handleCopy } className = "px-3 py-1 text-sm rounded bg-blue-500 hover:bg-blue-600 text-white" >
-    Copy Prompt <
-    /button>
+      <div className="ml-auto flex items-center gap-3">
+        {/* Copy Prompt (async) */}
+        <button
+          onClick={handleCopy}
+          className="px-3 py-1 text-sm rounded bg-blue-500 hover:bg-blue-600 text-white"
+        >
+          Copy Prompt
+        </button>
 
-    { /* Export XML Button */ } <
-    button onClick = { handleExportXML } className = "px-3 py-1 text-sm rounded bg-purple-500 hover:bg-purple-600 text-white" >
-    Export XML <
-    /button>
+        {/* Export XML Button */}
+        <button
+          onClick={handleExportXML}
+          className="px-3 py-1 text-sm rounded bg-purple-500 hover:bg-purple-600 text-white"
+        >
+          Export XML
+        </button>
 
-    { /* Import XML Button */ } <
-    button onClick = { handleImportXML } className = "px-3 py-1 text-sm rounded bg-yellow-500 hover:bg-yellow-600 text-black" >
-    Import XML <
-    /button>
+        {/* Import XML Button */}
+        <button
+          onClick={handleImportXML}
+          className="px-3 py-1 text-sm rounded bg-yellow-500 hover:bg-yellow-600 text-black"
+        >
+          Import XML
+        </button>
 
-    { /* Dark/Light Mode Toggle */ } <
-    button onClick = { handleThemeToggle } className = "px-3 py-1 text-sm rounded bg-gray-500 hover:bg-gray-600 text-white" >
-    { darkMode ? 'Light Mode' : 'Dark Mode' } <
-    /button> <
-    /div> <
-    /header>
+        {/* Dark/Light Mode Toggle */}
+        <button
+          onClick={handleThemeToggle}
+          className="px-3 py-1 text-sm rounded bg-gray-500 hover:bg-gray-600 text-white"
+        >
+          {darkMode ? 'Light Mode' : 'Dark Mode'}
+        </button>
+      </div>
+    </header>
   );
 };
 

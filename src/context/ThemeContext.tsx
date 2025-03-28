@@ -1,3 +1,4 @@
+
 /**
  * @file ThemeContext.tsx
  * @description
@@ -27,7 +28,7 @@ interface ThemeContextType {
   toggleDarkMode: () => void;
 }
 
-const ThemeContext = createContext < ThemeContextType > ({
+const ThemeContext = createContext<ThemeContextType>({
   darkMode: false,
   toggleDarkMode: () => {}
 });
@@ -36,16 +37,17 @@ const ThemeContext = createContext < ThemeContextType > ({
  * ThemeProvider
  * Wraps children in a context that manages darkMode and a toggle function.
  */
-export const ThemeProvider: React.FC < React.PropsWithChildren > = ({ children }) => {
-  const [darkMode, setDarkMode] = useState < boolean > (false);
+export const ThemeProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
+  const [darkMode, setDarkMode] = useState<boolean>(false);
 
   const toggleDarkMode = useCallback(() => {
     setDarkMode((prev) => !prev);
   }, []);
 
-  return ( <
-    ThemeContext.Provider value = { { darkMode, toggleDarkMode } } > { children } <
-    /ThemeContext.Provider>
+  return (
+    <ThemeContext.Provider value={{ darkMode, toggleDarkMode }}>
+      {children}
+    </ThemeContext.Provider>
   );
 };
 

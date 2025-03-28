@@ -1,3 +1,4 @@
+
 /**
  * @file tokenEstimator.ts
  * @description
@@ -19,8 +20,7 @@ import { encoding_for_model, TiktokenModel, get_encoding } from '@dqbd/tiktoken'
 /**
  * Simple cache so we don't re-initialize Tiktoken encoders repeatedly.
  */
-const encoderCache = new Map < string,
-  any > ();
+const encoderCache = new Map<string, any>();
 
 /**
  * initEncoder
