@@ -1,22 +1,17 @@
-
 /**
  * @file ipcHandlers.ts
  * @description
  * Consolidated directory reading logic + Asynchronous FS operations for Prompt Composer.
- * 
- * In this update (Step 4: Add PromptResponseBlock Handling & UI):
- *  - We add a new IPC handler "write-prompt-composer-file" that writes a file to the
- *    project .prompt-composer directory. This is used by the PromptResponseBlock to
- *    persist its content in a dedicated file.
+ *
+ * In this update (Step 6: Add Support for .promptignore):
+ *  - We enhance createIgnoreForPath to also look for ".prompt-composer/.promptignore" in the project root.
+ *  - If found, we merge those rules with the existing .gitignore-based ignore.
  *
  * Key Changes:
- *  - Added ipcMain.handle('write-prompt-composer-file', ...) near the read/write section.
+ *  - Added logic in createIgnoreForPath to read .prompt-composer/.promptignore and merge its patterns.
  *
  * Other Existing IPC Handlers:
  *  - list-directory, read-file, export-xml, import-xml, show-open-dialog, etc.
- *
- * @notes
- *  - The "writePromptComposerFile" is invoked by the renderer via preload.ts -> electronAPI.
  */
 
 import { ipcMain, dialog } from 'electron';
@@ -26,7 +21,17 @@ import os from 'os';
 import ignore from 'ignore';
 
 const ALLOWED_EXTENSIONS = [
-  '.txt', '.md', '.js', '.ts', '.tsx', '.jsx', '.json', '.py', '.css', '.html', '.sql'
+  '.txt',
+  '.md',
+  '.js',
+  '.ts',
+  '.tsx',
+  '.jsx',
+  '.json',
+  '.py',
+  '.css',
+  '.html',
+  '.sql',
 ];
 
 interface TreeNode {
@@ -36,6 +41,11 @@ interface TreeNode {
   children?: TreeNode[];
 }
 
+/**
+ * Lists the template files in a given folder path. Used by listAllTemplateFiles to gather .txt or .md files.
+ * @param folderPath - The absolute path to the .prompt-composer folder
+ * @returns An array of filenames (string[]) that end with .txt or .md
+ */
 async function listPromptComposerFiles(folderPath: string): Promise<string[]> {
   try {
     const stat = await fs.promises.stat(folderPath);
@@ -58,6 +68,15 @@ async function listPromptComposerFiles(folderPath: string): Promise<string[]> {
   return results;
 }
 
+/**
+ * createIgnoreForPath
+ * Merges .gitignore rules with an optional .prompt-composer/.promptignore file if isProjectDir is true.
+ * If the target path is external, we try to read its local .gitignore or apply minimal defaults.
+ *
+ * @param targetPath - The absolute directory path the user wants to list
+ * @param projectRoot - The absolute path to the main project root (process.cwd())
+ * @returns An object with { ig: ignore.Ignore, isProjectDir: boolean }
+ */
 async function createIgnoreForPath(
   targetPath: string,
   projectRoot: string
@@ -73,7 +92,21 @@ async function createIgnoreForPath(
     } catch {
       // If .gitignore doesn't exist, skip
     }
+
+    // NEW in Step 6: also merge .promptignore from .prompt-composer
+    const promptignorePath = path.join(projectRoot, '.prompt-composer', '.promptignore');
+    console.log(promptignorePath);
+    try {
+      const promptignoreContent = await fs.promises.readFile(promptignorePath, 'utf-8');
+      ig = ig.add(promptignoreContent.split('\n'));
+      console.log('NUMBERWANG');
+      console.log(promptignoreContent);
+    } catch {
+      console.log('WANGERNUMB');
+      // If .promptignore doesn't exist or fails to read, silently skip
+    }
   } else {
+    // External folder outside project root
     const externalGitignorePath = path.join(targetPath, '.gitignore');
     try {
       const gitignoreContent = await fs.promises.readFile(externalGitignorePath, 'utf-8');
@@ -83,10 +116,13 @@ async function createIgnoreForPath(
       ig = ig.add(['node_modules', '.git', '.DS_Store', '*.log']);
     }
   }
-
   return { ig, isProjectDir };
 }
 
+/**
+ * Recursively reads a directory and returns an array of TreeNodes
+ * respecting the ignore rules from createIgnoreForPath. Called by 'list-directory' below.
+ */
 async function readDirectoryTree(
   dirPath: string,
   ig: ignore.Ignore,
@@ -131,7 +167,7 @@ async function readDirectoryTree(
         name: entry,
         path: fullPath,
         type: 'directory',
-        children
+        children,
       });
     } else {
       const ext = path.extname(entry).toLowerCase();
@@ -139,7 +175,7 @@ async function readDirectoryTree(
         results.push({
           name: entry,
           path: fullPath,
-          type: 'file'
+          type: 'file',
         });
       }
     }
@@ -148,6 +184,10 @@ async function readDirectoryTree(
   return results;
 }
 
+/**
+ * Registers the IPC handlers for the Electron main process.
+ * This includes listing directories, reading files, exporting/importing XML, etc.
+ */
 export function registerIpcHandlers(): void {
   ipcMain.handle('list-directory', async (_event, dirPath: string) => {
     try {
@@ -167,7 +207,7 @@ export function registerIpcHandlers(): void {
       return {
         absolutePath: targetPath,
         baseName,
-        children: tree
+        children: tree,
       };
     } catch (err) {
       console.error('[list-directory] Async error:', err);
@@ -194,8 +234,8 @@ export function registerIpcHandlers(): void {
         defaultPath: defaultFileName || 'prompt_composition.xml',
         filters: [
           { name: 'XML Files', extensions: ['xml'] },
-          { name: 'All Files', extensions: ['*'] }
-        ]
+          { name: 'All Files', extensions: ['*'] },
+        ],
       };
 
       const result = await dialog.showSaveDialog(saveDialogOptions);
@@ -220,9 +260,9 @@ export function registerIpcHandlers(): void {
         title: 'Import Prompt Composition from XML',
         filters: [
           { name: 'XML Files', extensions: ['xml'] },
-          { name: 'All Files', extensions: ['*'] }
+          { name: 'All Files', extensions: ['*'] },
         ],
-        properties: ['openFile']
+        properties: ['openFile'],
       };
 
       const result = await dialog.showOpenDialog(openDialogOptions);
@@ -246,33 +286,36 @@ export function registerIpcHandlers(): void {
     return dialog.showOpenDialog(options);
   });
 
-  ipcMain.handle('create-folder', async (_event, { parentPath, folderName }: { parentPath: string; folderName: string }) => {
-    let baseName = folderName;
-    let suffix = 1;
-    let targetPath = path.join(parentPath, baseName);
+  ipcMain.handle(
+    'create-folder',
+    async (_event, { parentPath, folderName }: { parentPath: string; folderName: string }) => {
+      let baseName = folderName;
+      let suffix = 1;
+      let targetPath = path.join(parentPath, baseName);
 
-    while (true) {
-      try {
-        const exists = await fs.promises.stat(targetPath);
-        if (exists && exists.isDirectory()) {
-          suffix += 1;
-          baseName = `${folderName} (${suffix})`;
-          targetPath = path.join(parentPath, baseName);
+      while (true) {
+        try {
+          const exists = await fs.promises.stat(targetPath);
+          if (exists && exists.isDirectory()) {
+            suffix += 1;
+            baseName = `${folderName} (${suffix})`;
+            targetPath = path.join(parentPath, baseName);
+          }
+        } catch {
+          break;
         }
-      } catch {
-        break;
+      }
+
+      try {
+        await fs.promises.mkdir(targetPath);
+        console.log('[create-folder] Successfully created folder at:', targetPath);
+        return targetPath;
+      } catch (err) {
+        console.error('[create-folder] Error creating folder:', err);
+        return null;
       }
     }
-
-    try {
-      await fs.promises.mkdir(targetPath);
-      console.log('[create-folder] Successfully created folder at:', targetPath);
-      return targetPath;
-    } catch (err) {
-      console.error('[create-folder] Error creating folder:', err);
-      return null;
-    }
-  });
+  );
 
   ipcMain.handle('verify-file-existence', async (_event, filePath: string) => {
     try {
@@ -287,21 +330,26 @@ export function registerIpcHandlers(): void {
     try {
       const projectRoot = process.cwd();
       console.log(`[read-prompt-composer-file] Project root: ${projectRoot}`);
-      
+
       const promptComposerFolder = path.join(projectRoot, '.prompt-composer');
       console.log(`[read-prompt-composer-file] Looking in folder: ${promptComposerFolder}`);
-      
+
       try {
         const folderStats = await fs.promises.stat(promptComposerFolder);
         if (!folderStats.isDirectory()) {
-          console.error(`[read-prompt-composer-file] .prompt-composer is not a directory: ${promptComposerFolder}`);
+          console.error(
+            `[read-prompt-composer-file] .prompt-composer is not a directory: ${promptComposerFolder}`
+          );
           return null;
         }
       } catch (folderErr) {
-        console.error(`[read-prompt-composer-file] .prompt-composer not found at: ${promptComposerFolder}`, folderErr);
+        console.error(
+          `[read-prompt-composer-file] .prompt-composer not found at: ${promptComposerFolder}`,
+          folderErr
+        );
         return null;
       }
-      
+
       const targetPath = path.join(promptComposerFolder, relativeFilename);
       console.log(`[read-prompt-composer-file] Looking for file: ${targetPath}`);
 
@@ -346,7 +394,10 @@ export function registerIpcHandlers(): void {
           result.push({ fileName: lf, source: 'project' });
         }
       } catch (err) {
-        console.warn(`[list-all-template-files] Could not list .prompt-composer in folder: ${folder}`, err);
+        console.warn(
+          `[list-all-template-files] Could not list .prompt-composer in folder: ${folder}`,
+          err
+        );
       }
     }
 
@@ -375,28 +426,31 @@ export function registerIpcHandlers(): void {
   });
 
   /**
-   * Step 4: Add the ability to write to a prompt-composer file. 
+   * Step 4: Add the ability to write to a prompt-composer file.
    * This is used by the new "PromptResponseBlock" to persist content.
    */
-  ipcMain.handle('write-prompt-composer-file', async (_event, args: { relativeFilename: string; content: string }) => {
-    try {
-      const projectRoot = process.cwd();
-      const promptComposerFolder = path.join(projectRoot, '.prompt-composer');
-      // Ensure the folder exists
+  ipcMain.handle(
+    'write-prompt-composer-file',
+    async (_event, args: { relativeFilename: string; content: string }) => {
       try {
-        await fs.promises.stat(promptComposerFolder);
-      } catch (err) {
-        console.log('[write-prompt-composer-file] .prompt-composer does not exist, creating it');
-        await fs.promises.mkdir(promptComposerFolder, { recursive: true });
-      }
+        const projectRoot = process.cwd();
+        const promptComposerFolder = path.join(projectRoot, '.prompt-composer');
+        // Ensure the folder exists
+        try {
+          await fs.promises.stat(promptComposerFolder);
+        } catch (err) {
+          console.log('[write-prompt-composer-file] .prompt-composer does not exist, creating it');
+          await fs.promises.mkdir(promptComposerFolder, { recursive: true });
+        }
 
-      const targetPath = path.join(promptComposerFolder, args.relativeFilename);
-      await fs.promises.writeFile(targetPath, args.content, 'utf-8');
-      console.log('[write-prompt-composer-file] Wrote file to', targetPath);
-      return true;
-    } catch (err) {
-      console.error('[write-prompt-composer-file] Error writing file:', err);
-      throw err;
+        const targetPath = path.join(promptComposerFolder, args.relativeFilename);
+        await fs.promises.writeFile(targetPath, args.content, 'utf-8');
+        console.log('[write-prompt-composer-file] Wrote file to', targetPath);
+        return true;
+      } catch (err) {
+        console.error('[write-prompt-composer-file] Error writing file:', err);
+        throw err;
+      }
     }
-  });
+  );
 }

@@ -4,19 +4,15 @@
  * @description
  * Consolidated directory reading logic + Asynchronous FS operations for Prompt Composer.
  *
- * In this update (Step 4: Add PromptResponseBlock Handling & UI):
- *  - We add a new IPC handler "write-prompt-composer-file" that writes a file to the
- *    project .prompt-composer directory. This is used by the PromptResponseBlock to
- *    persist its content in a dedicated file.
+ * In this update (Step 6: Add Support for .promptignore):
+ *  - We enhance createIgnoreForPath to also look for ".prompt-composer/.promptignore" in the project root.
+ *  - If found, we merge those rules with the existing .gitignore-based ignore.
  *
  * Key Changes:
- *  - Added ipcMain.handle('write-prompt-composer-file', ...) near the read/write section.
+ *  - Added logic in createIgnoreForPath to read .prompt-composer/.promptignore and merge its patterns.
  *
  * Other Existing IPC Handlers:
  *  - list-directory, read-file, export-xml, import-xml, show-open-dialog, etc.
- *
- * @notes
- *  - The "writePromptComposerFile" is invoked by the renderer via preload.ts -> electronAPI.
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -29,8 +25,23 @@ const path_1 = __importDefault(require("path"));
 const os_1 = __importDefault(require("os"));
 const ignore_1 = __importDefault(require("ignore"));
 const ALLOWED_EXTENSIONS = [
-    '.txt', '.md', '.js', '.ts', '.tsx', '.jsx', '.json', '.py', '.css', '.html', '.sql'
+    '.txt',
+    '.md',
+    '.js',
+    '.ts',
+    '.tsx',
+    '.jsx',
+    '.json',
+    '.py',
+    '.css',
+    '.html',
+    '.sql',
 ];
+/**
+ * Lists the template files in a given folder path. Used by listAllTemplateFiles to gather .txt or .md files.
+ * @param folderPath - The absolute path to the .prompt-composer folder
+ * @returns An array of filenames (string[]) that end with .txt or .md
+ */
 async function listPromptComposerFiles(folderPath) {
     try {
         const stat = await fs_1.default.promises.stat(folderPath);
@@ -53,6 +64,15 @@ async function listPromptComposerFiles(folderPath) {
     }
     return results;
 }
+/**
+ * createIgnoreForPath
+ * Merges .gitignore rules with an optional .prompt-composer/.promptignore file if isProjectDir is true.
+ * If the target path is external, we try to read its local .gitignore or apply minimal defaults.
+ *
+ * @param targetPath - The absolute directory path the user wants to list
+ * @param projectRoot - The absolute path to the main project root (process.cwd())
+ * @returns An object with { ig: ignore.Ignore, isProjectDir: boolean }
+ */
 async function createIgnoreForPath(targetPath, projectRoot) {
     let ig = (0, ignore_1.default)();
     const isProjectDir = targetPath.startsWith(projectRoot);
@@ -65,8 +85,22 @@ async function createIgnoreForPath(targetPath, projectRoot) {
         catch {
             // If .gitignore doesn't exist, skip
         }
+        // NEW in Step 6: also merge .promptignore from .prompt-composer
+        const promptignorePath = path_1.default.join(projectRoot, '.prompt-composer', '.promptignore');
+        console.log(promptignorePath);
+        try {
+            const promptignoreContent = await fs_1.default.promises.readFile(promptignorePath, 'utf-8');
+            ig = ig.add(promptignoreContent.split('\n'));
+            console.log('NUMBERWANG');
+            console.log(promptignoreContent);
+        }
+        catch {
+            console.log('WANGERNUMB');
+            // If .promptignore doesn't exist or fails to read, silently skip
+        }
     }
     else {
+        // External folder outside project root
         const externalGitignorePath = path_1.default.join(targetPath, '.gitignore');
         try {
             const gitignoreContent = await fs_1.default.promises.readFile(externalGitignorePath, 'utf-8');
@@ -79,6 +113,10 @@ async function createIgnoreForPath(targetPath, projectRoot) {
     }
     return { ig, isProjectDir };
 }
+/**
+ * Recursively reads a directory and returns an array of TreeNodes
+ * respecting the ignore rules from createIgnoreForPath. Called by 'list-directory' below.
+ */
 async function readDirectoryTree(dirPath, ig, isProjectDir, projectRoot) {
     const results = [];
     let entries = [];
@@ -114,7 +152,7 @@ async function readDirectoryTree(dirPath, ig, isProjectDir, projectRoot) {
                 name: entry,
                 path: fullPath,
                 type: 'directory',
-                children
+                children,
             });
         }
         else {
@@ -123,13 +161,17 @@ async function readDirectoryTree(dirPath, ig, isProjectDir, projectRoot) {
                 results.push({
                     name: entry,
                     path: fullPath,
-                    type: 'file'
+                    type: 'file',
                 });
             }
         }
     }
     return results;
 }
+/**
+ * Registers the IPC handlers for the Electron main process.
+ * This includes listing directories, reading files, exporting/importing XML, etc.
+ */
 function registerIpcHandlers() {
     electron_1.ipcMain.handle('list-directory', async (_event, dirPath) => {
         try {
@@ -145,7 +187,7 @@ function registerIpcHandlers() {
             return {
                 absolutePath: targetPath,
                 baseName,
-                children: tree
+                children: tree,
             };
         }
         catch (err) {
@@ -172,8 +214,8 @@ function registerIpcHandlers() {
                 defaultPath: defaultFileName || 'prompt_composition.xml',
                 filters: [
                     { name: 'XML Files', extensions: ['xml'] },
-                    { name: 'All Files', extensions: ['*'] }
-                ]
+                    { name: 'All Files', extensions: ['*'] },
+                ],
             };
             const result = await electron_1.dialog.showSaveDialog(saveDialogOptions);
             if (result.canceled || !result.filePath) {
@@ -195,9 +237,9 @@ function registerIpcHandlers() {
                 title: 'Import Prompt Composition from XML',
                 filters: [
                     { name: 'XML Files', extensions: ['xml'] },
-                    { name: 'All Files', extensions: ['*'] }
+                    { name: 'All Files', extensions: ['*'] },
                 ],
-                properties: ['openFile']
+                properties: ['openFile'],
             };
             const result = await electron_1.dialog.showOpenDialog(openDialogOptions);
             if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
