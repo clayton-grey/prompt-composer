@@ -6,15 +6,19 @@
  * "Edit Raw" button. Now we remove that button from here and let BlockList handle
  * the raw edit icon in the bottom-right corner on hover.
  *
+ * Step 6 Changes:
+ *  - Removed the mention of "Flip" from the doc comment to standardize references
+ *    solely around "Raw Edit." We no longer mention "flip" in code or doc.
+ *
  * We still show the raw editing textarea if block.editingRaw is true, but the button
- * to enter raw mode is no longer here.
+ * to enter raw mode is now in BlockList (the pencil icon).
  *
- * Step X changes:
- *  - Removed the old "Flip" or "Edit Raw" button from the top bar. Instead, the parent
- *    container in BlockList shows a pencil icon in the bottom-right corner on hover.
+ * Implementation:
+ *  - If block.editingRaw, we show a textarea for editing the entire template group text.
+ *    Once confirmed, we parse it into sub-blocks that replace the old group.
+ *  - If not editingRaw, we simply display the existing block's content read-only.
  *
- * Step 5 Changes (Accessibility):
- *  - Added aria-label to the raw editing <textarea>.
+ * Exports: TemplateBlockEditor
  */
 
 import React, { useState, useEffect } from 'react';
@@ -22,8 +26,22 @@ import { TemplateBlock, Block } from '../../types/Block';
 import { usePrompt } from '../../context/PromptContext';
 
 /**
- * Reconstruct the raw template text from the group. 
- * This is the same function as before, so we keep it for editingRaw usage.
+ * reconstructRawTemplateFromGroup
+ * Reconstructs the raw template text from all blocks in the group in order,
+ * combining template blocks, text blocks, and file placeholders.
+ *
+ * Implementation:
+ *  - Finds all blocks in the same group (groupId),
+ *  - Sort them by their index in the blocks array,
+ *  - For each block:
+ *     if template: we append block.content
+ *     if text: we insert {{TEXT_BLOCK=...}}
+ *     if file: we insert {{FILE_BLOCK}}
+ *
+ * @param groupId  The group ID shared by the template expansion
+ * @param leadBlockId  The ID of the lead block (unused in logic but included for clarity)
+ * @param allBlocks  The full array of blocks from context
+ * @returns A single string representing the entire template group in "raw" form
  */
 function reconstructRawTemplateFromGroup(
   groupId: string,
@@ -67,7 +85,7 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
   const [rawContent, setRawContent] = useState<string>('');
   const [originalRawContent, setOriginalRawContent] = useState<string>('');
 
-  // Whenever editingRaw toggles, reconstruct the raw text or reset states
+  // If block.editingRaw becomes true, reconstruct the entire raw text
   useEffect(() => {
     if (block.editingRaw) {
       setIsEditingRaw(true);
@@ -80,8 +98,9 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
   }, [block.editingRaw, block.groupId, block.id, blocks]);
 
   /**
-   * handleRawConfirm: user has edited raw text and clicked "Confirm"
-   * We parse it to form new sub-blocks in place. 
+   * handleRawConfirm
+   * The user confirms their edits to the raw template. We call replaceTemplateGroup
+   * to parse the new text into sub-blocks, replacing the old group in context.
    */
   const handleRawConfirm = async () => {
     if (!block.groupId) {
@@ -95,7 +114,8 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
   };
 
   /**
-   * handleRawCancel: revert to normal display with no changes
+   * handleRawCancel
+   * The user cancels the raw edit. We revert back to the old mode, discarding changes.
    */
   const handleRawCancel = () => {
     setIsEditingRaw(false);
@@ -133,7 +153,7 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
     );
   }
 
-  // Normal mode: just show the block content read-only if any
+  // Normal (non-raw) mode:
   return (
     <div>
       {block.content && (

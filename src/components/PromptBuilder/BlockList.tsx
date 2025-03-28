@@ -8,21 +8,32 @@
  *  - Block vs. Template Delete
  *  - Raw Edit icon (pencil) for template block leads only
  *
- * Step 2 Changes:
- *  - We remove the inline reorder logic (findGroupRange, reorderChunk) and place it in a separate
- *    file called blockReorderHelpers.ts. We import findGroupRange and reorderBlocksInRange from there.
- *  - The rest of the logic remains the same, ensuring no user-facing changes.
+ * This file was updated in Step 2 to extract reorder logic into blockReorderHelpers.ts.
+ * In Step 6, we changed the aria-label from "Edit raw template" to "Edit Raw Template"
+ * for consistency with naming conventions.
  *
  * Step 5 Changes (Accessibility):
  *  - Added aria-label attributes for reorder and delete buttons
  *  - Added aria-label for raw edit pencil icon
+ *
+ * Implementation Details:
+ *  - We rely on PromptContext for block data and reorder operations
+ *  - findGroupRange, reorderBlocksInRange come from blockReorderHelpers
+ *  - handleMoveUp/handleMoveDown handle group or single block moves
+ *  - handleDelete removes the entire group if lead or single if ungrouped
+ *  - handleRawEdit toggles the lead template block into editingRaw mode
+ *
+ * Edge Cases:
+ *  - If a block is locked, user cannot reorder or delete it individually
+ *  - If it's part of a group, only the isGroupLead block can reorder/delete
+ *
+ * @author Prompt Composer
  */
 
 import React, { useEffect } from 'react';
 import { usePrompt } from '../../context/PromptContext';
 import type { Block } from '../../types/Block';
 import BlockEditor from './BlockEditor';
-// Import from our new helper
 import { findGroupRange, reorderBlocksInRange } from '../../utils/blockReorderHelpers';
 
 /**
@@ -338,7 +349,7 @@ const BlockList: React.FC = () => {
                 <button
                   onClick={() => handleRawEdit(block)}
                   className="p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded"
-                  aria-label="Edit raw template"
+                  aria-label="Edit Raw Template"
                 >
                   {/* Pencil icon for raw edit */}
                   <svg
