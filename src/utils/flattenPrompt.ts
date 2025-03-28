@@ -1,58 +1,61 @@
 /**
  * @file flattenPrompt.ts
  * @description
- * Generates a single multiline prompt string from an array of blocks,
- * resolving any nested placeholders. But we now remove the extra whitespace
- * (newlines) that was previously inserted around tags.
+ * Flatten the array of blocks into a single multiline string, embedding file block output
+ * from the tri-state selection if the user has toggled "includeProjectMap" to true.
+ *
+ * In this update, we remove the fallback "?? true" for includeProjectMap, so we strictly
+ * respect the boolean in the block. If it's false, we do not embed the ASCII map.
  */
 
 import { Block, TextBlock, TemplateBlock, FilesBlock, PromptResponseBlock } from '../types/Block';
-import { resolveNestedTemplates } from './templateResolver';
 
-export async function flattenBlocksAsync(blocks: Block[]): Promise<string> {
+/**
+ * Flatten blocks into a single string, using the user's tri-state file selection.
+ */
+export async function flattenBlocksAsync(
+  blocks: Block[],
+  selectedFileEntries: Array<{ path: string; content: string; language: string }>
+): Promise<string> {
   let finalString = '';
 
   for (const block of blocks) {
-    if (block.type === 'text') {
-      const textBlock = block as TextBlock;
-      // Just pass the content directly into nested placeholders
-      const resolved = await resolveNestedTemplates(textBlock.content);
-      // Removed "\n\n", so we just append the content with no extra whitespace
-      finalString += resolved;
-    } else if (block.type === 'template') {
-      const templateBlock = block as TemplateBlock;
-      // Apply variable substitution
-      let substituted = templateBlock.content;
-      for (const variable of templateBlock.variables) {
-        const varPattern = new RegExp(`\\{\\{${variable.name}\\}\\}`, 'g');
-        substituted = substituted.replace(varPattern, variable.default);
+    switch (block.type) {
+      case 'text': {
+        finalString += block.content;
+        break;
       }
-      const resolved = await resolveNestedTemplates(substituted);
-      finalString += resolved;
-    } else if (block.type === 'files') {
-      const filesBlock = block as FilesBlock;
-      const mapToInclude = filesBlock.includeProjectMap ?? true;
-      if (mapToInclude && filesBlock.projectAsciiMap) {
-        const resolvedMap = await resolveNestedTemplates(filesBlock.projectAsciiMap);
-        finalString += resolvedMap;
+
+      case 'template': {
+        finalString += block.content;
+        break;
       }
-      for (const file of filesBlock.files) {
-        const snippet = `<file_contents>
-File: ${file.path}
-\`\`\`${file.language}
-${file.content}
-\`\`\`
-</file_contents>`;
-        const resolvedSnippet = await resolveNestedTemplates(snippet);
-        finalString += resolvedSnippet;
+
+      case 'files': {
+        const fb = block as FilesBlock;
+        // If includeProjectMap is true and we have a projectAsciiMap, embed it
+        if (fb.includeProjectMap && fb.projectAsciiMap) {
+          finalString += fb.projectAsciiMap.trimEnd() + '\n';
+        }
+        // Then embed the user-selected files
+        for (const file of selectedFileEntries) {
+          finalString += `<file_contents>\nFile: ${file.path}\n\`\`\`${file.language}\n${file.content}\n\`\`\`\n</file_contents>\n`;
+        }
+        break;
       }
-    } else if (block.type === 'promptResponse') {
-      const prBlock = block as PromptResponseBlock;
-      const resolved = await resolveNestedTemplates(prBlock.content);
-      finalString += resolved;
+
+      case 'promptResponse': {
+        finalString += block.content;
+        break;
+      }
+
+      default:
+        // unknown block => skip or fallback
+        break;
     }
+
+    finalString += '\n';
   }
 
-  // Trim leading/trailing whitespace
   return finalString.trim();
 }

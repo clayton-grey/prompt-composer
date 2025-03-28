@@ -1,19 +1,10 @@
 /**
  * @file templateBlockParserAsync.ts
  * @description
- * Parses a (possibly flattened) template string into blocks for TEXT_BLOCK, FILE_BLOCK,
- * PROMPT_RESPONSE, or leftover placeholders. We now revert to an approach
- * that does NOT skip or remove newlines automatically, preserving user-typed
- * spacing and line breaks in the raw text.
+ * Parses the template string for {{FILE_BLOCK}}, {{TEXT_BLOCK=...}}, {{PROMPT_RESPONSE=...}}, etc.
  *
- * New in this update:
- *  - After generating all blocks, if we detect a PROMPT_RESPONSE block,
- *    we attempt to load its content from .prompt-composer in the project folder,
- *    falling back to the global user folder if not found. That way, the block
- *    starts out with the file content if it exists.
- *
- * If you want to hide a purely blank line after a placeholder for visual reasons,
- * do that in the UI (e.g., TemplateBlockEditor).
+ * In this update, we ensure that FILE_BLOCK placeholders default to `includeProjectMap: true`,
+ * so that the user can toggle it off later in the UI, and the flatten process respects that.
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -22,6 +13,10 @@ import { flattenTemplate } from './flattenTemplate';
 
 type ErrorCallback = (message: string) => void;
 
+/**
+ * parseTemplateBlocksAsync
+ * ...
+ */
 export async function parseTemplateBlocksAsync(
   sourceText: string,
   forceGroupId?: string,
@@ -57,9 +52,9 @@ export async function parseTemplateBlocksAsync(
   }
 
   while ((match = placeholderRegex.exec(finalText)) !== null) {
-    const fullPlaceholder = match[1]; // e.g. "{{FILE_BLOCK}}"
-    const placeholderName = match[2]; // e.g. "FILE_BLOCK"
-    const placeholderValue = match[3]; // e.g. "stuff"
+    const fullPlaceholder = match[1];
+    const placeholderName = match[2];
+    const placeholderValue = match[3];
     const matchIndex = match.index;
 
     // text up to this placeholder => create a template segment block
@@ -117,7 +112,7 @@ export async function parseTemplateBlocksAsync(
     currentIndex = matchIndex + fullPlaceholder.length;
   }
 
-  // trailing text after the last placeholder
+  // trailing text
   if (currentIndex < finalText.length) {
     const trailing = finalText.slice(currentIndex);
     if (trailing.length > 0) {
@@ -132,7 +127,6 @@ export async function parseTemplateBlocksAsync(
     }
   }
 
-  // If we ended up with no blocks, create an empty block
   if (blocks.length === 0) {
     const emptyBlock: TemplateBlock = {
       id: forceLeadBlockId || uuidv4(),
@@ -147,7 +141,7 @@ export async function parseTemplateBlocksAsync(
     blocks.push(emptyBlock);
   }
 
-  // NEW LOGIC: If any PROMPT_RESPONSE blocks exist, try loading the file's content
+  // Try loading content for any promptResponse blocks
   for (const b of blocks) {
     if (b.type === 'promptResponse') {
       const prb = b as PromptResponseBlock;
@@ -173,14 +167,7 @@ export async function parseTemplateBlocksAsync(
 
 /**
  * parsePlaceholder
- * Converts a recognized placeholder into the correct block(s).
- * @param placeholderName - e.g. "TEXT_BLOCK", "FILE_BLOCK", "PROMPT_RESPONSE"
- * @param placeholderValue - the optional string after the '='
- * @param groupId - group id to apply to resulting blocks
- * @param makeLeadBlockId - if truthy, apply isGroupLead & locked=false & use that as ID
- * @param onError - callback for parse errors
- *
- * @returns An array of blocks for that placeholder
+ * Creates appropriate block(s) for placeholders.
  */
 function parsePlaceholder(
   placeholderName: string,
@@ -191,7 +178,6 @@ function parsePlaceholder(
 ): Block[] {
   const newId = () => uuidv4();
 
-  // TEXT_BLOCK
   if (placeholderName === 'TEXT_BLOCK') {
     const textContent = placeholderValue ?? '';
     const tb: TextBlock = {
@@ -211,7 +197,6 @@ function parsePlaceholder(
     return [tb];
   }
 
-  // FILE_BLOCK
   if (placeholderName === 'FILE_BLOCK') {
     const fb: FilesBlock = {
       id: newId(),
@@ -221,6 +206,7 @@ function parsePlaceholder(
       locked: true,
       groupId,
       isGroupLead: false,
+      includeProjectMap: true, // default to true
     };
     if (makeLeadBlockId) {
       fb.isGroupLead = true;
@@ -230,7 +216,6 @@ function parsePlaceholder(
     return [fb];
   }
 
-  // PROMPT_RESPONSE
   if (placeholderName === 'PROMPT_RESPONSE') {
     const filename = (placeholderValue ?? 'untitled.txt').trim();
     const prb: PromptResponseBlock = {
@@ -251,7 +236,10 @@ function parsePlaceholder(
     return [prb];
   }
 
-  // Otherwise => unknown placeholder
+  onError?.(
+    `Unknown placeholder: {{${placeholderName}${placeholderValue ? '=' + placeholderValue : ''}}}`
+  );
+
   const unknown: TemplateBlock = {
     id: newId(),
     type: 'template',
@@ -262,8 +250,5 @@ function parsePlaceholder(
     groupId,
     isGroupLead: false,
   };
-  onError?.(
-    `Unknown placeholder: {{${placeholderName}${placeholderValue ? '=' + placeholderValue : ''}}}`
-  );
   return [unknown];
 }

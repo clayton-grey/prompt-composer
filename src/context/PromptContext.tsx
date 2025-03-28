@@ -1,20 +1,15 @@
 /**
  * @file PromptContext.tsx
  * @description
- * Provides global state management for the Prompt Composer's prompt blocks and settings.
+ * Manages the array of prompt blocks.
  *
- * Changes in Step 3:
- *  - Removed the 'moveBlock' method and any references to it since we have
- *    removed block reordering from the UI. The user now primarily relies on
- *    raw edit for major structural changes.
+ * In this update, we fix the file map toggle by automatically generating
+ * a projectAsciiMap for FileBlock if includeProjectMap===true but no projectAsciiMap
+ * is set. This happens in getFlattenedPrompt() before calling flattenBlocksAsync.
  *
- * Key functionalities retained:
- *  - Manage the array of blocks (text, template, files).
- *  - Provide synchronous or asynchronous updates, removal, updates, etc.
- *  - Estimate tokens for each block in real time (with a debounce).
- *  - Flatten the entire composition into a single string (getFlattenedPrompt).
- *
- * @author Prompt Composer
+ * We combine ASCII for all project folders, if multiple exist.
+ * If no folders exist, we skip.
+ * Then we store it in block.projectAsciiMap for flattenBlocksAsync to embed.
  */
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
@@ -24,6 +19,65 @@ import { flattenBlocksAsync } from '../utils/flattenPrompt';
 import { parseTemplateBlocksAsync } from '../utils/templateBlockParserAsync';
 import { initEncoder, estimateTokens } from '../utils/tokenEstimator';
 import { useProject } from './ProjectContext';
+
+// We'll import a function to generate ASCII map from multiple project folders
+// We'll replicate or use the existing code from the "copy file block output" approach
+async function generateCombinedAsciiMapsForFolders(folderPaths: string[]): Promise<string> {
+  if (!window.electronAPI?.listDirectory) {
+    console.warn(
+      '[PromptContext] No electronAPI.listDirectory found. Skipping ASCII map generation.'
+    );
+    return '';
+  }
+
+  // We'll do a minimal approach: for each folder path, we call 'listDirectory' and build an ASCII map
+  // We combine them with a <file_map> heading for each folder.
+  let finalMap = '';
+  for (const folder of folderPaths) {
+    try {
+      const listing = await window.electronAPI.listDirectory(folder);
+      finalMap += '<file_map>\n';
+      finalMap += listing.absolutePath + '\n';
+      // We'll generate lines via a recursive function:
+      function buildLines(node: any, prefix: string, isLast: boolean): string[] {
+        const lines: string[] = [];
+        const nodeMarker = isLast ? '└── ' : '├── ';
+        let label = node.name;
+        if (node.type === 'directory') {
+          label = '[D] ' + node.name;
+        }
+        lines.push(prefix + nodeMarker + label);
+
+        if (node.children && node.children.length > 0) {
+          const childPrefix = prefix + (isLast ? '    ' : '│   ');
+          node.children.forEach((child: any, idx: number) => {
+            const childIsLast = idx === node.children.length - 1;
+            lines.push(...buildLines(child, childPrefix, childIsLast));
+          });
+        }
+
+        return lines;
+      }
+
+      // sort the children for consistent output
+      listing.children.sort((a: any, b: any) => a.name.localeCompare(b.name));
+
+      listing.children.forEach((child: any, idx: number) => {
+        const isLast = idx === listing.children.length - 1;
+        finalMap += buildLines(child, '', isLast).join('\n') + '\n';
+      });
+      finalMap += '</file_map>\n\n';
+    } catch (err) {
+      console.error(
+        '[PromptContext] generateCombinedAsciiMapsForFolders error for folder:',
+        folder,
+        err
+      );
+    }
+  }
+
+  return finalMap.trim();
+}
 
 interface PromptSettings {
   maxTokens: number;
@@ -48,11 +102,6 @@ interface PromptContextType {
   updateBlock: (updatedBlock: Block) => void;
   setSettings: (newSettings: PromptSettings) => void;
 
-  /**
-   * @deprecated Reordering is removed in Step 3. No longer used.
-   * moveBlock: (oldIndex: number, newIndex: number) => void;
-   */
-
   updateFileBlock: (
     fileEntries: { path: string; content: string; language: string }[],
     asciiMap?: string
@@ -71,7 +120,7 @@ interface PromptContextType {
 
 const defaultSettings: PromptSettings = {
   maxTokens: 100000,
-  model: 'gpt-4o',
+  model: 'gpt-4',
 };
 
 const PromptContext = createContext<PromptContextType>({
@@ -82,7 +131,6 @@ const PromptContext = createContext<PromptContextType>({
   removeBlock: () => {},
   updateBlock: () => {},
   setSettings: () => {},
-  // moveBlock is removed in the new design
   updateFileBlock: () => {},
   tokenUsage: { total: 0, byBlock: [] },
   getFlattenedPrompt: async () => '',
@@ -93,18 +141,18 @@ const PromptContext = createContext<PromptContextType>({
 export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [settings, setSettingsState] = useState<PromptSettings>(defaultSettings);
-  const { getSelectedFileEntries } = useProject();
+  const { getSelectedFileEntries, projectFolders } = useProject();
 
   const [tokenUsage, setTokenUsage] = useState<TokenUsage>({ total: 0, byBlock: [] });
 
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // We re-initialize the encoder whenever the model changes
+    // Initialize encoder
     initEncoder(settings.model);
   }, [settings.model]);
 
-  // Single effect for token calculation
+  // Recompute token usage
   useEffect(() => {
     const calculateTokenUsage = async () => {
       if (!settings.model) {
@@ -113,33 +161,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
       }
 
       try {
-        // Wait for electronAPI to be available
-        if (!window?.electronAPI) {
-          return;
-        }
-
         const selectedFileEntries = getSelectedFileEntries();
-        const fileContents = await Promise.all(
-          selectedFileEntries.map(async entry => {
-            try {
-              const content = await window.electronAPI.readFile(entry.path);
-              return {
-                path: entry.path,
-                content,
-                language: entry.language || 'text',
-              };
-            } catch (error) {
-              console.error(`Error reading file ${entry.path}:`, error);
-              return null;
-            }
-          })
-        );
-
-        const validFileContents = fileContents.filter(
-          (entry): entry is NonNullable<typeof entry> => entry !== null
-        );
-
-        // Calculate tokens for all blocks
         const newTokenUsage: TokenUsage = {
           total: 0,
           byBlock: [],
@@ -148,30 +170,19 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
         for (const block of blocks) {
           let content = '';
 
-          switch (block.type) {
-            case 'text':
-            case 'template':
-              content = block.content || '';
-              break;
-            case 'files': {
-              const fb = block as FilesBlock;
-              const shouldIncludeMap = fb.includeProjectMap ?? true;
-              const mapText = shouldIncludeMap && fb.projectAsciiMap ? fb.projectAsciiMap : '';
-              const fileTexts = validFileContents.map(f => {
-                return `<file_contents>
-File: ${f.path}
-\`\`\`${f.language}
-${f.content}
-\`\`\`
-</file_contents>`;
-              });
-              const filesConcatenated = fileTexts.join('\n\n');
-              content = shouldIncludeMap ? mapText + '\n' + filesConcatenated : filesConcatenated;
-              break;
+          if (block.type === 'text' || block.type === 'template') {
+            content = block.content || '';
+          } else if (block.type === 'files') {
+            const fb = block as FilesBlock;
+            const mapText = fb.includeProjectMap && fb.projectAsciiMap ? fb.projectAsciiMap : '';
+            // combine
+            let fileTexts = '';
+            for (const entry of selectedFileEntries) {
+              fileTexts += `<file_contents>\nFile: ${entry.path}\n\`\`\`${entry.language}\n${entry.content}\n\`\`\`\n</file_contents>\n`;
             }
-            case 'promptResponse':
-              content = block.content;
-              break;
+            content = (mapText ? mapText + '\n' : '') + fileTexts;
+          } else if (block.type === 'promptResponse') {
+            content = block.content || '';
           }
 
           const tokens = estimateTokens(content, settings.model);
@@ -186,14 +197,11 @@ ${f.content}
       }
     };
 
-    // Run calculation immediately
     calculateTokenUsage();
 
-    // Also set up debounced calculation for subsequent updates
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
-
     debounceRef.current = setTimeout(calculateTokenUsage, 500);
 
     return () => {
@@ -226,9 +234,7 @@ ${f.content}
 
   /**
    * updateFileBlock
-   * The single "files" block is updated or created.
-   * If it does not exist, we add one; if it does, we overwrite it.
-   * Only one file block is stored at a time in new design.
+   * legacy method from older design
    */
   const updateFileBlock = useCallback(
     (fileEntries: { path: string; content: string; language: string }[], asciiMap?: string) => {
@@ -236,17 +242,11 @@ ${f.content}
         const existingIndex = prev.findIndex(b => b.type === 'files');
         const newId = uuidv4();
 
-        const files = fileEntries.map(f => ({
-          path: f.path,
-          content: f.content,
-          language: f.language,
-        }));
-
         const candidate: FilesBlock = {
           id: newId,
           type: 'files',
           label: 'File Block',
-          files,
+          files: fileEntries,
           projectAsciiMap: asciiMap || '',
           includeProjectMap: true,
           locked: false,
@@ -257,7 +257,6 @@ ${f.content}
         } else {
           const newBlocks = [...prev];
           newBlocks[existingIndex] = candidate;
-          // remove any additional "files" blocks if they somehow exist
           return newBlocks.filter((b, idx) => b.type !== 'files' || idx === existingIndex);
         }
       });
@@ -267,31 +266,48 @@ ${f.content}
 
   /**
    * getFlattenedPrompt
-   * Assembles a final multiline prompt string from the blocks array.
+   * Before we flatten, we see if there's any FILE_BLOCK with includeProjectMap===true
+   * but no projectAsciiMap. We generate a combined ASCII from all project folders,
+   * store it in block.projectAsciiMap, so flatten sees it.
    */
   const getFlattenedPrompt = useCallback(async (): Promise<string> => {
-    const flattened = await flattenBlocksAsync(blocks);
-    return flattened;
-  }, [blocks]);
+    // Potentially generate ASCII map if needed
+    let updatedBlocks = [...blocks];
 
-  /**
-   * importComposition
-   * Replaces the current block set and settings with imported data.
-   */
+    // We'll do a quick pass to see if any FileBlock needs an ASCII map
+    for (let i = 0; i < updatedBlocks.length; i++) {
+      const b = updatedBlocks[i];
+      if (b.type === 'files') {
+        const fb = b as FilesBlock;
+        if (fb.includeProjectMap && (!fb.projectAsciiMap || !fb.projectAsciiMap.trim())) {
+          // Generate if we have project folders
+          if (projectFolders.length > 0) {
+            const combinedMap = await generateCombinedAsciiMapsForFolders(projectFolders);
+            // store in the block so flatten sees it
+            fb.projectAsciiMap = combinedMap;
+            updatedBlocks[i] = fb;
+          } else {
+            // no project folders => can't generate
+            fb.projectAsciiMap = '';
+            updatedBlocks[i] = fb;
+          }
+        }
+      }
+    }
+
+    const selectedEntries = getSelectedFileEntries();
+    const flattened = await flattenBlocksAsync(updatedBlocks, selectedEntries);
+    return flattened;
+  }, [blocks, getSelectedFileEntries, projectFolders]);
+
   const importComposition = useCallback((newBlocks: Block[], newSettings: PromptSettings) => {
     setBlocks(newBlocks);
     setSettingsState(newSettings);
   }, []);
 
-  /**
-   * replaceTemplateGroup
-   * Used when the user confirms a raw edit on a template group. We parse the new text
-   * into blocks, remove the old group, and splice in the new blocks.
-   */
   const replaceTemplateGroup = useCallback(
     async (leadBlockId: string, groupId: string, newText: string, oldRawText: string) => {
       if (newText === oldRawText) {
-        // skip
         setBlocks(prev => {
           return prev.map(b => {
             if (b.id === leadBlockId && b.editingRaw) {
@@ -302,11 +318,7 @@ ${f.content}
         });
         return;
       }
-
-      // parse new text
       const newParsed = await parseTemplateBlocksAsync(newText, groupId, leadBlockId);
-
-      // remove old group blocks, splice new
       setBlocks(prev => {
         const groupIndices: number[] = [];
         for (let i = 0; i < prev.length; i++) {
@@ -315,7 +327,6 @@ ${f.content}
           }
         }
         if (groupIndices.length === 0) {
-          // if no old group found, just append
           return [...prev, ...newParsed];
         }
         const startIndex = Math.min(...groupIndices);
