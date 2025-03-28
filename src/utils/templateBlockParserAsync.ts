@@ -6,6 +6,12 @@
  * that does NOT skip or remove newlines automatically, preserving user-typed
  * spacing and line breaks in the raw text.
  *
+ * New in this update:
+ *  - After generating all blocks, if we detect a PROMPT_RESPONSE block,
+ *    we attempt to load its content from .prompt-composer in the project folder,
+ *    falling back to the global user folder if not found. That way, the block
+ *    starts out with the file content if it exists.
+ *
  * If you want to hide a purely blank line after a placeholder for visual reasons,
  * do that in the UI (e.g., TemplateBlockEditor).
  */
@@ -16,16 +22,6 @@ import { flattenTemplate } from './flattenTemplate';
 
 type ErrorCallback = (message: string) => void;
 
-/**
- * parseTemplateBlocksAsync
- * @param sourceText - The raw template text to parse
- * @param forceGroupId - If provided, all resulting blocks share this groupId
- * @param forceLeadBlockId - If provided, the first block in that group is the lead with this ID
- * @param onError - Optional callback for parse errors or unknown placeholders
- * @param flatten - If true (default), we run flattenTemplate, referencing disk. If false, skip flatten.
- *
- * @returns An array of blocks (Text, Template, Files, or PromptResponse).
- */
 export async function parseTemplateBlocksAsync(
   sourceText: string,
   forceGroupId?: string,
@@ -47,10 +43,6 @@ export async function parseTemplateBlocksAsync(
   // Regex capturing {{SOMETHING=maybeValue}}
   const placeholderRegex = /(\{\{([A-Za-z0-9_\-]+)(?:=([^}]*))?\}\})/g;
 
-  /**
-   * Creates a new TemplateBlock segment from a chunk of text.
-   * By default locked=true, isGroupLead=false, unless it's the first block in the group.
-   */
   function newTemplateSegmentBlock(textSegment: string): TemplateBlock {
     return {
       id: uuidv4(),
@@ -67,7 +59,7 @@ export async function parseTemplateBlocksAsync(
   while ((match = placeholderRegex.exec(finalText)) !== null) {
     const fullPlaceholder = match[1]; // e.g. "{{FILE_BLOCK}}"
     const placeholderName = match[2]; // e.g. "FILE_BLOCK"
-    const placeholderValue = match[3]; // e.g. undefined or "some text"
+    const placeholderValue = match[3]; // e.g. "stuff"
     const matchIndex = match.index;
 
     // text up to this placeholder => create a template segment block
@@ -122,7 +114,6 @@ export async function parseTemplateBlocksAsync(
       blocks = blocks.concat(placeholderBlocks);
     }
 
-    // Advance past the placeholder
     currentIndex = matchIndex + fullPlaceholder.length;
   }
 
@@ -154,6 +145,27 @@ export async function parseTemplateBlocksAsync(
       isGroupLead: true,
     };
     blocks.push(emptyBlock);
+  }
+
+  // NEW LOGIC: If any PROMPT_RESPONSE blocks exist, try loading the file's content
+  for (const b of blocks) {
+    if (b.type === 'promptResponse') {
+      const prb = b as PromptResponseBlock;
+      let fileContent: string | null = null;
+
+      try {
+        if (window.electronAPI?.readPromptComposerFile) {
+          fileContent = await window.electronAPI.readPromptComposerFile(prb.sourceFile);
+        }
+        if (!fileContent && window.electronAPI?.readGlobalPromptComposerFile) {
+          fileContent = await window.electronAPI.readGlobalPromptComposerFile(prb.sourceFile);
+        }
+      } catch (err) {
+        console.warn('[parseTemplateBlocksAsync] Could not load promptResponse file:', err);
+      }
+
+      prb.content = fileContent || '';
+    }
   }
 
   return blocks;
