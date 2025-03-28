@@ -1,33 +1,21 @@
 /**
  * @file templateBlockParserAsync.ts
  * @description
- * Provides an async function to parse a multiline template text into multiple blocks,
- * possibly expanding nested references by reading the actual template files.
+ * Provides an async function to parse a multiline template text into multiple blocks.
+ * We handle placeholders like {{TEXT_BLOCK=...}}, {{FILE_BLOCK}}, {{PROMPT_RESPONSE=...}},
+ * or references to other template files.
  *
- * Step 4 Changes (Error Feedback):
- *  - We add an optional `onError` callback so we can report issues (e.g., unknown template,
- *    cyclic reference) to the user interface. For example, if a template is missing, we can
- *    call onError(`Missing template: ...`).
- *  - This function is used by TemplateSelectorModal and others. We pass the onError callback
- *    from there, which typically calls showToast().
+ * Step 4 Changes:
+ *  - Added support for {{PROMPT_RESPONSE=filename.txt}} placeholders to produce a PromptResponseBlock.
+ *    We read the file content from .prompt-composer if it exists. If not found, content = ''.
  */
 
 import { v4 as uuidv4 } from 'uuid';
-import { Block, TemplateBlock, TextBlock, FilesBlock } from '../types/Block';
+import { Block, TemplateBlock, TextBlock, FilesBlock, PromptResponseBlock } from '../types/Block';
 import { tryReadTemplateFile } from './readTemplateFile';
 
-/**
- * Regex capturing placeholders like {{XYZ=abc}} or {{XYZ}}
- * Group 1 => The entire placeholder string
- * Group 2 => The placeholder name (XYZ)
- * Group 3 => The optional "=abc" content
- */
 const placeholderRegex = /(\{\{([A-Za-z0-9_\-]+)(?:=([^}]*))?\}\})/g;
 
-/**
- * An optional callback for error reporting. If provided,
- * the parser will call onError(message) when it encounters an issue.
- */
 type ErrorCallback = (message: string) => void;
 
 interface ParseOptions {
@@ -39,15 +27,7 @@ interface ParseOptions {
 
 /**
  * parseTemplateBlocksAsync
- * @param sourceText - The multiline template text containing placeholders
- * @param forceGroupId - optional groupId to force
- * @param forceLeadBlockId - optional ID to assign to the first block
- * @param onError - optional callback for parse errors or warnings
- * @returns A promise that resolves to an array of blocks (the first block is lead)
- *
- * Implementation details:
- *  - We maintain visitedTemplates to avoid infinite recursion.
- *  - We call onError in cases such as unknown template references or cyclic references.
+ * The entry point for parsing a template string into an array of blocks.
  */
 export async function parseTemplateBlocksAsync(
   sourceText: string,
@@ -74,7 +54,6 @@ async function parseTemplateBlocksInternalAsync(
   let blocks: Block[] = [];
   let currentIndex = 0;
   let match: RegExpExecArray | null;
-
   let leadAssigned = false;
 
   function newBlockId(): string {
@@ -124,7 +103,7 @@ async function parseTemplateBlocksInternalAsync(
     );
 
     if (placeholderBlocks.length === 0) {
-      // fallback block if unrecognized
+      // fallback
       const fallback: TemplateBlock = {
         id: newBlockId(),
         type: 'template',
@@ -141,7 +120,6 @@ async function parseTemplateBlocksInternalAsync(
         if (forceLeadBlockId) fallback.id = forceLeadBlockId;
         leadAssigned = true;
       }
-      // Also notify onError if provided
       onError?.(`Unrecognized placeholder: ${fullPlaceholder}`);
       blocks.push(fallback);
     } else {
@@ -173,7 +151,7 @@ async function parseTemplateBlocksInternalAsync(
   }
 
   if (blocks.length === 0) {
-    // empty template
+    // empty
     const emptyBlock: TemplateBlock = {
       id: forceLeadBlockId || newBlockId(),
       type: 'template',
@@ -190,23 +168,6 @@ async function parseTemplateBlocksInternalAsync(
   return blocks;
 }
 
-/**
- * parsePlaceholderAsync
- * Creates the appropriate blocks for recognized placeholders:
- *  - TEXT_BLOCK => text block
- *  - FILE_BLOCK => files block
- *  - TEMPLATE_BLOCK => minimal template block
- * Or, if unrecognized => treat as a reference to another template file
- * using tryReadTemplateFile from readTemplateFile.ts.
- *
- * @param placeholderName - e.g. TEXT_BLOCK, FILE_BLOCK, or templateRef
- * @param placeholderValue - e.g. "some text" after '='
- * @param groupId - The groupId for the blocks
- * @param visitedTemplates - A set of placeholders we've seen to detect cycles
- * @param makeLeadBlockId - If not falsy, we set isGroupLead for the first returned block
- * @param onError - optional callback for parse errors or warnings
- * @returns A promise that resolves to an array of blocks, possibly empty
- */
 async function parsePlaceholderAsync(
   placeholderName: string,
   placeholderValue: string | undefined,
@@ -277,10 +238,40 @@ async function parsePlaceholderAsync(
     return [tb];
   }
 
-  // Otherwise, treat as a reference to another template
+  // PROMPT_RESPONSE
+  if (placeholderName === 'PROMPT_RESPONSE') {
+    const filename = placeholderValue?.trim() || 'untitled.txt';
+    let fileContent = '';
+    try {
+      const loaded = await tryReadTemplateFile(filename);
+      if (loaded !== null) {
+        fileContent = loaded;
+      }
+    } catch (err) {
+      onError?.(`Error reading prompt response file "${filename}": ${String(err)}`);
+    }
+
+    const prb: PromptResponseBlock = {
+      id: newBlockId(),
+      type: 'promptResponse',
+      label: 'Prompt Response',
+      sourceFile: filename,
+      content: fileContent,
+      locked: true,
+      groupId,
+      isGroupLead: false,
+    };
+    if (makeLeadBlockId) {
+      prb.isGroupLead = true;
+      prb.locked = false;
+      prb.id = makeLeadBlockId;
+    }
+    return [prb];
+  }
+
+  // Otherwise, treat as a reference to another template file
   const templateRef = placeholderName.trim();
   if (visitedTemplates.has(templateRef)) {
-    // produce a locked "Cyclic Template Ref" block
     const cyc: TemplateBlock = {
       id: newBlockId(),
       type: 'template',
@@ -301,7 +292,6 @@ async function parsePlaceholderAsync(
   }
   visitedTemplates.add(templateRef);
 
-  // Attempt to read the file content
   let fileContent: string | null = null;
   try {
     fileContent = await tryReadTemplateFile(templateRef);
@@ -310,7 +300,6 @@ async function parsePlaceholderAsync(
   }
 
   if (!fileContent) {
-    // produce a locked "Unknown template" block
     const unknown: TemplateBlock = {
       id: newBlockId(),
       type: 'template',
@@ -330,8 +319,6 @@ async function parsePlaceholderAsync(
     return [unknown];
   }
 
-  // If found, parse it recursively. We keep the same groupId.
-  // We force them locked except possibly the first if makeLeadBlockId is set.
   const subBlocks = await parseTemplateBlocksInternalAsync(fileContent, {
     forceGroupId: groupId,
     visitedTemplates,

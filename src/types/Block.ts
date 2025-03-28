@@ -1,14 +1,15 @@
 /**
  * @file Block.ts
  * @description
- * Defines the TypeScript interfaces for different kinds of prompt blocks:
- * TextBlock, TemplateBlock, and FilesBlock. Each block includes a type,
- * label, and other properties. This file also exports a union type "Block"
- * that can represent any of these block types.
+ * Defines the TypeScript interfaces for different kinds of prompt blocks: TextBlock,
+ * TemplateBlock, FilesBlock, and now PromptResponseBlock. Each block includes a type,
+ * label, and other properties. This file also exports a union type "Block" that can
+ * represent any of these block types.
  *
- * This update adds "editingRaw?: boolean" to handle the scenario where the
- * lead TemplateBlock is in "raw edit mode," so we can hide child blocks
- * while the user is editing raw template text.
+ * Step 4 Changes:
+ *  - Added `PromptResponseBlock` interface to handle the {{PROMPT_RESPONSE=filename.txt}} tag.
+ *  - This block type is loaded from and saved to a .prompt-composer file.
+ *  - It remains locked during the main template raw edit, but has its own inline editor.
  */
 
 export interface BaseBlock {
@@ -18,9 +19,9 @@ export interface BaseBlock {
   id: string;
 
   /**
-   * The type of block (text, template, files).
+   * The type of block (text, template, files, or promptResponse).
    */
-  type: 'text' | 'template' | 'files';
+  type: 'text' | 'template' | 'files' | 'promptResponse';
 
   /**
    * A short label for the block to display in the UI.
@@ -28,8 +29,7 @@ export interface BaseBlock {
   label: string;
 
   /**
-   * Indicates whether this block is locked (cannot be individually
-   * reordered or removed).
+   * Indicates whether this block is locked (cannot be edited in the main raw template).
    */
   locked?: boolean;
 
@@ -39,15 +39,14 @@ export interface BaseBlock {
   groupId?: string;
 
   /**
-   * Indicates that this block is the "lead" block in its group. The lead block
-   * is the one that has reorder/delete buttons for the entire group.
+   * Indicates that this block is the "lead" block in its group. Only the lead block
+   * can do raw edit or major group operations.
    */
   isGroupLead?: boolean;
 
   /**
    * If true, this block is currently "raw editing" the entire template group.
-   * Only makes sense on the lead block for a template group. Child blocks
-   * should remain hidden if the lead is editingRaw. This is ephemeral/in-memory.
+   * Only relevant for the lead block in a group of type 'template'.
    */
   editingRaw?: boolean;
 }
@@ -88,6 +87,25 @@ export interface FilesBlock extends BaseBlock {
 }
 
 /**
- * Union type covering all possible block variants in the system.
+ * Represents a prompt response block that is loaded from and saved to a specific file
+ * in the project's .prompt-composer folder. The content is locked from main raw editing,
+ * but the user can edit it directly in its own text area.
  */
-export type Block = TextBlock | TemplateBlock | FilesBlock;
+export interface PromptResponseBlock extends BaseBlock {
+  type: 'promptResponse';
+  /**
+   * The file name in .prompt-composer. e.g. "myPromptResponse.txt"
+   */
+  sourceFile: string;
+
+  /**
+   * The current content loaded from that file.
+   * This is updated as the user types, and we persist changes back to that file.
+   */
+  content: string;
+}
+
+/**
+ * A union type covering all possible block variants in the system.
+ */
+export type Block = TextBlock | TemplateBlock | FilesBlock | PromptResponseBlock;

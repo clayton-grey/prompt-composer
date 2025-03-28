@@ -1,17 +1,12 @@
 /**
  * @file BlockEditor.tsx
  * @description
- * This component serves as a wrapper that selects the correct editor subcomponent
- * (TextBlockEditor, TemplateBlockEditor, FileBlockEditor) based on the block's type.
+ * A factory/wrapper component that selects the correct editor for a given block type:
+ * TextBlockEditor, TemplateBlockEditor, FileBlockEditor, or PromptResponseBlockEditor.
  *
- * Key Responsibilities:
- *  - Accept a Block object and dispatch the correct child editor
- *  - Provide a common interface for updating the block
- *
- * @notes
- *  - The onChange callback is triggered whenever the child editor modifies the block.
- *  - This is minimal scaffolding for Step 6; more advanced features (like reorder/delete)
- *    will come in Step 7.
+ * Step 4 Changes:
+ *  - Added a new 'promptResponse' case to render <PromptResponseBlockEditor />.
+ *    This handles the newly introduced PromptResponseBlock interface.
  */
 
 import React from 'react';
@@ -19,17 +14,10 @@ import { Block } from '../../types/Block';
 import TextBlockEditor from './TextBlockEditor';
 import TemplateBlockEditor from './TemplateBlockEditor';
 import FileBlockEditor from './FileBlockEditor';
+import PromptResponseBlockEditor from './PromptResponseBlockEditor';
 
 interface BlockEditorProps {
-  /**
-   * The block to be displayed and edited.
-   */
   block: Block;
-
-  /**
-   * Callback invoked when the block data changes.
-   * The updated block is passed back to the parent.
-   */
   onChange: (updatedBlock: Block) => void;
 }
 
@@ -41,6 +29,8 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ block, onChange }) => {
       return <TemplateBlockEditor block={block} onChange={onChange} />;
     case 'files':
       return <FileBlockEditor block={block} onChange={onChange} />;
+    case 'promptResponse':
+      return <PromptResponseBlockEditor block={block} onChange={onChange} />;
     default:
       return (
         <div className="p-2 border border-red-300 bg-red-50">

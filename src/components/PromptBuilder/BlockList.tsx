@@ -1,30 +1,20 @@
 /**
  * @file BlockList.tsx
  * @description
- * Renders the list of blocks in order, each with its own editor. Blocks can be reordered or deleted,
- * but if they share a groupId, they move/delete as a single unit. We also handle special icons:
- *  - Move Up/Down
- *  - Block vs. Template Delete
- *  - Raw Edit icon (pencil) for template block leads only
+ * Renders the list of blocks in order, each with its own editor. We used to have
+ * reorder buttons (move up/down), but per the new raw edit paradigm, we have removed
+ * all reordering logic. The user now does not reorder blocks in the UI; instead,
+ * they do a full raw edit if they want to change the template text or block positions.
  *
- * This file was updated in Step 2 to extract reorder logic into blockReorderHelpers.ts.
- * In Step 6, we changed the aria-label from "Edit raw template" to "Edit Raw Template"
- * for consistency with naming conventions.
+ * We retain the ability to delete entire groups (template + sub-blocks) or single
+ * ungrouped blocks, and we still keep the raw edit pencil icon for template leads.
+ * However, the "Move Up" and "Move Down" buttons and related logic are removed.
  *
- * Step 5 Changes (Accessibility):
- *  - Added aria-label attributes for reorder and delete buttons
- *  - Added aria-label for raw edit pencil icon
- *
- * Implementation Details:
- *  - We rely on PromptContext for block data and reorder operations
- *  - findGroupRange, reorderBlocksInRange come from blockReorderHelpers
- *  - handleMoveUp/handleMoveDown handle group or single block moves
- *  - handleDelete removes the entire group if lead or single if ungrouped
- *  - handleRawEdit toggles the lead template block into editingRaw mode
- *
- * Edge Cases:
- *  - If a block is locked, user cannot reorder or delete it individually
- *  - If it's part of a group, only the isGroupLead block can reorder/delete
+ * Implementation details:
+ *  - "renderDeleteIcon" still provides a delete button for blocks or entire template groups.
+ *  - "handleDelete" is kept so the user can remove blocks.
+ *  - The rest of the UI around reordering has been excised.
+ *  - "shouldRenderBlock" ensures if the lead block is editing raw, all child blocks are hidden.
  *
  * @author Prompt Composer
  */
@@ -33,7 +23,6 @@ import React, { useEffect } from 'react';
 import { usePrompt } from '../../context/PromptContext';
 import type { Block } from '../../types/Block';
 import BlockEditor from './BlockEditor';
-import { findGroupRange, reorderBlocksInRange } from '../../utils/blockReorderHelpers';
 
 /**
  * getBlockTailClass
@@ -124,72 +113,12 @@ function renderDeleteIcon(block: Block, onClick: () => void) {
 }
 
 const BlockList: React.FC = () => {
-  const { blocks, addBlock, removeBlock, updateBlock, moveBlock } = usePrompt();
+  const { blocks, addBlock, removeBlock, updateBlock } = usePrompt();
 
-  /**
-   * handleMoveUp
-   * Moves the block or block group at index up one position if possible.
-   *
-   * @param index - The index of the block to move
-   */
-  const handleMoveUp = (index: number) => {
-    if (index <= 0) return;
-    const block = blocks[index];
-
-    // If it's a group lead, we find the group range
-    if (block.groupId && block.isGroupLead) {
-      const [groupStart, groupEnd] = findGroupRange(blocks, index);
-      if (groupStart <= 0) return;
-      reorderChunk(groupStart, groupEnd, 'up');
-    } else if (!block.groupId && !block.locked) {
-      // Single block, just move up
-      moveBlock(index, index - 1);
-    }
-  };
-
-  /**
-   * handleMoveDown
-   * Moves the block or block group at index down one position if possible.
-   *
-   * @param index - The index of the block to move
-   */
-  const handleMoveDown = (index: number) => {
-    if (index >= blocks.length - 1) return;
-    const block = blocks[index];
-
-    if (block.groupId && block.isGroupLead) {
-      const [groupStart, groupEnd] = findGroupRange(blocks, index);
-      if (groupEnd >= blocks.length - 1) return;
-      reorderChunk(groupStart, groupEnd, 'down');
-    } else if (!block.groupId && !block.locked) {
-      // Single block, just move down
-      moveBlock(index, index + 1);
-    }
-  };
-
-  /**
-   * reorderChunk
-   * Internal function to reorder a chunk of blocks from start->end up or down by one step.
-   * After computing the new array, we remove all old blocks, then add them back in the new order.
-   *
-   * @param start - starting index of the chunk
-   * @param end - ending index of the chunk
-   * @param direction - 'up' or 'down'
-   */
-  function reorderChunk(start: number, end: number, direction: 'up' | 'down') {
-    const newBlocks = reorderBlocksInRange(blocks, start, end, direction);
-
-    // Remove all old blocks from the PromptContext
-    const oldBlocks = [...blocks];
-    for (let i = oldBlocks.length - 1; i >= 0; i--) {
-      removeBlock(oldBlocks[i].id);
-    }
-
-    // Add the updated blocks back
-    for (const b of newBlocks) {
-      addBlock({ ...b });
-    }
-  }
+  // Debugging: print current blocks whenever they change
+  useEffect(() => {
+    console.log('[BlockList] current blocks:', blocks);
+  }, [blocks]);
 
   /**
    * handleDelete
@@ -200,14 +129,12 @@ const BlockList: React.FC = () => {
   const handleDelete = (index: number) => {
     const block = blocks[index];
 
+    // If this block is a template group lead, remove the entire group
     if (block.groupId && block.isGroupLead) {
-      const [groupStart, groupEnd] = findGroupRange(blocks, index);
-      const size = groupEnd - groupStart + 1;
-      const newBlocks = [...blocks];
-      newBlocks.splice(groupStart, size);
-
-      // Clear old blocks
+      const groupId = block.groupId;
+      const newBlocks = blocks.filter(b => b.groupId !== groupId);
       const oldBlocks = [...blocks];
+      // Clear old blocks from context
       for (let i = oldBlocks.length - 1; i >= 0; i--) {
         removeBlock(oldBlocks[i].id);
       }
@@ -216,13 +143,36 @@ const BlockList: React.FC = () => {
         addBlock({ ...b });
       }
     } else if (!block.groupId && !block.locked) {
+      // Single unlocked block
       removeBlock(block.id);
     }
+    // If it's locked or not a lead but in a group, do nothing. It's not individually deleted in new design.
   };
+
+  /**
+   * shouldRenderBlock
+   * If the block is in a group where the lead is editing raw, we hide all other blocks in that group.
+   */
+  function shouldRenderBlock(block: Block, index: number): boolean {
+    if (block.isGroupLead && block.editingRaw) {
+      return true; // The lead block shows (the raw editor).
+    }
+    if (block.groupId) {
+      const leadIndex = blocks.findIndex(b => b.groupId === block.groupId && b.isGroupLead);
+      if (leadIndex !== -1) {
+        const leadBlock = blocks[leadIndex];
+        if (leadBlock.editingRaw && leadIndex !== index) {
+          return false; // Hide child blocks if lead is in raw edit
+        }
+      }
+    }
+    return true;
+  }
 
   /**
    * handleRawEdit
    * Toggles raw edit mode for a template block lead.
+   * This is triggered by the pencil icon in the bottom-right corner.
    *
    * @param block - The block to flip into raw editing
    */
@@ -232,31 +182,6 @@ const BlockList: React.FC = () => {
     updateBlock({ ...block, editingRaw: true });
   };
 
-  // Debugging: print current blocks
-  useEffect(() => {
-    console.log('[BlockList] current blocks:', blocks);
-  }, [blocks]);
-
-  /**
-   * shouldRenderBlock
-   * If the block is in a group where the lead is editing raw, we hide all other blocks.
-   */
-  function shouldRenderBlock(block: Block, index: number): boolean {
-    if (block.isGroupLead && block.editingRaw) {
-      return true;
-    }
-    if (block.groupId) {
-      const leadIndex = blocks.findIndex(b => b.groupId === block.groupId && b.isGroupLead);
-      if (leadIndex !== -1) {
-        const leadBlock = blocks[leadIndex];
-        if (leadBlock.editingRaw && leadIndex !== index) {
-          return false;
-        }
-      }
-    }
-    return true;
-  }
-
   return (
     <div className="space-y-4">
       {blocks.map((block, index) => {
@@ -264,16 +189,10 @@ const BlockList: React.FC = () => {
           return null;
         }
 
-        let canReorderOrDelete = false;
-        if (!block.locked) {
-          if (block.groupId) {
-            if (block.isGroupLead) {
-              canReorderOrDelete = true;
-            }
-          } else {
-            canReorderOrDelete = true;
-          }
-        }
+        // In this new paradigm, we do not reorder blocks, so no reordering icons are displayed.
+        // We do, however, keep the delete icon for certain blocks/groups.
+
+        const canDelete = (!block.groupId && !block.locked) || (block.groupId && block.isGroupLead); // lead block can delete group
 
         const blockTailClass = getBlockTailClass(block);
 
@@ -282,65 +201,14 @@ const BlockList: React.FC = () => {
             key={block.id}
             className={`relative group p-4 shadow rounded flex flex-col gap-2 border border-gray-200 dark:border-gray-600 ${blockTailClass}`}
           >
-            {/* Top-right: reorder + delete icons, shown on hover */}
-            {canReorderOrDelete && (
+            {/* Top-right: we no longer show reorder icons, only delete if allowed */}
+            {canDelete && (
               <div className="absolute top-2 right-2 flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                {/* Move Up button */}
-                <button
-                  onClick={() => handleMoveUp(index)}
-                  className="p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={index <= 0}
-                  aria-label="Move block or group up"
-                >
-                  {/* Move up icon */}
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="lucide lucide-move-up-icon lucide-move-up"
-                  >
-                    <path d="M8 6L12 2L16 6"></path>
-                    <path d="M12 2V22"></path>
-                  </svg>
-                </button>
-
-                {/* Move Down button */}
-                <button
-                  onClick={() => handleMoveDown(index)}
-                  className="p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={index >= blocks.length - 1}
-                  aria-label="Move block or group down"
-                >
-                  {/* Move down icon */}
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="lucide lucide-move-down-icon lucide-move-down"
-                  >
-                    <path d="M8 18L12 22L16 18"></path>
-                    <path d="M12 2V22"></path>
-                  </svg>
-                </button>
-
-                {/* Delete button (block or template) */}
                 {renderDeleteIcon(block, () => handleDelete(index))}
               </div>
             )}
 
-            {/* Bottom-right: raw edit pencil icon if template group lead */}
+            {/* Bottom-right: raw edit pencil icon if template group lead (and not currently in raw mode) */}
             {block.type === 'template' && block.isGroupLead && !block.editingRaw && (
               <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
                 <button
@@ -376,7 +244,7 @@ const BlockList: React.FC = () => {
 
       {blocks.length === 0 && (
         <div className="text-sm text-gray-700 dark:text-gray-300">
-          No blocks. Use the Add buttons above.
+          No blocks. Use or load a template to begin.
         </div>
       )}
     </div>

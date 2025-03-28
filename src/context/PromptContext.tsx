@@ -3,15 +3,18 @@
  * @description
  * Provides global state management for the Prompt Composer's prompt blocks and settings.
  *
- * Updated in Step 1 to unify token estimation logic:
- *  - We now import { initEncoder, estimateTokens } from '../utils/tokenEstimator'
- *    instead of the old tokenizer.
+ * Changes in Step 3:
+ *  - Removed the 'moveBlock' method and any references to it since we have
+ *    removed block reordering from the UI. The user now primarily relies on
+ *    raw edit for major structural changes.
  *
- * Key functionalities:
+ * Key functionalities retained:
  *  - Manage the array of blocks (text, template, files).
- *  - Provide synchronous or asynchronous updates, reordering, removing, etc.
+ *  - Provide synchronous or asynchronous updates, removal, updates, etc.
  *  - Estimate tokens for each block in real time (with a debounce).
  *  - Flatten the entire composition into a single string (getFlattenedPrompt).
+ *
+ * @author Prompt Composer
  */
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
@@ -19,7 +22,6 @@ import { v4 as uuidv4 } from 'uuid';
 import type { Block, FilesBlock } from '../types/Block';
 import { flattenBlocksAsync } from '../utils/flattenPrompt';
 import { parseTemplateBlocksAsync } from '../utils/templateBlockParserAsync';
-// CHANGED HERE: was '../utils/tokenizer', now official tokenEstimator
 import { initEncoder, estimateTokens } from '../utils/tokenEstimator';
 
 interface PromptSettings {
@@ -41,7 +43,11 @@ interface PromptContextType {
   removeBlock: (blockId: string) => void;
   updateBlock: (updatedBlock: Block) => void;
   setSettings: (newSettings: PromptSettings) => void;
-  moveBlock: (oldIndex: number, newIndex: number) => void;
+
+  /**
+   * @deprecated Reordering is removed in Step 3. No longer used.
+   * moveBlock: (oldIndex: number, newIndex: number) => void;
+   */
 
   updateFileBlock: (
     fileEntries: { path: string; content: string; language: string }[],
@@ -72,7 +78,7 @@ const PromptContext = createContext<PromptContextType>({
   removeBlock: () => {},
   updateBlock: () => {},
   setSettings: () => {},
-  moveBlock: () => {},
+  // moveBlock is removed in the new design
   updateFileBlock: () => {},
   tokenUsage: { blockTokenUsage: {}, totalTokens: 0 },
   getFlattenedPrompt: async () => '',
@@ -148,7 +154,7 @@ ${f.content}
     };
   }, [blocks, settings.model]);
 
-  // CRUD
+  // Basic CRUD
   const addBlock = useCallback((block: Block) => {
     setBlocks(prev => [...prev, block]);
   }, []);
@@ -169,17 +175,12 @@ ${f.content}
     setSettingsState(newSettings);
   }, []);
 
-  const moveBlock = useCallback((oldIndex: number, newIndex: number) => {
-    setBlocks(prev => {
-      if (oldIndex < 0 || oldIndex >= prev.length) return prev;
-      if (newIndex < 0 || newIndex >= prev.length) return prev;
-      const updated = [...prev];
-      const [removed] = updated.splice(oldIndex, 1);
-      updated.splice(newIndex, 0, removed);
-      return updated;
-    });
-  }, []);
-
+  /**
+   * updateFileBlock
+   * The single "files" block is updated or created.
+   * If it does not exist, we add one; if it does, we overwrite it.
+   * Only one file block is stored at a time in new design.
+   */
   const updateFileBlock = useCallback(
     (fileEntries: { path: string; content: string; language: string }[], asciiMap?: string) => {
       setBlocks(prev => {
@@ -207,7 +208,7 @@ ${f.content}
         } else {
           const newBlocks = [...prev];
           newBlocks[existingIndex] = candidate;
-          // remove any others
+          // remove any additional "files" blocks if they somehow exist
           return newBlocks.filter((b, idx) => b.type !== 'files' || idx === existingIndex);
         }
       });
@@ -215,16 +216,29 @@ ${f.content}
     []
   );
 
+  /**
+   * getFlattenedPrompt
+   * Assembles a final multiline prompt string from the blocks array.
+   */
   const getFlattenedPrompt = useCallback(async (): Promise<string> => {
     const flattened = await flattenBlocksAsync(blocks);
     return flattened;
   }, [blocks]);
 
+  /**
+   * importComposition
+   * Replaces the current block set and settings with imported data.
+   */
   const importComposition = useCallback((newBlocks: Block[], newSettings: PromptSettings) => {
     setBlocks(newBlocks);
     setSettingsState(newSettings);
   }, []);
 
+  /**
+   * replaceTemplateGroup
+   * Used when the user confirms a raw edit on a template group. We parse the new text
+   * into blocks, remove the old group, and splice in the new blocks.
+   */
   const replaceTemplateGroup = useCallback(
     async (leadBlockId: string, groupId: string, newText: string, oldRawText: string) => {
       if (newText === oldRawText) {
@@ -243,7 +257,7 @@ ${f.content}
       // parse new text
       const newParsed = await parseTemplateBlocksAsync(newText, groupId, leadBlockId);
 
-      // remove the old group blocks and splice in the new
+      // remove old group blocks, splice new
       setBlocks(prev => {
         const groupIndices = [];
         for (let i = 0; i < prev.length; i++) {
@@ -252,12 +266,11 @@ ${f.content}
           }
         }
         if (groupIndices.length === 0) {
-          // just add newParsed at the end if no old group found
+          // if no old group found, just append
           return [...prev, ...newParsed];
         }
         const startIndex = Math.min(...groupIndices);
         const endIndex = Math.max(...groupIndices);
-
         const updated = [...prev];
         updated.splice(startIndex, endIndex - startIndex + 1, ...newParsed);
         return updated;
@@ -274,7 +287,6 @@ ${f.content}
     removeBlock,
     updateBlock,
     setSettings,
-    moveBlock,
     updateFileBlock,
     tokenUsage,
     getFlattenedPrompt,
