@@ -6,3 +6,4 @@ patch.py
 dist
 release
 .vite
+localhost-*.log
