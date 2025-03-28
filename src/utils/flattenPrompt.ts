@@ -1,9 +1,8 @@
-
 /**
  * @file flattenPrompt.ts
  * @description
  * Functions to generate a single multiline prompt from an array of blocks (text, template, files).
- * 
+ *
  * Now we handle nested template expansion by calling `resolveNestedTemplates` if we detect
  * placeholders of the form {{TEMPLATE_NAME}}. For TemplateBlocks, we also apply their variable
  * substitutions before calling the nested resolver.
@@ -28,8 +27,7 @@ export async function flattenBlocksAsync(blocks: Block[]): Promise<string> {
       // Just pass the content directly into nested placeholders if any
       const resolved = await resolveNestedTemplates(textBlock.content);
       finalString += resolved + '\n\n';
-    }
-    else if (block.type === 'template') {
+    } else if (block.type === 'template') {
       const templateBlock = block as TemplateBlock;
 
       // 1) Apply variable substitution
@@ -43,8 +41,7 @@ export async function flattenBlocksAsync(blocks: Block[]): Promise<string> {
       // 2) Now handle any nested references to .prompt-composer files
       const resolved = await resolveNestedTemplates(substituted);
       finalString += resolved + '\n\n';
-    }
-    else if (block.type === 'files') {
+    } else if (block.type === 'files') {
       const filesBlock = block as FilesBlock;
 
       // If includeProjectMap is true, add the ascii map first

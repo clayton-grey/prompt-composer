@@ -1,4 +1,3 @@
-
 /**
  * @file fileMapBuilder.ts
  * @description
@@ -76,12 +75,12 @@ export async function generateProjectAsciiMap(rootPath: string = '.'): Promise<s
   }
 
   try {
-    const result = await window.electronAPI.listDirectory(rootPath) as ListDirectoryResult;
+    const result = (await window.electronAPI.listDirectory(rootPath)) as ListDirectoryResult;
     const rootNode: TreeNode = {
       name: result.baseName,
       path: result.absolutePath,
       type: 'directory',
-      children: result.children
+      children: result.children,
     };
 
     const lines: string[] = [];

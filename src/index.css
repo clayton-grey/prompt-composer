@@ -1,4 +1,3 @@
-
 /**
  * @file index.css
  * @description
@@ -38,7 +37,7 @@
 }
 
 .block-tail::before {
-  content: "";
+  content: '';
   position: absolute;
   left: -1rem;
   top: 1rem; /* vertical offset so the tail is near the top-edge */
@@ -92,4 +91,3 @@
 .preview-drag-handle:hover {
   background-color: #d1d5db; /* Tailwind's gray-300 */
 }
-      

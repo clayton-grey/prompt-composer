@@ -1,11 +1,10 @@
-
 /**
  * @file TextBlockEditor.tsx
  * @description
- * An editing interface for a "text" type block. 
- * 
+ * An editing interface for a "text" type block.
+ *
  * Changes:
- *  - Removed the label display and input, as per user request 
+ *  - Removed the label display and input, as per user request
  *    ("Remove the labels and type descriptions").
  *  - We keep the content <textarea> for user editing.
  *

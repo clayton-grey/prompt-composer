@@ -1,4 +1,3 @@
-
 /**
  * @file TopBar.tsx
  * @description
@@ -45,16 +44,16 @@ const TopBar: React.FC = () => {
         version: '1.0',
         settings: {
           maxTokens: settings.maxTokens,
-          model: settings.model
+          model: settings.model,
         },
-        blocks
+        blocks,
       };
       const xmlString = exportToXML(data);
 
       const defaultFileName = 'prompt_composition.xml';
       const result = await window.electronAPI.exportXml({
         defaultFileName,
-        xmlContent: xmlString
+        xmlContent: xmlString,
       });
 
       if (result) {
@@ -80,7 +79,9 @@ const TopBar: React.FC = () => {
       const data = await importAndValidateFromXML(content);
       importComposition(data.blocks, data.settings);
 
-      console.log('[TopBar] Successfully imported XML composition (with validated file references).');
+      console.log(
+        '[TopBar] Successfully imported XML composition (with validated file references).'
+      );
     } catch (err) {
       console.error('[TopBar] Failed to import XML:', err);
     }
@@ -92,9 +93,7 @@ const TopBar: React.FC = () => {
 
   return (
     <header className="w-full h-14 bg-white dark:bg-gray-800 flex items-center px-4 shadow">
-      <h1 className="text-xl font-semibold text-gray-800 dark:text-gray-100">
-        Prompt Composer
-      </h1>
+      <h1 className="text-xl font-semibold text-gray-800 dark:text-gray-100">Prompt Composer</h1>
 
       <div className="ml-auto flex items-center gap-3">
         {/* Copy Prompt (async) */}

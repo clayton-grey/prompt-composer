@@ -1,9 +1,8 @@
-
 /**
  * @file PromptBuilder.tsx
  * @description
  * Provides the UI for adding text, template, and file blocks, plus a toggle for plain text preview.
- * 
+ *
  * Step 5a Changes:
  *  - We introduce a resizable preview area at the bottom, separated by a horizontal drag handle.
  *  - The user can toggle the preview on/off with the "Show/Hide Plain Text View" button. If shown,
@@ -13,7 +12,7 @@
  *  1. We keep the top bar with "Add Text / Template / File" buttons as before.
  *  2. The main portion now is a flex container with a column for the block list (scrollable),
  *     then a small "div" that acts as a horizontal drag handle, then the preview container.
- *  3. We replicate the logic from the sidebar resizing approach: track isResizingPreview, 
+ *  3. We replicate the logic from the sidebar resizing approach: track isResizingPreview,
  *     lastClientY, and handle mousemove globally to apply the new height.
  */
 
@@ -57,7 +56,7 @@ export const PromptBuilder: React.FC = () => {
       id: nanoid(),
       type: 'text',
       label: 'Text Block',
-      content: ''
+      content: '',
     });
   };
 
@@ -97,7 +96,7 @@ export const PromptBuilder: React.FC = () => {
     if (files.length === 0 || rootFolders.length === 0) return null;
     const sortedRoots = [...rootFolders].sort((a, b) => b.length - a.length);
     for (const root of sortedRoots) {
-      const allInRoot = files.every((f) => f.path.startsWith(root));
+      const allInRoot = files.every(f => f.path.startsWith(root));
       if (allInRoot) return root;
     }
     const first = files[0].path;
@@ -112,12 +111,12 @@ export const PromptBuilder: React.FC = () => {
   ): string {
     let map = '<file_map>\n';
     if (files.length > 0) {
-      const paths = files.map((f) => f.path);
+      const paths = files.map(f => f.path);
       const firstPath = paths[0];
       const parts = firstPath.split('/');
       for (let i = parts.length; i > 0; i--) {
         const prefix = parts.slice(0, i).join('/');
-        if (paths.every((p) => p.startsWith(prefix))) {
+        if (paths.every(p => p.startsWith(prefix))) {
           map += prefix + '\n';
           break;
         }
@@ -166,7 +165,7 @@ export const PromptBuilder: React.FC = () => {
     if (!isResizingPreviewRef.current) return;
     const delta = e.clientY - lastClientYRef.current;
     lastClientYRef.current = e.clientY;
-    setPreviewHeight((prev) => {
+    setPreviewHeight(prev => {
       const newVal = prev - delta;
       // Min/Max clamp
       if (newVal < 100) return 100;
@@ -198,9 +197,7 @@ export const PromptBuilder: React.FC = () => {
     <div className="flex flex-col h-full">
       {/* Header row for add-block buttons */}
       <div className="flex justify-between items-center p-4 border-b dark:border-gray-600">
-        <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
-          Prompt Builder
-        </h2>
+        <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-100">Prompt Builder</h2>
         <div className="relative inline-block">
           <div className="flex gap-2">
             <button
@@ -238,11 +235,13 @@ export const PromptBuilder: React.FC = () => {
             container's height if preview is hidden. */}
         <div
           className="flex-1 overflow-auto p-4"
-          style={{ 
-            // if not showing preview, let this take full height
-            // if showing, we reduce height by previewHeight (minus handle size) via flex approach
-            // but here we rely on flex + the handle + preview container to handle layout
-          }}
+          style={
+            {
+              // if not showing preview, let this take full height
+              // if showing, we reduce height by previewHeight (minus handle size) via flex approach
+              // but here we rely on flex + the handle + preview container to handle layout
+            }
+          }
         >
           <BlockList />
         </div>
@@ -251,10 +250,7 @@ export const PromptBuilder: React.FC = () => {
         {showPreview && (
           <>
             {/* Horizontal drag handle */}
-            <div
-              className="preview-drag-handle h-2"
-              onMouseDown={onMouseDownPreviewHandle}
-            />
+            <div className="preview-drag-handle h-2" onMouseDown={onMouseDownPreviewHandle} />
 
             {/* Preview container with scroll */}
             <div

@@ -1,4 +1,3 @@
-
 /**
  * @file BlockEditor.tsx
  * @description
@@ -45,9 +44,7 @@ const BlockEditor: React.FC<BlockEditorProps> = ({ block, onChange }) => {
     default:
       return (
         <div className="p-2 border border-red-300 bg-red-50">
-          <p className="text-red-600">
-            Unknown block type: {block.type}
-          </p>
+          <p className="text-red-600">Unknown block type: {block.type}</p>
         </div>
       );
   }

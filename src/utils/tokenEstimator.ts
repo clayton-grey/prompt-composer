@@ -1,4 +1,3 @@
-
 /**
  * @file tokenEstimator.ts
  * @description
@@ -8,8 +7,8 @@
  *
  * Implementation Changes:
  *  - Removed the 1.17 factor for gpt-4.
- *  - Removed any other multipliers in fallback. 
- *  - Return raw token counts directly. 
+ *  - Removed any other multipliers in fallback.
+ *  - Return raw token counts directly.
  *
  * This should align the file tree usage with the file block usage in the prompt
  * without introducing discrepancies.
@@ -74,6 +73,6 @@ export function estimateTokens(text: string, model: string = 'gpt-4'): number {
     return tokens.length;
   } catch (error) {
     console.error('[tokenEstimator] Error in tiktoken. Using fallback:', error);
-    return null
+    return null;
   }
 }

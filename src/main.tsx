@@ -1,13 +1,12 @@
-
 /**
  * @file main.tsx
  * @description
  * Entry point that Vite/Electron loads (via index.html). We render the <App/>
- * inside the ThemeProvider, ProjectProvider, and PromptProvider. 
- * 
- * Step 3 (File & Directory Handling) requires we wrap <PromptProvider> in 
+ * inside the ThemeProvider, ProjectProvider, and PromptProvider.
+ *
+ * Step 3 (File & Directory Handling) requires we wrap <PromptProvider> in
  * <ProjectProvider> to cache directory listing data for FileTree.
- * 
+ *
  * Implementation Details:
  *  - The ThemeProvider handles global light/dark mode
  *  - The ProjectProvider manages all file/folder tri-state logic

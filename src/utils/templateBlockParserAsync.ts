@@ -1,4 +1,3 @@
-
 /**
  * @file templateBlockParserAsync.ts
  * @description
@@ -26,7 +25,7 @@ import { tryReadTemplateFile } from './readTemplateFile';
 const placeholderRegex = /(\{\{([A-Za-z0-9_\-]+)(?:=([^}]*))?\}\})/g;
 
 /**
- * An optional callback for error reporting. If provided, 
+ * An optional callback for error reporting. If provided,
  * the parser will call onError(message) when it encounters an issue.
  */
 type ErrorCallback = (message: string) => void;
@@ -60,7 +59,7 @@ export async function parseTemplateBlocksAsync(
     forceGroupId,
     forceLeadBlockId,
     visitedTemplates: new Set<string>(),
-    onError
+    onError,
   };
   return parseTemplateBlocksInternalAsync(sourceText, options);
 }
@@ -69,12 +68,7 @@ async function parseTemplateBlocksInternalAsync(
   sourceText: string,
   options: ParseOptions
 ): Promise<Block[]> {
-  const {
-    forceGroupId,
-    forceLeadBlockId,
-    visitedTemplates = new Set<string>(),
-    onError
-  } = options;
+  const { forceGroupId, forceLeadBlockId, visitedTemplates = new Set<string>(), onError } = options;
 
   const groupId = forceGroupId || uuidv4();
   let blocks: Block[] = [];
@@ -96,7 +90,7 @@ async function parseTemplateBlocksInternalAsync(
       variables: [],
       locked: true,
       groupId,
-      isGroupLead: false
+      isGroupLead: false,
     };
   }
 
@@ -139,7 +133,7 @@ async function parseTemplateBlocksInternalAsync(
         variables: [],
         locked: true,
         groupId,
-        isGroupLead: false
+        isGroupLead: false,
       };
       if (!leadAssigned) {
         fallback.isGroupLead = true;
@@ -188,7 +182,7 @@ async function parseTemplateBlocksInternalAsync(
       variables: [],
       locked: false,
       groupId,
-      isGroupLead: true
+      isGroupLead: true,
     };
     blocks.push(emptyBlock);
   }
@@ -202,7 +196,7 @@ async function parseTemplateBlocksInternalAsync(
  *  - TEXT_BLOCK => text block
  *  - FILE_BLOCK => files block
  *  - TEMPLATE_BLOCK => minimal template block
- * Or, if unrecognized => treat as a reference to another template file 
+ * Or, if unrecognized => treat as a reference to another template file
  * using tryReadTemplateFile from readTemplateFile.ts.
  *
  * @param placeholderName - e.g. TEXT_BLOCK, FILE_BLOCK, or templateRef
@@ -233,7 +227,7 @@ async function parsePlaceholderAsync(
       content: textContent,
       locked: true,
       groupId,
-      isGroupLead: false
+      isGroupLead: false,
     };
     if (makeLeadBlockId) {
       tb.isGroupLead = true;
@@ -252,7 +246,7 @@ async function parsePlaceholderAsync(
       files: [],
       locked: true,
       groupId,
-      isGroupLead: false
+      isGroupLead: false,
     };
     if (makeLeadBlockId) {
       fb.isGroupLead = true;
@@ -273,7 +267,7 @@ async function parsePlaceholderAsync(
       variables: [],
       locked: true,
       groupId,
-      isGroupLead: false
+      isGroupLead: false,
     };
     if (makeLeadBlockId) {
       tb.isGroupLead = true;
@@ -295,7 +289,7 @@ async function parsePlaceholderAsync(
       variables: [],
       locked: true,
       groupId,
-      isGroupLead: false
+      isGroupLead: false,
     };
     if (makeLeadBlockId) {
       cyc.isGroupLead = true;
@@ -325,7 +319,7 @@ async function parsePlaceholderAsync(
       variables: [],
       locked: true,
       groupId,
-      isGroupLead: false
+      isGroupLead: false,
     };
     if (makeLeadBlockId) {
       unknown.isGroupLead = true;
@@ -341,7 +335,7 @@ async function parsePlaceholderAsync(
   const subBlocks = await parseTemplateBlocksInternalAsync(fileContent, {
     forceGroupId: groupId,
     visitedTemplates,
-    onError
+    onError,
   });
 
   if (subBlocks.length > 0 && makeLeadBlockId) {

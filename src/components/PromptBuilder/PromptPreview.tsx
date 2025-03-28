@@ -1,9 +1,8 @@
-
 /**
  * @file PromptPreview.tsx
  * @description
  * A component that displays a real-time or on-demand preview of the flattened prompt.
- * 
+ *
  * In this update (Step 5a), we remove the top margin to ensure it fits snugly in the new
  * resizable container. We also ensure the preview is scrollable if the text is large.
  */

@@ -1,4 +1,3 @@
-
 /**
  * @file ThemeContext.tsx
  * @description
@@ -30,7 +29,7 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType>({
   darkMode: false,
-  toggleDarkMode: () => {}
+  toggleDarkMode: () => {},
 });
 
 /**
@@ -41,13 +40,11 @@ export const ThemeProvider: React.FC<React.PropsWithChildren> = ({ children }) =
   const [darkMode, setDarkMode] = useState<boolean>(false);
 
   const toggleDarkMode = useCallback(() => {
-    setDarkMode((prev) => !prev);
+    setDarkMode(prev => !prev);
   }, []);
 
   return (
-    <ThemeContext.Provider value={{ darkMode, toggleDarkMode }}>
-      {children}
-    </ThemeContext.Provider>
+    <ThemeContext.Provider value={{ darkMode, toggleDarkMode }}>{children}</ThemeContext.Provider>
   );
 };
 

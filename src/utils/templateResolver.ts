@@ -1,4 +1,3 @@
-
 /**
  * @file templateResolver.ts
  * @description
@@ -41,8 +40,8 @@ export async function resolveNestedTemplates(
 
   // We keep looping to handle newly introduced placeholders after replacements
   while ((match = PLACEHOLDER_REGEX.exec(resolvedContent)) !== null) {
-    const placeholderFull = match[0];     // e.g. "{{HELLO}}"
-    const placeholderName = match[1];     // e.g. "HELLO" or "HELLO.txt"
+    const placeholderFull = match[0]; // e.g. "{{HELLO}}"
+    const placeholderName = match[1]; // e.g. "HELLO" or "HELLO.txt"
 
     if (visited.has(placeholderName)) {
       console.warn(

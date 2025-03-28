@@ -29,7 +29,9 @@ interface Window {
     /**
      * Show the Open Dialog to select files/folders
      */
-    showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>;
+    showOpenDialog: (
+      options: Electron.OpenDialogOptions
+    ) => Promise<Electron.OpenDialogReturnValue>;
 
     /**
      * List the contents of a directory
@@ -80,7 +82,7 @@ interface Window {
      * Read a template file from the global ~/.prompt-composer directory
      */
     readGlobalPromptComposerFile: (fileName: string) => Promise<string | null>;
-  }
+  };
 }
 
 export interface ListDirectoryResult {

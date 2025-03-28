@@ -1,4 +1,3 @@
-
 /**
  * @file BlockList.tsx
  * @description
@@ -39,7 +38,7 @@ import { findGroupRange, reorderBlocksInRange } from '../../utils/blockReorderHe
 /**
  * getBlockTailClass
  * Returns the pastel color classes for the block background + tail, by block type.
- * 
+ *
  * @param block - The block whose style we are determining
  * @returns The combined className string for styling
  */
@@ -195,7 +194,7 @@ const BlockList: React.FC = () => {
   /**
    * handleDelete
    * Deletes a block or block group from the composition.
-   * 
+   *
    * @param index - The index of the block to delete
    */
   const handleDelete = (index: number) => {
@@ -247,9 +246,7 @@ const BlockList: React.FC = () => {
       return true;
     }
     if (block.groupId) {
-      const leadIndex = blocks.findIndex(
-        (b) => b.groupId === block.groupId && b.isGroupLead
-      );
+      const leadIndex = blocks.findIndex(b => b.groupId === block.groupId && b.isGroupLead);
       if (leadIndex !== -1) {
         const leadBlock = blocks[leadIndex];
         if (leadBlock.editingRaw && leadIndex !== index) {
@@ -372,10 +369,7 @@ const BlockList: React.FC = () => {
             )}
 
             {/* The block editor content (text, template, or file) */}
-            <BlockEditor
-              block={block}
-              onChange={(updated) => updateBlock(updated)}
-            />
+            <BlockEditor block={block} onChange={updated => updateBlock(updated)} />
           </div>
         );
       })}

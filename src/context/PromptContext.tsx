@@ -1,11 +1,10 @@
-
 /**
  * @file PromptContext.tsx
  * @description
  * Provides global state management for the Prompt Composer's prompt blocks and settings.
  *
  * Updated in Step 1 to unify token estimation logic:
- *  - We now import { initEncoder, estimateTokens } from '../utils/tokenEstimator' 
+ *  - We now import { initEncoder, estimateTokens } from '../utils/tokenEstimator'
  *    instead of the old tokenizer.
  *
  * Key functionalities:
@@ -15,14 +14,7 @@
  *  - Flatten the entire composition into a single string (getFlattenedPrompt).
  */
 
-import React, {
-  createContext,
-  useContext,
-  useState,
-  useCallback,
-  useEffect,
-  useRef
-} from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import type { Block, FilesBlock } from '../types/Block';
 import { flattenBlocksAsync } from '../utils/flattenPrompt';
@@ -69,7 +61,7 @@ interface PromptContextType {
 
 const defaultSettings: PromptSettings = {
   maxTokens: 100000,
-  model: 'gpt-4o'
+  model: 'gpt-4o',
 };
 
 const PromptContext = createContext<PromptContextType>({
@@ -85,7 +77,7 @@ const PromptContext = createContext<PromptContextType>({
   tokenUsage: { blockTokenUsage: {}, totalTokens: 0 },
   getFlattenedPrompt: async () => '',
   importComposition: () => {},
-  replaceTemplateGroup: async () => {}
+  replaceTemplateGroup: async () => {},
 });
 
 export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
@@ -94,7 +86,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
 
   const [tokenUsage, setTokenUsage] = useState<TokenUsage>({
     blockTokenUsage: {},
-    totalTokens: 0
+    totalTokens: 0,
   });
 
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -115,7 +107,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
       const blockTokenUsage: Record<string, number> = {};
       let totalTokens = 0;
 
-      blocks.forEach((block) => {
+      blocks.forEach(block => {
         let blockText = '';
 
         switch (block.type) {
@@ -126,10 +118,8 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
           case 'files': {
             const fb = block as FilesBlock;
             const shouldIncludeMap = fb.includeProjectMap ?? true;
-            const mapText = shouldIncludeMap && fb.projectAsciiMap
-              ? fb.projectAsciiMap
-              : '';
-            const fileTexts = fb.files.map((f) => {
+            const mapText = shouldIncludeMap && fb.projectAsciiMap ? fb.projectAsciiMap : '';
+            const fileTexts = fb.files.map(f => {
               return `<file_contents>
 File: ${f.path}
 \`\`\`${f.language}
@@ -138,9 +128,7 @@ ${f.content}
 </file_contents>`;
             });
             const filesConcatenated = fileTexts.join('\n\n');
-            blockText = shouldIncludeMap
-              ? (mapText + '\n' + filesConcatenated)
-              : filesConcatenated;
+            blockText = shouldIncludeMap ? mapText + '\n' + filesConcatenated : filesConcatenated;
             break;
           }
         }
@@ -162,19 +150,19 @@ ${f.content}
 
   // CRUD
   const addBlock = useCallback((block: Block) => {
-    setBlocks((prev) => [...prev, block]);
+    setBlocks(prev => [...prev, block]);
   }, []);
 
   const addBlocks = useCallback((newBlocks: Block[]) => {
-    setBlocks((prev) => [...prev, ...newBlocks]);
+    setBlocks(prev => [...prev, ...newBlocks]);
   }, []);
 
   const removeBlock = useCallback((blockId: string) => {
-    setBlocks((prev) => prev.filter((b) => b.id !== blockId));
+    setBlocks(prev => prev.filter(b => b.id !== blockId));
   }, []);
 
   const updateBlock = useCallback((updatedBlock: Block) => {
-    setBlocks((prev) => prev.map((b) => (b.id === updatedBlock.id ? updatedBlock : b)));
+    setBlocks(prev => prev.map(b => (b.id === updatedBlock.id ? updatedBlock : b)));
   }, []);
 
   const setSettings = useCallback((newSettings: PromptSettings) => {
@@ -182,7 +170,7 @@ ${f.content}
   }, []);
 
   const moveBlock = useCallback((oldIndex: number, newIndex: number) => {
-    setBlocks((prev) => {
+    setBlocks(prev => {
       if (oldIndex < 0 || oldIndex >= prev.length) return prev;
       if (newIndex < 0 || newIndex >= prev.length) return prev;
       const updated = [...prev];
@@ -194,14 +182,14 @@ ${f.content}
 
   const updateFileBlock = useCallback(
     (fileEntries: { path: string; content: string; language: string }[], asciiMap?: string) => {
-      setBlocks((prev) => {
-        const existingIndex = prev.findIndex((b) => b.type === 'files');
+      setBlocks(prev => {
+        const existingIndex = prev.findIndex(b => b.type === 'files');
         const newId = uuidv4();
 
-        const files = fileEntries.map((f) => ({
+        const files = fileEntries.map(f => ({
           path: f.path,
           content: f.content,
-          language: f.language
+          language: f.language,
         }));
 
         const candidate: FilesBlock = {
@@ -211,7 +199,7 @@ ${f.content}
           files,
           projectAsciiMap: asciiMap || '',
           includeProjectMap: true,
-          locked: false
+          locked: false,
         };
 
         if (existingIndex === -1) {
@@ -220,9 +208,7 @@ ${f.content}
           const newBlocks = [...prev];
           newBlocks[existingIndex] = candidate;
           // remove any others
-          return newBlocks.filter(
-            (b, idx) => (b.type !== 'files' || idx === existingIndex)
-          );
+          return newBlocks.filter((b, idx) => b.type !== 'files' || idx === existingIndex);
         }
       });
     },
@@ -234,20 +220,17 @@ ${f.content}
     return flattened;
   }, [blocks]);
 
-  const importComposition = useCallback(
-    (newBlocks: Block[], newSettings: PromptSettings) => {
-      setBlocks(newBlocks);
-      setSettingsState(newSettings);
-    },
-    []
-  );
+  const importComposition = useCallback((newBlocks: Block[], newSettings: PromptSettings) => {
+    setBlocks(newBlocks);
+    setSettingsState(newSettings);
+  }, []);
 
   const replaceTemplateGroup = useCallback(
     async (leadBlockId: string, groupId: string, newText: string, oldRawText: string) => {
       if (newText === oldRawText) {
         // skip
-        setBlocks((prev) => {
-          return prev.map((b) => {
+        setBlocks(prev => {
+          return prev.map(b => {
             if (b.id === leadBlockId && b.editingRaw) {
               return { ...b, editingRaw: false };
             }
@@ -261,7 +244,7 @@ ${f.content}
       const newParsed = await parseTemplateBlocksAsync(newText, groupId, leadBlockId);
 
       // remove the old group blocks and splice in the new
-      setBlocks((prev) => {
+      setBlocks(prev => {
         const groupIndices = [];
         for (let i = 0; i < prev.length; i++) {
           if (prev[i].groupId === groupId) {
@@ -296,14 +279,10 @@ ${f.content}
     tokenUsage,
     getFlattenedPrompt,
     importComposition,
-    replaceTemplateGroup
+    replaceTemplateGroup,
   };
 
-  return (
-    <PromptContext.Provider value={contextValue}>
-      {children}
-    </PromptContext.Provider>
-  );
+  return <PromptContext.Provider value={contextValue}>{children}</PromptContext.Provider>;
 };
 
 export const usePrompt = (): PromptContextType => {

@@ -1,4 +1,3 @@
-
 /**
  * @file xmlParser.ts
  * @description
@@ -72,7 +71,7 @@ export function importFromXML(xmlString: string): {
           id,
           type: 'text',
           label,
-          content
+          content,
         };
         blocks.push(textBlock);
         break;
@@ -98,7 +97,7 @@ export function importFromXML(xmlString: string): {
           type: 'template',
           label,
           content,
-          variables
+          variables,
         };
         blocks.push(templateBlock);
         break;
@@ -108,7 +107,7 @@ export function importFromXML(xmlString: string): {
           id,
           type: 'files',
           label,
-          files: []
+          files: [],
         };
         const filesEl = blockEl.querySelector('files');
         if (filesEl) {
@@ -123,7 +122,7 @@ export function importFromXML(xmlString: string): {
             filesBlock.files.push({
               path: unescapeXml(filePath),
               content: fileContent,
-              language: unescapeXml(language)
+              language: unescapeXml(language),
             });
           }
         }
@@ -139,18 +138,18 @@ export function importFromXML(xmlString: string): {
   return {
     version,
     settings: { maxTokens, model },
-    blocks
+    blocks,
   };
 }
 
 /**
  * importAndValidateFromXML
  * @description
- * An async wrapper around importFromXML that verifies each file path in <files> blocks 
+ * An async wrapper around importFromXML that verifies each file path in <files> blocks
  * actually exists on the local file system. Invalid references are removed or skipped.
- * 
+ *
  * @param xmlString - The raw XML content
- * @returns a Promise resolving to { version, settings, blocks }, but with 
+ * @returns a Promise resolving to { version, settings, blocks }, but with
  *          invalid file references removed from the 'blocks'.
  */
 export async function importAndValidateFromXML(xmlString: string): Promise<{
@@ -163,7 +162,9 @@ export async function importAndValidateFromXML(xmlString: string): Promise<{
 
   // 2) For each "files" block, check file existence
   if (!window.electronAPI?.verifyFileExistence) {
-    console.warn('[importAndValidateFromXML] No electronAPI.verifyFileExistence found. Skipping path validation.');
+    console.warn(
+      '[importAndValidateFromXML] No electronAPI.verifyFileExistence found. Skipping path validation.'
+    );
     return data;
   }
 

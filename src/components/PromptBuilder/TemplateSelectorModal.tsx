@@ -1,4 +1,3 @@
-
 /**
  * @file TemplateSelectorModal.tsx
  * @description
@@ -36,7 +35,7 @@ interface TemplateFileEntry {
 const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   isOpen,
   onClose,
-  onInsertBlocks
+  onInsertBlocks,
 }) => {
   const [templateFiles, setTemplateFiles] = useState<TemplateFileEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,12 +113,14 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
         content = await window.electronAPI.readPromptComposerFile(entry.fileName);
       }
       if (!content) {
-        console.warn(`[TemplateSelectorModal] Could not read content from ${entry.source} file: ${entry.fileName}`);
+        console.warn(
+          `[TemplateSelectorModal] Could not read content from ${entry.source} file: ${entry.fileName}`
+        );
         showToast(`Could not read template "${entry.fileName}". File not found?`, 'error');
         return;
       }
 
-      const parsedBlocks = await parseTemplateBlocksAsync(content, undefined, undefined, (msg) => {
+      const parsedBlocks = await parseTemplateBlocksAsync(content, undefined, undefined, msg => {
         showToast(msg, 'error');
       });
 
@@ -139,13 +140,13 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
-      onClick={(e) => {
+      onClick={e => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
         className="bg-white dark:bg-gray-800 w-full max-w-md p-4 rounded shadow-lg"
-        onClick={(e) => e.stopPropagation()}
+        onClick={e => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="templateSelectorModalTitle"
@@ -160,14 +161,10 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
         </h2>
 
         {loading && (
-          <p className="text-sm text-gray-600 dark:text-gray-300">
-            Loading templates...
-          </p>
+          <p className="text-sm text-gray-600 dark:text-gray-300">Loading templates...</p>
         )}
         {!loading && templateFiles.length === 0 && (
-          <p className="text-sm text-gray-600 dark:text-gray-300">
-            No templates found.
-          </p>
+          <p className="text-sm text-gray-600 dark:text-gray-300">No templates found.</p>
         )}
         {!loading && templateFiles.length > 0 && (
           <ul className="max-h-60 overflow-auto border border-gray-300 dark:border-gray-700 rounded p-2">
@@ -177,9 +174,7 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
                 className="cursor-pointer p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded flex justify-between items-center"
                 onClick={() => handleSelectTemplate(entry)}
               >
-                <span className="text-sm text-gray-800 dark:text-gray-100">
-                  {entry.fileName}
-                </span>
+                <span className="text-sm text-gray-800 dark:text-gray-100">{entry.fileName}</span>
                 <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
                   {entry.source === 'global' ? 'Global' : 'Project'}
                 </span>

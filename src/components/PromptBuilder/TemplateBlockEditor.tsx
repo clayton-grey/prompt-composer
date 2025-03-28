@@ -1,4 +1,3 @@
-
 /**
  * @file TemplateBlockEditor.tsx
  * @description
@@ -76,10 +75,7 @@ interface TemplateBlockEditorProps {
   onChange: (updatedBlock: TemplateBlock) => void;
 }
 
-const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
-  block,
-  onChange
-}) => {
+const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({ block, onChange }) => {
   const { blocks, replaceTemplateGroup } = usePrompt();
   const [isEditingRaw, setIsEditingRaw] = useState<boolean>(block.editingRaw || false);
   const [rawContent, setRawContent] = useState<string>('');
@@ -132,7 +128,7 @@ const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({
           rows={8}
           className="w-full rounded border-gray-300 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-100"
           value={rawContent}
-          onChange={(e) => setRawContent(e.target.value)}
+          onChange={e => setRawContent(e.target.value)}
           aria-label="Raw Template Editor"
         />
         <div className="mt-2 flex gap-2">

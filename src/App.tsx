@@ -1,4 +1,3 @@
-
 /**
  * @file App.tsx
  * @description
@@ -42,7 +41,7 @@ const App: React.FC = () => {
     if (!resizingRef.current) return;
     const delta = e.clientX - lastClientXRef.current;
     lastClientXRef.current = e.clientX;
-    setSidebarWidth((prev) => {
+    setSidebarWidth(prev => {
       let newWidth = prev + delta;
       if (newWidth < MIN_SIDEBAR_WIDTH) newWidth = MIN_SIDEBAR_WIDTH;
       if (newWidth > MAX_SIDEBAR_WIDTH) newWidth = MAX_SIDEBAR_WIDTH;
@@ -59,7 +58,7 @@ const App: React.FC = () => {
       if (!resizingRef.current) return;
       const fakeEvent = {
         clientX: e.clientX,
-        preventDefault: () => {}
+        preventDefault: () => {},
       } as unknown as MouseEvent<HTMLDivElement>;
       handleMouseMove(fakeEvent);
     }

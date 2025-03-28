@@ -1,4 +1,3 @@
-
 /**
  * @file ToastContext.tsx
  * @description
@@ -66,7 +65,7 @@ interface ToastContextType {
  * Create the actual context with a default stub for showToast.
  */
 const ToastContext = createContext<ToastContextType>({
-  showToast: () => {}
+  showToast: () => {},
 });
 
 /**
@@ -83,13 +82,13 @@ export const ToastProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     const newToast: ToastMessage = {
       id: uuidv4(),
       message,
-      type
+      type,
     };
-    setToasts((prev) => [...prev, newToast]);
+    setToasts(prev => [...prev, newToast]);
 
     // Auto-remove after 5 seconds
     setTimeout(() => {
-      setToasts((prevToasts) => prevToasts.filter((t) => t.id !== newToast.id));
+      setToasts(prevToasts => prevToasts.filter(t => t.id !== newToast.id));
     }, 5000);
   }, []);
 
@@ -97,7 +96,7 @@ export const ToastProvider: React.FC<React.PropsWithChildren> = ({ children }) =
    * removeToast - Manually remove a toast by ID
    */
   const removeToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
+    setToasts(prev => prev.filter(t => t.id !== id));
   }, []);
 
   return (
@@ -105,10 +104,8 @@ export const ToastProvider: React.FC<React.PropsWithChildren> = ({ children }) =
       {children}
 
       {/* Toast Container (absolute positioned, top-right corner) */}
-      <div
-        className="fixed top-4 right-4 z-50 flex flex-col space-y-2"
-      >
-        {toasts.map((toast) => (
+      <div className="fixed top-4 right-4 z-50 flex flex-col space-y-2">
+        {toasts.map(toast => (
           <div
             key={toast.id}
             className={`px-4 py-2 rounded shadow text-white ${

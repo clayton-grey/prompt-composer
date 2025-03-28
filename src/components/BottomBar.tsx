@@ -1,4 +1,3 @@
-
 /**
  * @file BottomBar.tsx
  * @description
@@ -27,7 +26,9 @@ const BottomBar: React.FC = () => {
   // Determine if we're over the limit
   const isOverLimit = totalTokens > maxTokens;
   const barBgColor = isOverLimit ? 'bg-red-100 dark:bg-red-800' : 'bg-white dark:bg-gray-800';
-  const textColor = isOverLimit ? 'text-red-600 dark:text-red-300 font-semibold' : 'text-gray-700 dark:text-gray-300';
+  const textColor = isOverLimit
+    ? 'text-red-600 dark:text-red-300 font-semibold'
+    : 'text-gray-700 dark:text-gray-300';
 
   return (
     <footer className={`w-full h-10 flex items-center justify-between px-4 shadow ${barBgColor}`}>
@@ -38,13 +39,9 @@ const BottomBar: React.FC = () => {
 
       {/* Status text */}
       {isOverLimit ? (
-        <span className={`text-sm ${textColor}`}>
-          Over token limit!
-        </span>
+        <span className={`text-sm ${textColor}`}>Over token limit!</span>
       ) : (
-        <span className="text-sm text-gray-700 dark:text-gray-300">
-          Within limit
-        </span>
+        <span className="text-sm text-gray-700 dark:text-gray-300">Within limit</span>
       )}
     </footer>
   );

@@ -1,9 +1,8 @@
-
 /**
  * @file blockReorderHelpers.ts
  * @description
  * Provides reusable helper functions for reordering blocks in the Prompt Composer.
- * 
+ *
  * Exported Functions:
  * 1) findGroupRange(blocks, startIdx):
  *    - Given an array of blocks and a starting index, returns the min and max
@@ -35,7 +34,7 @@ import { Block } from '../types/Block';
  * findGroupRange
  * Identifies the min and max index of blocks that share the same groupId as the block
  * at position startIdx. If that block has no groupId, returns [startIdx, startIdx].
- * 
+ *
  * @param blocks - The array of blocks
  * @param startIdx - Index of the reference block
  * @returns A tuple [minIndex, maxIndex] representing the contiguous sub-array that shares groupId
@@ -49,9 +48,7 @@ export function findGroupRange(blocks: Block[], startIdx: number): [number, numb
   const gid = referenceBlock.groupId;
 
   // Collect indices of all blocks with the same groupId
-  const indices = blocks
-    .map((blk, i) => (blk.groupId === gid ? i : -1))
-    .filter(i => i !== -1);
+  const indices = blocks.map((blk, i) => (blk.groupId === gid ? i : -1)).filter(i => i !== -1);
 
   const minI = Math.min(...indices);
   const maxI = Math.max(...indices);
@@ -61,7 +58,7 @@ export function findGroupRange(blocks: Block[], startIdx: number): [number, numb
 /**
  * reorderBlocksInRange
  * Moves a chunk of blocks spanning [start, end] up or down by one position in the array.
- * 
+ *
  * @param blocks - The current array of blocks
  * @param start - The starting index of the chunk
  * @param end - The ending index of the chunk

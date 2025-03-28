@@ -1,9 +1,8 @@
-
 /**
  * @file FileBlockEditor.tsx
  * @description
  * An editing interface for a "files" type block. Now we add a folder-tree icon
- * at the start to visually identify it. 
+ * at the start to visually identify it.
  *
  * Step X changes:
  *  - Insert the "folder-tree" SVG at the beginning of the block, next to the heading "File Block".
@@ -25,7 +24,7 @@ const FileBlockEditor: React.FC<FileBlockEditorProps> = ({ block, onChange }) =>
     const newValue = e.target.checked;
     const updated = {
       ...block,
-      includeProjectMap: newValue
+      includeProjectMap: newValue,
     };
     onChange(updated);
   };
@@ -56,9 +55,7 @@ const FileBlockEditor: React.FC<FileBlockEditorProps> = ({ block, onChange }) =>
           <path d="M3 5a2 2 0 0 0 2 2h3"></path>
           <path d="M3 3v13a2 2 0 0 0 2 2h3"></path>
         </svg>
-        <h3 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">
-          File Block
-        </h3>
+        <h3 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">File Block</h3>
       </div>
 
       <label
