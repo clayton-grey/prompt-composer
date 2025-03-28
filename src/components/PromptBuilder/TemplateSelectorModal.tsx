@@ -6,21 +6,18 @@
  * from global + project .prompt-composer directories. Upon user selection,
  * it reads the file content and uses our parser to generate blocks.
  *
- * Previously, it imported "parseTemplateBlocks" from "templateBlockParser.ts".
- * Now we import "parseTemplateBlocksAsync" from "templateBlockParserAsync.ts"
- * so that nested templates are expanded at parse time.
- *
- * Implementation details:
- *  - On open, fetch list of templates from electronAPI.listAllTemplateFiles(...)
- *  - Display them in a scrollable list. 
- *  - On select, read the chosen file content, parse it, and call onInsertBlocks(parsedBlocks).
- *  - Then close the modal.
+ * Step 4 Changes (Error Feedback):
+ *  - We now import and use the `useToast` hook from ToastContext to display error messages.
+ *  - We pass an `onError` callback to parseTemplateBlocksAsync so that any parse errors 
+ *    (cyclic references, missing placeholders) can be displayed to the user.
+ *  - We also catch any file read errors to show a toast if something fails.
  */
 
 import React, { useEffect, useState } from 'react';
 import { parseTemplateBlocksAsync } from '../../utils/templateBlockParserAsync';
 import { Block } from '../../types/Block';
 import { useProject } from '../../context/ProjectContext';
+import { useToast } from '../../context/ToastContext';
 
 interface TemplateSelectorModalProps {
   isOpen: boolean;
@@ -44,6 +41,9 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   // We read from project context to get the currently tracked projectFolders
   const { projectFolders } = useProject();
 
+  // Step 4: We use the toast for error feedback
+  const { showToast } = useToast();
+
   useEffect(() => {
     if (isOpen) {
       loadTemplates();
@@ -58,7 +58,7 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
     try {
       setLoading(true);
       if (!window.electronAPI?.listAllTemplateFiles) {
-        console.warn('[TemplateSelectorModal] electronAPI.listAllTemplateFiles not available');
+        showToast('Could not load template list - electronAPI unavailable.', 'error');
         setTemplateFiles([]);
         setLoading(false);
         return;
@@ -69,12 +69,18 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
       setTemplateFiles(sorted);
     } catch (err) {
       console.error('[TemplateSelectorModal] Failed to list template files:', err);
+      showToast(`Error loading templates: ${String(err)}`, 'error');
       setTemplateFiles([]);
     } finally {
       setLoading(false);
     }
   }
 
+  /**
+   * handleSelectTemplate
+   * Reads the selected template file, then calls parseTemplateBlocksAsync.
+   * If parsing or reading fails, we show an error toast. Otherwise, we insert the blocks.
+   */
   async function handleSelectTemplate(entry: TemplateFileEntry) {
     try {
       let content: string | null = null;
@@ -85,11 +91,15 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
       }
       if (!content) {
         console.warn(`[TemplateSelectorModal] Could not read content from ${entry.source} file: ${entry.fileName}`);
+        showToast(`Could not read template "${entry.fileName}". File not found?`, 'error');
         return;
       }
 
       // Now parse the file content using the new async parser
-      const parsedBlocks = await parseTemplateBlocksAsync(content);
+      // Provide an onError callback that shows a toast if there's a parsing issue
+      const parsedBlocks = await parseTemplateBlocksAsync(content, undefined, undefined, (msg) => {
+        showToast(msg, 'error');
+      });
 
       // Insert the resulting blocks into the composition
       onInsertBlocks(parsedBlocks);
@@ -98,6 +108,7 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
       onClose();
     } catch (err) {
       console.error('[TemplateSelectorModal] handleSelectTemplate error:', err);
+      showToast(`Failed to load template: ${String(err)}`, 'error');
     }
   }
 
