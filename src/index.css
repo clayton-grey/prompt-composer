@@ -1,87 +1,22 @@
 /**
  * @file index.css
  * @description
- * This file serves as the main entry for Tailwind CSS utilities (imported in main.tsx)
- * and also includes any global or custom CSS overrides. Below, we add custom "block-tail"
- * classes to achieve the "tail" shape on the left side of template blocks, as shown in
- * the project UI mockup. We also define color variations for text, file, and template
- * blocks. 
+ * Tailwind base/components/utilities plus any custom global styles.
  *
- * Notes on 'group-hover':
- *  - We rely on Tailwind's group-hover utility for showing reorder/delete buttons on hover.
- *  - We ensure that the parent .group sets "relative" so the absolutely positioned child can appear.
+ * After the design change to a flattened view:
+ *  - We remove block-tail classes, pastel highlights, borders for blocks, etc.
+ *  - We keep the main tailwind import for utility classes.
  */
 
-/* Tailwind base + components + utilities are defined in tailwind.config.js and imported below. */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* 
-   ==============================================
-   Custom "tail" styling for blocks 
-   ==============================================
-   We define a base .block-tail class that provides a left "arrow" or "tail" shape, 
-   plus color-specific variations for 'template', 'text', and 'files' blocks.
-
-   Implementation:
-   - We use a pseudo-element ::before to create the triangular shape to the left.
-   - We position it absolutely so it overlaps the main block background.
-   - The background color of the tail can match or accent the block's background.
-*/
-
-.block-tail {
-  position: relative;
-  padding-left: 1.25rem; /* leaves space for the tail */
-  margin-left: 0.5rem;
-}
-
-.block-tail::before {
-  content: '';
-  position: absolute;
-  left: -1rem;
-  top: 1rem; /* vertical offset so the tail is near the top-edge */
-  width: 0;
-  height: 0;
-  border: 8px solid transparent; /* triangular shape */
-  /* The default color for the tail (we will override for block-tail-purple, etc.) */
-  border-right-color: #ffffff;
-  z-index: 1;
-}
+/* Remove block-tail and block-tail-* styles entirely, as they are no longer used */
 
 /* 
-   For different block types, we can define different tail colors.
-   Note: .bg-* classes from Tailwind may override the block background. 
-*/
-
-/* Template blocks: slight purple accent */
-.block-tail-purple {
-  background-color: #faf5ff; /* Tailwind's bg-purple-50 equivalent */
-}
-.block-tail-purple::before {
-  border-right-color: #faf5ff;
-}
-
-/* Text blocks: slight blue accent */
-.block-tail-blue {
-  background-color: #f0f9ff; /* Tailwind's bg-blue-50 equivalent */
-}
-.block-tail-blue::before {
-  border-right-color: #f0f9ff;
-}
-
-/* Files blocks: slight green accent */
-.block-tail-green {
-  background-color: #f0fdf4; /* Tailwind's bg-green-50 equivalent */
-}
-.block-tail-green::before {
-  border-right-color: #f0fdf4;
-}
-
-/*
-  The plain text preview area in PromptBuilder can be adjusted with a drag handle.
-  We'll rely on inline Tailwind classes for resizing, but here's a minimal style
-  to ensure the handle is visible.
+   The "preview-drag-handle" might be used in the future for resizing if needed,
+   or can be removed if no longer relevant. For now, let's keep it in case it's used.
 */
 .preview-drag-handle {
   cursor: row-resize;
