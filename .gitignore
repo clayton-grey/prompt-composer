@@ -5,4 +5,4 @@ patch.xml
 patch.py
 dist
 release
-.vite
+.vitelocalhost-*.log
