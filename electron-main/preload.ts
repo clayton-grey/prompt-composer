@@ -1,4 +1,3 @@
-
 /**
  * @file preload.ts
  * @description
@@ -34,7 +33,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
 
   // exportXml: Opens a save dialog for .xml, writes xmlContent to disk if confirmed
-  exportXml: async (args: { defaultFileName?: string; xmlContent: string }) => {
+  exportXml: async (args: { defaultFileName ? : string;xmlContent: string }) => {
     return ipcRenderer.invoke('export-xml', args);
   },
 
@@ -47,7 +46,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showOpenDialog: (options: any) => ipcRenderer.invoke('show-open-dialog', options),
 
   // createFolder: Creates a new folder in the parent directory
-  createFolder: (args: { parentPath: string; folderName: string }) => {
+  createFolder: (args: { parentPath: string;folderName: string }) => {
     return ipcRenderer.invoke('create-folder', args);
   },
 

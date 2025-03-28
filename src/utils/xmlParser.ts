@@ -1,4 +1,3 @@
-
 /**
  * @file xmlParser.ts
  * @description
@@ -24,7 +23,7 @@ import { Block, TextBlock, TemplateBlock, FilesBlock } from '../types/Block';
 // Existing importFromXML, used internally:
 export function importFromXML(xmlString: string): {
   version: string;
-  settings: { maxTokens: number; model: string };
+  settings: { maxTokens: number;model: string };
   blocks: Block[];
 } {
   const parser = new DOMParser();
@@ -82,7 +81,7 @@ export function importFromXML(xmlString: string): {
         const content = contentEl ? unescapeXml(contentEl.textContent || '') : '';
 
         // Parse variables
-        const variables: Array<{ name: string; default: string }> = [];
+        const variables: Array < { name: string;default: string } > = [];
         const variablesEl = blockEl.querySelector('variables');
         if (variablesEl) {
           const variableEls = Array.from(variablesEl.querySelectorAll('variable'));
@@ -153,11 +152,11 @@ export function importFromXML(xmlString: string): {
  * @returns a Promise resolving to { version, settings, blocks }, but with 
  *          invalid file references removed from the 'blocks'.
  */
-export async function importAndValidateFromXML(xmlString: string): Promise<{
+export async function importAndValidateFromXML(xmlString: string): Promise < {
   version: string;
-  settings: { maxTokens: number; model: string };
+  settings: { maxTokens: number;model: string };
   blocks: Block[];
-}> {
+} > {
   // 1) Parse the XML normally
   const data = importFromXML(xmlString);
 
@@ -194,7 +193,7 @@ export async function importAndValidateFromXML(xmlString: string): Promise<{
  */
 export function exportToXML(data: {
   version: string;
-  settings: { maxTokens: number; model: string };
+  settings: { maxTokens: number;model: string };
   blocks: Block[];
 }): string {
   const { version, settings, blocks } = data;

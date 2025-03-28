@@ -1,4 +1,3 @@
-
 /**
  * @file ToastContext.tsx
  * @description
@@ -59,21 +58,21 @@ interface ToastContextType {
    * @param message the text to display
    * @param type the toast type, defaults to 'info'
    */
-  showToast: (message: string, type?: 'info' | 'error') => void;
+  showToast: (message: string, type ? : 'info' | 'error') => void;
 }
 
 /**
  * Create the actual context with a default stub for showToast.
  */
-const ToastContext = createContext<ToastContextType>({
+const ToastContext = createContext < ToastContextType > ({
   showToast: () => {}
 });
 
 /**
  * The ToastProvider keeps track of the toasts in state and renders them.
  */
-export const ToastProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+export const ToastProvider: React.FC < React.PropsWithChildren > = ({ children }) => {
+  const [toasts, setToasts] = useState < ToastMessage[] > ([]);
 
   /**
    * showToast - Appends a new toast to the list
@@ -100,47 +99,44 @@ export const ToastProvider: React.FC<React.PropsWithChildren> = ({ children }) =
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  return (
-    <ToastContext.Provider value={{ showToast }}>
-      {children}
+  return ( <
+    ToastContext.Provider value = { { showToast } } > { children }
 
-      {/* Toast Container (absolute positioned, top-right corner) */}
-      <div
-        className="fixed top-4 right-4 z-50 flex flex-col space-y-2"
-      >
-        {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            className={`px-4 py-2 rounded shadow text-white ${
+    { /* Toast Container (absolute positioned, top-right corner) */ } <
+    div className = "fixed top-4 right-4 z-50 flex flex-col space-y-2" >
+    {
+      toasts.map((toast) => ( <
+        div key = { toast.id } className = { `px-4 py-2 rounded shadow text-white ${
               toast.type === 'error' ? 'bg-red-600' : 'bg-gray-800'
-            }`}
-          >
-            <div className="flex items-center">
-              <span className="flex-1 text-sm whitespace-pre-wrap">{toast.message}</span>
-              <button
-                onClick={() => removeToast(toast.id)}
-                className="ml-2 text-white hover:text-gray-300"
-                title="Close"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="16"
-                  height="16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  viewBox="0 0 24 24"
-                >
-                  <path d="m18 6-6 6-6-6" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
-    </ToastContext.Provider>
+            }` } >
+        <
+        div className = "flex items-center" >
+        <
+        span className = "flex-1 text-sm whitespace-pre-wrap" > { toast.message } < /span> <
+        button onClick = {
+          () => removeToast(toast.id) } className = "ml-2 text-white hover:text-gray-300"
+        title = "Close" >
+        <
+        svg xmlns = "http://www.w3.org/2000/svg"
+        width = "16"
+        height = "16"
+        fill = "none"
+        stroke = "currentColor"
+        strokeWidth = "2"
+        strokeLinecap = "round"
+        strokeLinejoin = "round"
+        viewBox = "0 0 24 24" >
+        <
+        path d = "m18 6-6 6-6-6" / >
+        <
+        /svg> <
+        /button> <
+        /div> <
+        /div>
+      ))
+    } <
+    /div> <
+    /ToastContext.Provider>
   );
 };
 

@@ -1,4 +1,3 @@
-
 /**
  * @file TextBlockEditor.tsx
  * @description
@@ -21,26 +20,22 @@ interface TextBlockEditorProps {
   onChange: (updatedBlock: TextBlock) => void;
 }
 
-const TextBlockEditor: React.FC<TextBlockEditorProps> = ({ block, onChange }) => {
+const TextBlockEditor: React.FC < TextBlockEditorProps > = ({ block, onChange }) => {
   /**
    * handleContentChange: user edits the text block content
    */
-  const handleContentChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
+  const handleContentChange = (e: ChangeEvent < HTMLTextAreaElement > ) => {
     onChange({ ...block, content: e.target.value });
   };
 
-  return (
-    <div>
-      {/* We only show the content textarea, no label */}
-      <textarea
-        rows={4}
-        className="w-full rounded border-gray-300 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-100"
-        value={block.content}
-        onChange={handleContentChange}
-        placeholder="Enter text..."
-        aria-label="Text Block Editor"
-      />
-    </div>
+  return ( <
+    div > { /* We only show the content textarea, no label */ } <
+    textarea rows = { 4 } className = "w-full rounded border-gray-300 dark:border-gray-700 dark:bg-gray-700 dark:text-gray-100"
+    value = { block.content } onChange = { handleContentChange } placeholder = "Enter text..."
+    aria - label = "Text Block Editor" /
+    >
+    <
+    /div>
   );
 };
 

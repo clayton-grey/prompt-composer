@@ -1,4 +1,3 @@
-
 /**
  * @file BlockList.tsx
  * @description
@@ -69,58 +68,55 @@ function getBlockTailClass(block: Block): string {
 function renderDeleteIcon(block: Block, onClick: () => void) {
   // If it's a template block lead, we show the "template delete" icon
   if (block.type === 'template' && block.isGroupLead) {
-    return (
-      <button
-        onClick={onClick}
-        className="p-1 text-gray-700 dark:text-gray-200 hover:bg-red-100 dark:hover:bg-red-600 rounded"
-        aria-label="Delete template group"
-      >
-        {/* Template delete icon (grid2x2-x) */}
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="lucide lucide-grid2x2-x-icon lucide-grid-2x2-x"
-        >
-          <path d="M12 3v17a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1H3"></path>
-          <path d="m16 16 5 5"></path>
-          <path d="m16 21 5-5"></path>
-        </svg>
-      </button>
+    return ( <
+      button onClick = { onClick } className = "p-1 text-gray-700 dark:text-gray-200 hover:bg-red-100 dark:hover:bg-red-600 rounded"
+      aria - label = "Delete template group" >
+      { /* Template delete icon (grid2x2-x) */ } <
+      svg xmlns = "http://www.w3.org/2000/svg"
+      width = "20"
+      height = "20"
+      viewBox = "0 0 24 24"
+      fill = "none"
+      stroke = "currentColor"
+      strokeWidth = "2"
+      strokeLinecap = "round"
+      strokeLinejoin = "round"
+      className = "lucide lucide-grid2x2-x-icon lucide-grid-2x2-x" >
+      <
+      path d = "M12 3v17a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1H3" > < /path> <
+      path d = "m16 16 5 5" > < /path> <
+      path d = "m16 21 5-5" > < /path> <
+      /svg> <
+      /button>
     );
   }
 
   // Otherwise, standard block delete icon (square-x)
-  return (
-    <button
-      onClick={onClick}
-      className="p-1 text-gray-700 dark:text-gray-200 hover:bg-red-100 dark:hover:bg-red-600 rounded"
-      aria-label="Delete block"
-    >
-      {/* block delete icon (square-x) */}
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="lucide lucide-square-x-icon lucide-square-x"
-      >
-        <rect width="18" height="18" x="3" y="3" rx="2" ry="2"></rect>
-        <path d="m15 9-6 6"></path>
-        <path d="m9 9 6 6"></path>
-      </svg>
-    </button>
+  return ( <
+    button onClick = { onClick } className = "p-1 text-gray-700 dark:text-gray-200 hover:bg-red-100 dark:hover:bg-red-600 rounded"
+    aria - label = "Delete block" >
+    { /* block delete icon (square-x) */ } <
+    svg xmlns = "http://www.w3.org/2000/svg"
+    width = "20"
+    height = "20"
+    viewBox = "0 0 24 24"
+    fill = "none"
+    stroke = "currentColor"
+    strokeWidth = "2"
+    strokeLinecap = "round"
+    strokeLinejoin = "round"
+    className = "lucide lucide-square-x-icon lucide-square-x" >
+    <
+    rect width = "18"
+    height = "18"
+    x = "3"
+    y = "3"
+    rx = "2"
+    ry = "2" > < /rect> <
+    path d = "m15 9-6 6" > < /path> <
+    path d = "m9 9 6 6" > < /path> <
+    /svg> <
+    /button>
   );
 }
 
@@ -260,9 +256,9 @@ const BlockList: React.FC = () => {
     return true;
   }
 
-  return (
-    <div className="space-y-4">
-      {blocks.map((block, index) => {
+  return ( <
+    div className = "space-y-4" > {
+      blocks.map((block, index) => {
         if (!shouldRenderBlock(block, index)) {
           return null;
         }
@@ -280,112 +276,101 @@ const BlockList: React.FC = () => {
 
         const blockTailClass = getBlockTailClass(block);
 
-        return (
-          <div
-            key={block.id}
-            className={`relative group p-4 shadow rounded flex flex-col gap-2 border border-gray-200 dark:border-gray-600 ${blockTailClass}`}
-          >
-            {/* Top-right: reorder + delete icons, shown on hover */}
-            {canReorderOrDelete && (
-              <div className="absolute top-2 right-2 flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                {/* Move Up button */}
-                <button
-                  onClick={() => handleMoveUp(index)}
-                  className="p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={index <= 0}
-                  aria-label="Move block or group up"
-                >
-                  {/* Move up icon */}
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="lucide lucide-move-up-icon lucide-move-up"
-                  >
-                    <path d="M8 6L12 2L16 6"></path>
-                    <path d="M12 2V22"></path>
-                  </svg>
-                </button>
+        return ( <
+          div key = { block.id } className = { `relative group p-4 shadow rounded flex flex-col gap-2 border border-gray-200 dark:border-gray-600 ${blockTailClass}` } >
+          { /* Top-right: reorder + delete icons, shown on hover */ } {
+            canReorderOrDelete && ( <
+              div className = "absolute top-2 right-2 flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity z-10" > { /* Move Up button */ } <
+              button onClick = {
+                () => handleMoveUp(index) } className = "p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled = { index <= 0 } aria - label = "Move block or group up" >
+              { /* Move up icon */ } <
+              svg xmlns = "http://www.w3.org/2000/svg"
+              width = "20"
+              height = "20"
+              viewBox = "0 0 24 24"
+              fill = "none"
+              stroke = "currentColor"
+              strokeWidth = "2"
+              strokeLinecap = "round"
+              strokeLinejoin = "round"
+              className = "lucide lucide-move-up-icon lucide-move-up" >
+              <
+              path d = "M8 6L12 2L16 6" > < /path> <
+              path d = "M12 2V22" > < /path> <
+              /svg> <
+              /button>
 
-                {/* Move Down button */}
-                <button
-                  onClick={() => handleMoveDown(index)}
-                  className="p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                  disabled={index >= blocks.length - 1}
-                  aria-label="Move block or group down"
-                >
-                  {/* Move down icon */}
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="lucide lucide-move-down-icon lucide-move-down"
-                  >
-                    <path d="M8 18L12 22L16 18"></path>
-                    <path d="M12 2V22"></path>
-                  </svg>
-                </button>
+              { /* Move Down button */ } <
+              button onClick = {
+                () => handleMoveDown(index) } className = "p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled = { index >= blocks.length - 1 } aria - label = "Move block or group down" >
+              { /* Move down icon */ } <
+              svg xmlns = "http://www.w3.org/2000/svg"
+              width = "20"
+              height = "20"
+              viewBox = "0 0 24 24"
+              fill = "none"
+              stroke = "currentColor"
+              strokeWidth = "2"
+              strokeLinecap = "round"
+              strokeLinejoin = "round"
+              className = "lucide lucide-move-down-icon lucide-move-down" >
+              <
+              path d = "M8 18L12 22L16 18" > < /path> <
+              path d = "M12 2V22" > < /path> <
+              /svg> <
+              /button>
 
-                {/* Delete button (block or template) */}
-                {renderDeleteIcon(block, () => handleDelete(index))}
-              </div>
-            )}
+              { /* Delete button (block or template) */ } { renderDeleteIcon(block, () => handleDelete(index)) } <
+              /div>
+            )
+          }
 
-            {/* Bottom-right: raw edit pencil icon if template group lead */}
-            {block.type === 'template' && block.isGroupLead && !block.editingRaw && (
-              <div className="absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                <button
-                  onClick={() => handleRawEdit(block)}
-                  className="p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded"
-                  aria-label="Edit Raw Template"
-                >
-                  {/* Pencil icon for raw edit */}
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    width="20"
-                    height="20"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="lucide lucide-pencil-icon lucide-pencil"
-                  >
-                    <path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"></path>
-                    <path d="m15 5 4 4"></path>
-                  </svg>
-                </button>
-              </div>
-            )}
+          { /* Bottom-right: raw edit pencil icon if template group lead */ } {
+            block.type === 'template' && block.isGroupLead && !block.editingRaw && ( <
+              div className = "absolute bottom-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10" >
+              <
+              button onClick = {
+                () => handleRawEdit(block) } className = "p-1 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 rounded"
+              aria - label = "Edit Raw Template" >
+              { /* Pencil icon for raw edit */ } <
+              svg xmlns = "http://www.w3.org/2000/svg"
+              width = "20"
+              height = "20"
+              viewBox = "0 0 24 24"
+              fill = "none"
+              stroke = "currentColor"
+              strokeWidth = "2"
+              strokeLinecap = "round"
+              strokeLinejoin = "round"
+              className = "lucide lucide-pencil-icon lucide-pencil" >
+              <
+              path d = "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" > < /path> <
+              path d = "m15 5 4 4" > < /path> <
+              /svg> <
+              /button> <
+              /div>
+            )
+          }
 
-            {/* The block editor content (text, template, or file) */}
-            <BlockEditor
-              block={block}
-              onChange={(updated) => updateBlock(updated)}
-            />
-          </div>
+          { /* The block editor content (text, template, or file) */ } <
+          BlockEditor block = { block } onChange = {
+            (updated) => updateBlock(updated) }
+          /> <
+          /div>
         );
-      })}
+      })
+    }
 
-      {blocks.length === 0 && (
-        <div className="text-sm text-gray-700 dark:text-gray-300">
-          No blocks. Use the Add buttons above.
-        </div>
-      )}
-    </div>
+    {
+      blocks.length === 0 && ( <
+        div className = "text-sm text-gray-700 dark:text-gray-300" >
+        No blocks.Use the Add buttons above. <
+        /div>
+      )
+    } <
+    /div>
   );
 };
 

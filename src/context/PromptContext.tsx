@@ -1,4 +1,3 @@
-
 /**
  * @file PromptContext.tsx
  * @description
@@ -36,7 +35,8 @@ interface PromptSettings {
 }
 
 interface TokenUsage {
-  blockTokenUsage: Record<string, number>;
+  blockTokenUsage: Record < string,
+  number > ;
   totalTokens: number;
 }
 
@@ -52,19 +52,19 @@ interface PromptContextType {
   moveBlock: (oldIndex: number, newIndex: number) => void;
 
   updateFileBlock: (
-    fileEntries: { path: string; content: string; language: string }[],
-    asciiMap?: string
+    fileEntries: { path: string;content: string;language: string } [],
+    asciiMap ? : string
   ) => void;
 
   tokenUsage: TokenUsage;
-  getFlattenedPrompt: () => Promise<string>;
+  getFlattenedPrompt: () => Promise < string > ;
   importComposition: (newBlocks: Block[], newSettings: PromptSettings) => void;
   replaceTemplateGroup: (
     leadBlockId: string,
     groupId: string,
     newText: string,
     oldRawText: string
-  ) => Promise<void>;
+  ) => Promise < void > ;
 }
 
 const defaultSettings: PromptSettings = {
@@ -72,7 +72,7 @@ const defaultSettings: PromptSettings = {
   model: 'gpt-4o'
 };
 
-const PromptContext = createContext<PromptContextType>({
+const PromptContext = createContext < PromptContextType > ({
   blocks: [],
   settings: defaultSettings,
   addBlock: () => {},
@@ -88,16 +88,16 @@ const PromptContext = createContext<PromptContextType>({
   replaceTemplateGroup: async () => {}
 });
 
-export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
-  const [blocks, setBlocks] = useState<Block[]>([]);
-  const [settings, setSettingsState] = useState<PromptSettings>(defaultSettings);
+export const PromptProvider: React.FC < React.PropsWithChildren > = ({ children }) => {
+  const [blocks, setBlocks] = useState < Block[] > ([]);
+  const [settings, setSettingsState] = useState < PromptSettings > (defaultSettings);
 
-  const [tokenUsage, setTokenUsage] = useState<TokenUsage>({
+  const [tokenUsage, setTokenUsage] = useState < TokenUsage > ({
     blockTokenUsage: {},
     totalTokens: 0
   });
 
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceRef = useRef < NodeJS.Timeout | null > (null);
 
   useEffect(() => {
     // We re-initialize the encoder whenever the model changes
@@ -112,7 +112,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     debounceRef.current = setTimeout(() => {
       initEncoder(settings.model);
 
-      const blockTokenUsage: Record<string, number> = {};
+      const blockTokenUsage: Record < string, number > = {};
       let totalTokens = 0;
 
       blocks.forEach((block) => {
@@ -126,9 +126,9 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
           case 'files': {
             const fb = block as FilesBlock;
             const shouldIncludeMap = fb.includeProjectMap ?? true;
-            const mapText = shouldIncludeMap && fb.projectAsciiMap
-              ? fb.projectAsciiMap
-              : '';
+            const mapText = shouldIncludeMap && fb.projectAsciiMap ?
+              fb.projectAsciiMap :
+              '';
             const fileTexts = fb.files.map((f) => {
               return `<file_contents>
 File: ${f.path}
@@ -138,9 +138,9 @@ ${f.content}
 </file_contents>`;
             });
             const filesConcatenated = fileTexts.join('\n\n');
-            blockText = shouldIncludeMap
-              ? (mapText + '\n' + filesConcatenated)
-              : filesConcatenated;
+            blockText = shouldIncludeMap ?
+              (mapText + '\n' + filesConcatenated) :
+              filesConcatenated;
             break;
           }
         }
@@ -193,7 +193,7 @@ ${f.content}
   }, []);
 
   const updateFileBlock = useCallback(
-    (fileEntries: { path: string; content: string; language: string }[], asciiMap?: string) => {
+    (fileEntries: { path: string;content: string;language: string } [], asciiMap ? : string) => {
       setBlocks((prev) => {
         const existingIndex = prev.findIndex((b) => b.type === 'files');
         const newId = uuidv4();
@@ -229,7 +229,7 @@ ${f.content}
     []
   );
 
-  const getFlattenedPrompt = useCallback(async (): Promise<string> => {
+  const getFlattenedPrompt = useCallback(async (): Promise < string > => {
     const flattened = await flattenBlocksAsync(blocks);
     return flattened;
   }, [blocks]);
@@ -244,43 +244,43 @@ ${f.content}
 
   const replaceTemplateGroup = useCallback(
     async (leadBlockId: string, groupId: string, newText: string, oldRawText: string) => {
-      if (newText === oldRawText) {
-        // skip
-        setBlocks((prev) => {
-          return prev.map((b) => {
-            if (b.id === leadBlockId && b.editingRaw) {
-              return { ...b, editingRaw: false };
-            }
-            return b;
+        if (newText === oldRawText) {
+          // skip
+          setBlocks((prev) => {
+            return prev.map((b) => {
+              if (b.id === leadBlockId && b.editingRaw) {
+                return { ...b, editingRaw: false };
+              }
+              return b;
+            });
           });
-        });
-        return;
-      }
+          return;
+        }
 
-      // parse new text
-      const newParsed = await parseTemplateBlocksAsync(newText, groupId, leadBlockId);
+        // parse new text
+        const newParsed = await parseTemplateBlocksAsync(newText, groupId, leadBlockId);
 
-      // remove the old group blocks and splice in the new
-      setBlocks((prev) => {
-        const groupIndices = [];
-        for (let i = 0; i < prev.length; i++) {
-          if (prev[i].groupId === groupId) {
-            groupIndices.push(i);
+        // remove the old group blocks and splice in the new
+        setBlocks((prev) => {
+          const groupIndices = [];
+          for (let i = 0; i < prev.length; i++) {
+            if (prev[i].groupId === groupId) {
+              groupIndices.push(i);
+            }
           }
-        }
-        if (groupIndices.length === 0) {
-          // just add newParsed at the end if no old group found
-          return [...prev, ...newParsed];
-        }
-        const startIndex = Math.min(...groupIndices);
-        const endIndex = Math.max(...groupIndices);
+          if (groupIndices.length === 0) {
+            // just add newParsed at the end if no old group found
+            return [...prev, ...newParsed];
+          }
+          const startIndex = Math.min(...groupIndices);
+          const endIndex = Math.max(...groupIndices);
 
-        const updated = [...prev];
-        updated.splice(startIndex, endIndex - startIndex + 1, ...newParsed);
-        return updated;
-      });
-    },
-    []
+          const updated = [...prev];
+          updated.splice(startIndex, endIndex - startIndex + 1, ...newParsed);
+          return updated;
+        });
+      },
+      []
   );
 
   const contextValue: PromptContextType = {
@@ -299,10 +299,9 @@ ${f.content}
     replaceTemplateGroup
   };
 
-  return (
-    <PromptContext.Provider value={contextValue}>
-      {children}
-    </PromptContext.Provider>
+  return ( <
+    PromptContext.Provider value = { contextValue } > { children } <
+    /PromptContext.Provider>
   );
 };
 

@@ -113,9 +113,9 @@ async function readDirectoryTree(dirPath, ig, isProjectDir, projectRoot) {
             continue;
         }
         const fullPath = path_1.default.join(dirPath, entry);
-        const relPath = isProjectDir
-            ? path_1.default.relative(projectRoot, fullPath)
-            : path_1.default.relative(dirPath, fullPath);
+        const relPath = isProjectDir ?
+            path_1.default.relative(projectRoot, fullPath) :
+            path_1.default.relative(dirPath, fullPath);
         if (ig.ignores(relPath)) {
             continue;
         }

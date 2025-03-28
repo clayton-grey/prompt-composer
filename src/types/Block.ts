@@ -1,4 +1,3 @@
-
 /**
  * @file Block.ts
  * @description
@@ -32,25 +31,25 @@ export interface BaseBlock {
    * Indicates whether this block is locked (cannot be individually
    * reordered or removed).
    */
-  locked?: boolean;
+  locked ? : boolean;
 
   /**
    * If multiple blocks are meant to move together, they share a groupId.
    */
-  groupId?: string;
+  groupId ? : string;
 
   /**
    * Indicates that this block is the "lead" block in its group. The lead block
    * is the one that has reorder/delete buttons for the entire group.
    */
-  isGroupLead?: boolean;
+  isGroupLead ? : boolean;
 
   /**
    * If true, this block is currently "raw editing" the entire template group.
    * Only makes sense on the lead block for a template group. Child blocks
    * should remain hidden if the lead is editingRaw. This is ephemeral/in-memory.
    */
-  editingRaw?: boolean;
+  editingRaw ? : boolean;
 }
 
 /**
@@ -67,10 +66,10 @@ export interface TextBlock extends BaseBlock {
 export interface TemplateBlock extends BaseBlock {
   type: 'template';
   content: string;
-  variables: Array<{
+  variables: Array < {
     name: string;
     default: string;
-  }>;
+  } > ;
 }
 
 /**
@@ -79,13 +78,13 @@ export interface TemplateBlock extends BaseBlock {
  */
 export interface FilesBlock extends BaseBlock {
   type: 'files';
-  files: Array<{
+  files: Array < {
     path: string;
     content: string;
     language: string;
-  }>;
-  projectAsciiMap?: string;
-  includeProjectMap?: boolean;
+  } > ;
+  projectAsciiMap ? : string;
+  includeProjectMap ? : boolean;
 }
 
 /**

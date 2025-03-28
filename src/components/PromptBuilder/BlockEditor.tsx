@@ -1,4 +1,3 @@
-
 /**
  * @file BlockEditor.tsx
  * @description
@@ -34,21 +33,25 @@ interface BlockEditorProps {
   onChange: (updatedBlock: Block) => void;
 }
 
-const BlockEditor: React.FC<BlockEditorProps> = ({ block, onChange }) => {
+const BlockEditor: React.FC < BlockEditorProps > = ({ block, onChange }) => {
   switch (block.type) {
     case 'text':
-      return <TextBlockEditor block={block} onChange={onChange} />;
+      return < TextBlockEditor block = { block } onChange = { onChange }
+      />;
     case 'template':
-      return <TemplateBlockEditor block={block} onChange={onChange} />;
+      return < TemplateBlockEditor block = { block } onChange = { onChange }
+      />;
     case 'files':
-      return <FileBlockEditor block={block} onChange={onChange} />;
+      return < FileBlockEditor block = { block } onChange = { onChange }
+      />;
     default:
-      return (
-        <div className="p-2 border border-red-300 bg-red-50">
-          <p className="text-red-600">
-            Unknown block type: {block.type}
-          </p>
-        </div>
+      return ( <
+        div className = "p-2 border border-red-300 bg-red-50" >
+        <
+        p className = "text-red-600" >
+        Unknown block type: { block.type } <
+        /p> <
+        /div>
       );
   }
 };

@@ -1,4 +1,3 @@
-
 /**
  * @file App.tsx
  * @description
@@ -32,7 +31,7 @@ const App: React.FC = () => {
   const resizingRef = useRef(false);
   const lastClientXRef = useRef(0);
 
-  const startResize = (e: MouseEvent<HTMLDivElement>) => {
+  const startResize = (e: MouseEvent < HTMLDivElement > ) => {
     e.preventDefault();
     resizingRef.current = true;
     lastClientXRef.current = e.clientX;
@@ -60,9 +59,11 @@ const App: React.FC = () => {
       const fakeEvent = {
         clientX: e.clientX,
         preventDefault: () => {}
-      } as unknown as MouseEvent<HTMLDivElement>;
+      }
+      as unknown as MouseEvent < HTMLDivElement > ;
       handleMouseMove(fakeEvent);
     }
+
     function onMouseUp() {
       handleMouseUp();
     }
@@ -74,38 +75,40 @@ const App: React.FC = () => {
     };
   }, []);
 
-  return (
-    <ToastProvider>
-      <div className={`flex flex-col h-screen ${darkMode ? 'dark' : ''}`}>
-        <div className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
-          {/* Top Bar */}
-          <TopBar />
+  return ( <
+    ToastProvider >
+    <
+    div className = { `flex flex-col h-screen ${darkMode ? 'dark' : ''}` } >
+    <
+    div className = "flex flex-col h-full bg-gray-50 dark:bg-gray-900" > { /* Top Bar */ } <
+    TopBar / >
 
-          {/* Body: Sidebar + Main Content in a horizontal flex, with a resizable divider */}
-          <div className="flex flex-row flex-grow overflow-hidden">
-            {/* Sidebar */}
-            <div
-              className="relative h-full dark:bg-gray-700 bg-gray-200"
-              style={{ width: sidebarWidth, minWidth: MIN_SIDEBAR_WIDTH }}
-            >
-              <Sidebar />
-              <div
-                onMouseDown={startResize}
-                className="absolute top-0 right-0 w-2 h-full cursor-col-resize bg-transparent hover:bg-gray-300 dark:hover:bg-gray-600 z-10"
-              />
-            </div>
+    { /* Body: Sidebar + Main Content in a horizontal flex, with a resizable divider */ } <
+    div className = "flex flex-row flex-grow overflow-hidden" > { /* Sidebar */ } <
+    div className = "relative h-full dark:bg-gray-700 bg-gray-200"
+    style = { { width: sidebarWidth, minWidth: MIN_SIDEBAR_WIDTH } } >
+    <
+    Sidebar / >
+    <
+    div onMouseDown = { startResize } className = "absolute top-0 right-0 w-2 h-full cursor-col-resize bg-transparent hover:bg-gray-300 dark:hover:bg-gray-600 z-10" /
+    >
+    <
+    /div>
 
-            {/* Main content container, which can overflow */}
-            <div className="flex flex-col flex-grow overflow-hidden">
-              <MainContent />
-            </div>
-          </div>
+    { /* Main content container, which can overflow */ } <
+    div className = "flex flex-col flex-grow overflow-hidden" >
+    <
+    MainContent / >
+    <
+    /div> <
+    /div>
 
-          {/* Bottom Bar */}
-          <BottomBar />
-        </div>
-      </div>
-    </ToastProvider>
+    { /* Bottom Bar */ } <
+    BottomBar / >
+    <
+    /div> <
+    /div> <
+    /ToastProvider>
   );
 };
 

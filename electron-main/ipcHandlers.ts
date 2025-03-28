@@ -1,4 +1,3 @@
-
 /**
  * @file ipcHandlers.ts
  * @description
@@ -35,14 +34,14 @@ interface TreeNode {
   name: string;
   path: string;
   type: 'file' | 'directory';
-  children?: TreeNode[];
+  children ? : TreeNode[];
 }
 
 /**
  * Reads the specified folderPath for .txt/.md files. If the folder does not exist,
  * returns an empty array. This is used for scanning .prompt-composer directories.
  */
-async function listPromptComposerFiles(folderPath: string): Promise<string[]> {
+async function listPromptComposerFiles(folderPath: string): Promise < string[] > {
   try {
     const stat = await fs.promises.stat(folderPath);
     if (!stat.isDirectory()) {
@@ -71,7 +70,7 @@ async function listPromptComposerFiles(folderPath: string): Promise<string[]> {
 async function createIgnoreForPath(
   targetPath: string,
   projectRoot: string
-): Promise<{ ig: ignore.Ignore; isProjectDir: boolean }> {
+): Promise < { ig: ignore.Ignore;isProjectDir: boolean } > {
   let ig = ignore();
   const isProjectDir = targetPath.startsWith(projectRoot);
 
@@ -110,7 +109,7 @@ async function readDirectoryTree(
   ig: ignore.Ignore,
   isProjectDir: boolean,
   projectRoot: string
-): Promise<TreeNode[]> {
+): Promise < TreeNode[] > {
   const results: TreeNode[] = [];
 
   let entries: string[] = [];
@@ -130,9 +129,9 @@ async function readDirectoryTree(
     }
     const fullPath = path.join(dirPath, entry);
 
-    const relPath = isProjectDir
-      ? path.relative(projectRoot, fullPath)
-      : path.relative(dirPath, fullPath);
+    const relPath = isProjectDir ?
+      path.relative(projectRoot, fullPath) :
+      path.relative(dirPath, fullPath);
 
     if (ig.ignores(relPath)) {
       continue;
@@ -172,10 +171,10 @@ export function registerIpcHandlers(): void {
   // list-directory (async)
   ipcMain.handle('list-directory', async (_event, dirPath: string) => {
     try {
-    let targetPath = dirPath;
-    if (!path.isAbsolute(dirPath)) {
-      targetPath = path.join(process.cwd(), dirPath);
-    }
+      let targetPath = dirPath;
+      if (!path.isAbsolute(dirPath)) {
+        targetPath = path.join(process.cwd(), dirPath);
+      }
 
       console.log('[list-directory] Processing directory (async):', targetPath);
 
@@ -272,7 +271,7 @@ export function registerIpcHandlers(): void {
   });
 
   // create-folder
-  ipcMain.handle('create-folder', async (_event, { parentPath, folderName }: { parentPath: string; folderName: string }) => {
+  ipcMain.handle('create-folder', async (_event, { parentPath, folderName }: { parentPath: string;folderName: string }) => {
     let baseName = folderName;
     let suffix = 1;
     let targetPath = path.join(parentPath, baseName);
@@ -316,10 +315,10 @@ export function registerIpcHandlers(): void {
     try {
       const projectRoot = process.cwd();
       console.log(`[read-prompt-composer-file] Project root: ${projectRoot}`);
-      
+
       const promptComposerFolder = path.join(projectRoot, '.prompt-composer');
       console.log(`[read-prompt-composer-file] Looking in folder: ${promptComposerFolder}`);
-      
+
       // Check if the .prompt-composer directory exists
       try {
         const folderStats = await fs.promises.stat(promptComposerFolder);
@@ -331,7 +330,7 @@ export function registerIpcHandlers(): void {
         console.error(`[read-prompt-composer-file] .prompt-composer directory not found at: ${promptComposerFolder}`, folderErr);
         return null;
       }
-      
+
       const targetPath = path.join(promptComposerFolder, relativeFilename);
       console.log(`[read-prompt-composer-file] Looking for file: ${targetPath}`);
 
@@ -363,7 +362,7 @@ export function registerIpcHandlers(): void {
    */
   ipcMain.handle('list-all-template-files', async (_event, args: { projectFolders: string[] }) => {
     const { projectFolders } = args || { projectFolders: [] };
-    const result: Array<{ fileName: string; source: 'global' | 'project' }> = [];
+    const result: Array < { fileName: string;source: 'global' | 'project' } > = [];
 
     // Always gather from global .prompt-composer
     const globalDir = path.join(os.homedir(), '.prompt-composer');
@@ -416,4 +415,3 @@ export function registerIpcHandlers(): void {
     }
   });
 }
-
