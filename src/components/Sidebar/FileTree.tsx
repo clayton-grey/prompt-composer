@@ -4,18 +4,21 @@
  * A simpler component that renders the root folder(s) from projectFolders
  * and provides tri-state selection for files/folders using typed React props.
  *
- * Step 7 (Refine Type Declarations):
- *  - Added clarifying doc comments about the FileTreeProps interface and internal methods.
- *  - Confirmed no usage of `any`.
- *  - Ensured all event handlers have typed parameters.
+ * Accessibility Updates (Step 7):
+ * 1) Added aria-hidden="true" to folder/file icons that are purely decorative.
+ * 2) Kept the tri-state checkbox icon's aria-label on its span parent, since that's the interactive element.
  *
  * Key Responsibilities:
  *  1) Display the file/folder structure from directoryCache (via ProjectContext)
  *  2) Provide tri-state selection (none/partial/all) for each node
  *  3) Manage expansions/collapses and removal of root folders
  *
- * Accessibility:
- *  - role="button", tabIndex=0, aria-label for keyboard toggling of tri-state selection
+ * Type Declarations:
+ *  - NodeState can be 'none', 'all', or 'partial'
+ *  - FileTreeProps for the folder array and removal callback
+ *
+ * Usage:
+ *  <FileTree folders={projectFolders} onRemoveFolder={someHandler} />
  */
 
 import React, { useEffect } from 'react';
@@ -34,15 +37,10 @@ interface FileTreeProps {
 
   /**
    * Callback invoked when the user removes a folder from the UI.
-   * This is typically provided by the parent Sidebar component
-   * that manages the project folders array.
    */
   onRemoveFolder: (folderPath: string) => void;
 }
 
-/**
- * A typed React functional component that displays a tri-state file tree.
- */
 const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   const {
     getDirectoryListing,
@@ -102,6 +100,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
             fill="none"
             stroke="currentColor"
             strokeWidth="2"
+            aria-hidden="true"
           >
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <path d="m9 12 2 2 4-4" />
@@ -115,6 +114,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
             fill="none"
             stroke="currentColor"
             strokeWidth="2"
+            aria-hidden="true"
           >
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <path d="M8 12h8" />
@@ -129,6 +129,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
             fill="none"
             stroke="currentColor"
             strokeWidth="2"
+            aria-hidden="true"
           >
             <rect x="3" y="3" width="18" height="18" rx="2" />
           </svg>
@@ -151,7 +152,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }
 
   /**
-   * Creates a new folder inside the specified directory (demonstration of typed usage).
+   * Creates a new folder inside the specified directory.
    */
   async function createFolder(parentPath: string) {
     if (!window?.electronAPI?.createFolder) {
@@ -217,7 +218,8 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
                2 0 0 0-2-2h-7.9a2 2 0 0
                1-1.69-.9l-.81-1.2A2 2
                0 0 0 7.93 3H4a2 2 0 0
-               0-2 2v13a2 2 0 0 0 2 2Z"
+               0-2 2v13a2 2 0 0
+               0 2 2Z"
           />
         </svg>
       </span>

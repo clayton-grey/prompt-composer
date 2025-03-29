@@ -4,12 +4,15 @@
  * Implements the left sidebar for Prompt Composer, displaying and managing project folders,
  * the file tree, and a footer showing the total token usage of selected files.
  *
- * In this update (Step 1: Unify ASCII Tree Generation):
- *  - We remove usage of generateAsciiTree from ProjectContext (since it no longer exists).
- *  - Instead, we import the unified generateAsciiTree from asciiTreeGenerator.ts,
- *    and call generateAsciiTree([folder]) in handleCopyFileBlockOutput for each project folder.
+ * Accessibility Updates (Step 7):
+ * 1) Switched "Project Folders" label from a <span> to an <h2> for better semantic hierarchy.
+ * 2) Added aria-hidden="true" to SVG icons that are purely decorative or already labeled by their parent button.
+ * 3) Kept existing title/aria-label on clickable buttons to ensure they're accessible to screen readers.
  *
- * The rest of the logic remains the same for tri-state selection, refresh, and folder addition.
+ * Key Responsibilities:
+ *  - Shows the list of project folders and a FileTree for each
+ *  - Provides buttons for add folder, refresh, copy output
+ *  - Displays a mini-footer with selected file token usage
  */
 
 import React from 'react';
@@ -108,7 +111,10 @@ const Sidebar: React.FC = () => {
     <aside className="bg-gray-200 dark:bg-gray-700 flex flex-col h-full relative min-w-[270px]">
       {/* Top controls: "Project Folders" label plus copy/refresh/add folder buttons */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-gray-300 dark:border-gray-600">
-        <span className="text-gray-900 dark:text-gray-50 font-medium">Project Folders</span>
+        {/* Changed to <h2> for better semantics */}
+        <h2 className="text-gray-900 dark:text-gray-50 font-medium text-base m-0 p-0">
+          Project Folders
+        </h2>
         <div className="flex items-center gap-2">
           {/* Only show Copy/Refresh if there's at least one project folder */}
           {projectFolders.length > 0 && (
@@ -131,6 +137,7 @@ const Sidebar: React.FC = () => {
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   className="lucide lucide-copy-icon lucide-copy"
+                  aria-hidden="true"
                 >
                   <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
                   <path
@@ -157,6 +164,7 @@ const Sidebar: React.FC = () => {
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
+                  aria-hidden="true"
                 >
                   <path
                     d="M9 20H4
@@ -191,6 +199,7 @@ const Sidebar: React.FC = () => {
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
+              aria-hidden="true"
             >
               <path d="M12 10v6" />
               <path d="M9 13h6" />
@@ -236,6 +245,7 @@ const Sidebar: React.FC = () => {
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
+          aria-hidden="true"
         >
           <rect width="18" height="18" x="3" y="3" rx="2" />
           <path d="m9 12 2 2 4-4" />
@@ -251,6 +261,7 @@ const Sidebar: React.FC = () => {
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
+          aria-hidden="true"
         >
           <circle cx="8" cy="8" r="6" />
           <path d="M18.09 10.37A6 6 0 1 1 10.34 18" />

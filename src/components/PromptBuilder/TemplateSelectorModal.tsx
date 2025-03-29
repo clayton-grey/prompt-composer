@@ -5,16 +5,16 @@
  * from global + project .prompt-composer directories. Upon user selection,
  * it reads the file content and uses our parser to generate blocks.
  *
- * Accessibility Improvements (Step 5):
- *  - Added a keyDown handler on the overlay. If user presses 'Escape', we close the modal.
- *  - Ensured the outer overlay has tabIndex={-1} to catch keyboard events,
- *    while we still shift focus to the modal content.
- *  - This improves user experience for quick keyboard-based closing of the modal.
+ * Accessibility Improvements (Step 7):
+ * 1) Added a focus trap to keep the user's tab navigation within the modal.
+ * 2) Marked non-interactive icons as aria-hidden="true" if applicable.
+ * 3) Already had role="dialog" and aria-modal="true" usage. Retained keyDown logic on overlay
+ *    for closing with Escape, and introduced handleModalKeyDown for focus trapping in the content.
  *
  * Implementation details:
- *  - The modal can be closed by clicking the overlay background or pressing ESC.
- *  - We keep track of a reference to the modalContentRef for focusing.
- *  - Users can tab from the content to the Cancel button.
+ *  - We gather focusable elements when the modal opens. We use 'handleModalKeyDown' on the content
+ *    to cycle focus between first and last interactive elements if the user tabs.
+ *  - For the overlay, if the user clicks outside or hits Escape, we close the modal.
  */
 
 import React, { useEffect, useState, useRef } from 'react';
@@ -42,15 +42,13 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   const [templateFiles, setTemplateFiles] = useState<TemplateFileEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // We read from project context to get the currently tracked projectFolders
   const { projectFolders } = useProject();
-
-  // We use the toast for error feedback
   const { showToast } = useToast();
 
-  // Accessibility references
+  // Accessibility references & focus trap
   const modalContentRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
+  const focusableElementsRef = useRef<HTMLElement[]>([]);
 
   useEffect(() => {
     if (isOpen) {
@@ -65,11 +63,14 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
     }
   }, [isOpen]);
 
-  // Focus the modal content when open
+  // Focus the modal content when open & gather focusable
   useEffect(() => {
     if (isOpen) {
       setTimeout(() => {
-        modalContentRef.current?.focus();
+        if (modalContentRef.current) {
+          modalContentRef.current.focus();
+          gatherFocusableElements();
+        }
       }, 50);
     } else {
       // Return focus to previously focused element if possible
@@ -88,7 +89,6 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
         setLoading(false);
         return;
       }
-      // pass current projectFolders
       const files = await window.electronAPI.listAllTemplateFiles({ projectFolders });
       const sorted = files.slice().sort((a, b) => a.fileName.localeCompare(b.fileName));
       setTemplateFiles(sorted);
@@ -134,9 +134,15 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
     }
   }
 
+  function handleOverlayClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  }
+
   /**
    * handleOverlayKeyDown
-   * If the user presses Escape, close the modal. We do not trap other keys.
+   * If the user presses Escape on the overlay, close the modal.
    */
   function handleOverlayKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     if (e.key === 'Escape') {
@@ -145,14 +151,53 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
     }
   }
 
+  /**
+   * gatherFocusableElements
+   * Looks for all focusable items within the modal to handle the focus trap.
+   */
+  function gatherFocusableElements() {
+    if (!modalContentRef.current) return;
+    const focusable = modalContentRef.current.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    focusableElementsRef.current = Array.from(focusable).filter(el => !el.hasAttribute('disabled'));
+  }
+
+  /**
+   * handleModalKeyDown
+   * Basic focus trap: If user presses TAB on last focusable element, wrap to first, and vice versa.
+   */
+  function handleModalKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key !== 'Tab') return;
+
+    if (focusableElementsRef.current.length === 0) {
+      e.preventDefault();
+      return;
+    }
+
+    const firstElement = focusableElementsRef.current[0];
+    const lastElement = focusableElementsRef.current[focusableElementsRef.current.length - 1];
+
+    const isShiftTab = e.shiftKey;
+
+    // If user hits SHIFT+TAB on the first element, cycle to the last
+    if (isShiftTab && document.activeElement === firstElement) {
+      e.preventDefault();
+      lastElement.focus();
+    }
+    // If user hits TAB on the last element, cycle to the first
+    else if (!isShiftTab && document.activeElement === lastElement) {
+      e.preventDefault();
+      firstElement.focus();
+    }
+  }
+
   if (!isOpen) return null;
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4"
-      onClick={e => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+      onClick={handleOverlayClick}
       onKeyDown={handleOverlayKeyDown}
       tabIndex={-1}
       aria-modal="true"
@@ -164,6 +209,7 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
         onClick={e => e.stopPropagation()}
         ref={modalContentRef}
         tabIndex={-1}
+        onKeyDown={handleModalKeyDown}
       >
         <h2
           className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4"
@@ -185,6 +231,7 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
                 key={`${entry.source}-${entry.fileName}-${idx}`}
                 className="cursor-pointer p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded flex justify-between items-center"
                 onClick={() => handleSelectTemplate(entry)}
+                tabIndex={0}
               >
                 <span className="text-sm text-gray-800 dark:text-gray-100">{entry.fileName}</span>
                 <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">
