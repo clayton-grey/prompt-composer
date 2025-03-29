@@ -54,7 +54,30 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
   const { blocks, updateBlock } = usePrompt();
   const { showToast } = useToast();
 
+  // Store original content in a ref - immune to re-renders
+  const originalContentRef = useRef<string>(block.content || '');
+
+  // Flag to ensure we only capture original content on mount or explicit ID changes
+  const initializedRef = useRef<boolean>(false);
+  const previousBlockIdRef = useRef<string | null>(null);
+
+  // Local state for editing
   const [localContent, setLocalContent] = useState<string>(block.content || '');
+
+  // ONLY set original content on first mount or when block ID changes
+  // Critical: we deliberately avoid capturing changes during editing
+  useEffect(() => {
+    // Check if the block ID changed - this means we're looking at a totally different block
+    const blockIdChanged = previousBlockIdRef.current !== block.id;
+
+    // Only capture original content when first mounting or switching blocks
+    if (!initializedRef.current || blockIdChanged) {
+      originalContentRef.current = block.content || '';
+      setLocalContent(block.content || '');
+      initializedRef.current = true;
+      previousBlockIdRef.current = block.id;
+    }
+  }, [block.id, block.content]);
 
   // For auto-resizing text area
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -68,40 +91,49 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
   // If block is locked but not raw editing => read-only text, but we can still toggle checkboxes
   const canToggleCheckboxes = !isParentRawEditing && block.locked;
 
-  useEffect(() => {
-    // Sync external block content changes => localContent
-    if (block.content !== localContent) {
-      setLocalContent(block.content);
-    }
-  }, [block.content, localContent]);
+  /**
+   * Handle auto-resize for the textarea
+   */
+  const handleResizeTextArea = useCallback(() => {
+    const textarea = textAreaRef.current;
+    if (!textarea) return;
 
+    // Save cursor position
+    const isActive = document.activeElement === textarea;
+    const cursorStart = isActive ? textarea.selectionStart : null;
+    const cursorEnd = isActive ? textarea.selectionEnd : null;
+    const scrollTop = textarea.scrollTop;
+
+    // Clear height and resize
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight}px`;
+
+    // Restore cursor position only if needed
+    if (isActive && cursorStart !== null && cursorEnd !== null) {
+      textarea.setSelectionRange(cursorStart, cursorEnd);
+      textarea.scrollTop = scrollTop;
+    }
+  }, []);
+
+  // Ensure correct initial sizing
+  useLayoutEffect(() => {
+    if (canEditFully && textAreaRef.current) {
+      handleResizeTextArea();
+    }
+  }, [canEditFully, handleResizeTextArea]);
+
+  // Auto-resize when content changes
   useEffect(() => {
-    // Whenever localContent changes, auto-resize
     if (canEditFully) {
       handleResizeTextArea();
     }
-  }, [localContent, canEditFully]);
-
-  // Add this after the useEffect hooks - ensures correct initial sizing
-  useLayoutEffect(() => {
-    // Run only when the textarea is visible and after it's mounted
-    if (canEditFully && textAreaRef.current) {
-      // Force immediate sizing calculation
-      handleResizeTextArea();
-    }
-  }, [canEditFully]);
+  }, [localContent, canEditFully, handleResizeTextArea]);
 
   /**
-   * Writes updated content to .prompt-composer, updates block in context
+   * Writes updated content to disk (.prompt-composer file)
    */
   const persistChanges = useCallback(
     (newVal: string) => {
-      const updated: PromptResponseBlock = {
-        ...block,
-        content: newVal,
-      };
-      updateBlock(updated);
-
       // If electronAPI is present, write to .prompt-composer
       const electronAPI = (window as any).electronAPI;
       if (electronAPI && electronAPI.writePromptComposerFile) {
@@ -113,75 +145,98 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
           .then((result: any) => {
             if (result && typeof result === 'object' && 'error' in result) {
               showToast(`Could not write to prompt-composer file: ${result.error}`, 'error');
-              console.error('[PromptResponseBlockEditor] Failed to write file:', result.error);
             }
           })
           .catch((err: any) => {
-            console.error('[PromptResponseBlockEditor] Failed to write file:', err);
             showToast(`Could not write to prompt-composer file: ${block.sourceFile}`, 'error');
           });
       }
     },
-    [block, updateBlock, showToast]
+    [block.sourceFile, showToast]
   );
 
   /**
    * handleFullTextChange
    * Called when user types in the <textarea> (unlocked mode)
-   * We only store changes locally. No disk writes during normal typing.
+   * Updates local state only - no disk writes
    */
   const handleFullTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newVal = e.target.value;
 
-    // Remember cursor position before React updates the component
+    // Remember cursor position
     const cursorPos = e.target.selectionStart;
     const cursorEnd = e.target.selectionEnd;
 
-    // Update local state without triggering disk writes
+    // Update local state only
     setLocalContent(newVal);
 
-    // Schedule resize in next animation frame
+    // Resize and restore cursor in next frame
     requestAnimationFrame(() => {
       if (textAreaRef.current && document.activeElement === textAreaRef.current) {
         handleResizeTextArea();
-
-        // Restore cursor position
         textAreaRef.current.setSelectionRange(cursorPos, cursorEnd);
       }
     });
 
-    // No debounced writes to disk during editing - only update context
-    updateBlock({
+    // Update context but don't persist to disk
+    const updatedBlock: PromptResponseBlock = {
       ...block,
       content: newVal,
-    });
+    };
+    updateBlock(updatedBlock);
   };
 
   /**
    * handleToggleLocked
-   * Toggles the locked property (locked <-> unlocked)
-   * Only writes to disk when locking
+   * When locking: Save changes to disk
+   * When unlocking: Just update UI state
    */
   const handleToggleLocked = () => {
     const newLockedState = !block.locked;
 
-    // Only write to disk when locking the block
     if (newLockedState) {
+      // LOCKING: Save current edits to disk
       persistChanges(localContent);
+
+      // Also capture this as the new "original" content
+      originalContentRef.current = localContent;
     }
 
-    // Create updated block with new lock state
+    // Update UI and context
     const updated: PromptResponseBlock = {
       ...block,
       locked: newLockedState,
+      content: localContent, // Use the current edited content
     };
-
-    // Pass to parent first to ensure UI updates
     onChange(updated);
-
-    // Then update in context
     updateBlock(updated);
   };
+
+  /**
+   * handleCancel
+   * Discard changes and restore original content
+   */
+  const handleCancel = useCallback(() => {
+    const originalContent = originalContentRef.current;
+
+    // Reset local state to original
+    setLocalContent(originalContent);
+
+    // Update UI and context with original content and locked state
+    const updated: PromptResponseBlock = {
+      ...block,
+      locked: true,
+      content: originalContent,
+    };
+
+    // Important: Tell parent components about the change first
+    onChange(updated);
+
+    // Then update our context
+    updateBlock(updated);
+
+    // No disk writes on cancel
+  }, [block, onChange, updateBlock, localContent]);
 
   /**
    * handleCheckboxToggle
@@ -212,13 +267,18 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
     // Update local state
     setLocalContent(updatedContent);
 
-    // Update block in context
+    // Create updated block
     const updated: PromptResponseBlock = {
       ...block,
       content: updatedContent,
     };
-    updateBlock(updated);
+
+    // Update UI and context
     onChange(updated);
+    updateBlock(updated);
+
+    // Also update our original content reference
+    originalContentRef.current = updatedContent;
 
     // Write to disk immediately (since we're in locked mode)
     persistChanges(updatedContent);
@@ -299,28 +359,26 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
   };
 
   /**
-   * Simple auto-resize that preserves cursor position
+   * Effect to add global Escape key handler when in edit mode
    */
-  const handleResizeTextArea = () => {
-    const textarea = textAreaRef.current;
-    if (!textarea) return;
+  useEffect(() => {
+    // Only add the event listener if the block is in edit mode
+    if (!block.locked) {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          handleCancel();
+        }
+      };
 
-    // Save cursor position
-    const isActive = document.activeElement === textarea;
-    const cursorStart = isActive ? textarea.selectionStart : null;
-    const cursorEnd = isActive ? textarea.selectionEnd : null;
-    const scrollTop = textarea.scrollTop;
+      // Add global event listener
+      window.addEventListener('keydown', handleKeyDown);
 
-    // Clear height and resize
-    textarea.style.height = 'auto';
-    textarea.style.height = `${textarea.scrollHeight}px`;
-
-    // Restore cursor position only if needed
-    if (isActive && cursorStart !== null && cursorEnd !== null) {
-      textarea.setSelectionRange(cursorStart, cursorEnd);
-      textarea.scrollTop = scrollTop;
+      // Clean up
+      return () => {
+        window.removeEventListener('keydown', handleKeyDown);
+      };
     }
-  };
+  }, [block.locked, handleCancel]);
 
   return (
     <div className="border-4 border-dashed border-gray-500 rounded p-3 mb-2">
@@ -331,16 +389,16 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
             Prompt Response Block: <span className="italic">{block.sourceFile}</span>
           </span>
 
-          {!isParentRawEditing && (
-            <button
-              type="button"
-              onClick={handleToggleLocked}
-              className="p-1 rounded hover:bg-gray-300 dark:hover:bg-gray-600"
-              title="Toggle lock"
-              aria-label="Toggle lock"
-            >
-              {block.locked ? (
-                // locked icon
+          <div className="flex items-center gap-2">
+            {!isParentRawEditing && !block.locked && (
+              <button
+                type="button"
+                onClick={handleCancel}
+                className="p-1 rounded hover:bg-gray-300 dark:hover:bg-gray-600"
+                title="Cancel edits (Esc)"
+                aria-label="Cancel edits and return to locked view without saving"
+              >
+                {/* Close/Cancel icon (X) */}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="24"
@@ -351,33 +409,64 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
                   strokeWidth="2"
                   strokeLinecap="round"
                   strokeLinejoin="round"
-                  className="lucide lucide-lock-icon lucide-lock w-5 h-5"
+                  className="w-5 h-5"
                   aria-hidden="true"
                 >
-                  <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
-                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  <rect width="18" height="18" x="3" y="3" rx="2"></rect>
+                  <path d="m15 9-6 6"></path>
+                  <path d="m9 9 6 6"></path>
                 </svg>
-              ) : (
-                // unlocked icon
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  className="lucide lucide-lock-open-icon lucide-lock-open w-5 h-5"
-                  aria-hidden="true"
-                >
-                  <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
-                  <path d="M7 11V7a5 5 0 0 1 9.9-1" />
-                </svg>
-              )}
-            </button>
-          )}
+              </button>
+            )}
+
+            {!isParentRawEditing && (
+              <button
+                type="button"
+                onClick={handleToggleLocked}
+                className="p-1 rounded hover:bg-gray-300 dark:hover:bg-gray-600"
+                title="Toggle lock"
+                aria-label="Toggle lock"
+              >
+                {block.locked ? (
+                  // locked icon
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="lucide lucide-lock-icon lucide-lock w-5 h-5"
+                    aria-hidden="true"
+                  >
+                    <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                  </svg>
+                ) : (
+                  // unlocked icon
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="24"
+                    height="24"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="lucide lucide-lock-open-icon lucide-lock-open w-5 h-5"
+                    aria-hidden="true"
+                  >
+                    <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+                    <path d="M7 11V7a5 5 0 0 1 9.9-1" />
+                  </svg>
+                )}
+              </button>
+            )}
+          </div>
         </div>
 
         {canEditFully ? (
@@ -393,6 +482,12 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
               // Immediately resize on Enter/Delete/Backspace, which affect line structure
               if (e.key === 'Enter' || e.key === 'Backspace' || e.key === 'Delete') {
                 setTimeout(handleResizeTextArea, 0);
+              }
+
+              // Handle Escape key in the textarea
+              if (e.key === 'Escape') {
+                e.preventDefault(); // Prevent default behavior
+                handleCancel();
               }
             }}
             onPaste={() => setTimeout(handleResizeTextArea, 0)}
