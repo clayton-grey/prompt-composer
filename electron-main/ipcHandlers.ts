@@ -4,14 +4,21 @@
  * @description
  * Consolidated directory reading logic + asynchronous FS operations for Prompt Composer.
  *
- * Step 4 (Improve TypeScript Definitions):
- *  - Replaced all catch (err: any) with catch (err: unknown), adding instance checks.
- *  - Ensured each function has explicit return types.
- *  - Confirmed DirectoryListing, TreeNode usage from types.ts is consistent.
+ * Step 5 (Centralize & Enhance Error Handling):
+ *  - We introduced a local logError helper function to unify console logging in dev mode,
+ *    removing raw console.error/warn calls in production.
+ *  - We still rely on console messages only in dev because the main process cannot
+ *    directly trigger React toasts. For user-visible errors in the frontend, the renderer
+ *    must show them after receiving the error or null data from these handlers.
+ *  - The code is otherwise the same as before, with try/catch blocks around file operations
+ *    to handle errors. We removed direct console.warn/error calls and replaced them with `logError`.
  *
  * Implementation details:
- *  - We now more carefully log errors by verifying err is an Error instance.
- *  - No other major logic changes were introduced.
+ *  - logError(context, err): checks process.env.NODE_ENV. If "development", logs the error.
+ *  - The rest of the logic for reading directories, reading files, exporting XML, etc. remains.
+ *  - Production builds no longer emit console errors for these pathways, preventing
+ *    clutter in the user's console. The Electron main process can pass errors back to
+ *    the renderer, which can show them in the UI if needed.
  */
 
 import { ipcMain, dialog } from 'electron';
@@ -34,6 +41,20 @@ const ALLOWED_EXTENSIONS = [
   '.html',
   '.sql',
 ];
+
+/**
+ * Helper function to unify error logging in the main process.
+ * In production, we omit console.error to reduce noise.
+ */
+function logError(context: string, err: unknown) {
+  if (process.env.NODE_ENV === 'development') {
+    if (err instanceof Error) {
+      console.error(`[ipcHandlers] ${context}: ${err.message}`);
+    } else {
+      console.error(`[ipcHandlers] ${context}:`, err);
+    }
+  }
+}
 
 /**
  * Lists .txt or .md files in a .prompt-composer folder
@@ -122,11 +143,7 @@ async function readDirectoryTree(
   try {
     entries = await fs.promises.readdir(dirPath);
   } catch (err: unknown) {
-    if (err instanceof Error) {
-      console.error('[list-directory] Failed to read dir (async):', dirPath, err.message);
-    } else {
-      console.error('[list-directory] Failed to read dir (async):', dirPath, err);
-    }
+    logError(`[list-directory] Failed to read dir (async) [${dirPath}]`, err);
     return results;
   }
 
@@ -148,7 +165,11 @@ async function readDirectoryTree(
     let stats: fs.Stats;
     try {
       stats = await fs.promises.stat(fullPath);
-    } catch {
+    } catch (statErr: unknown) {
+      // skip this entry if we can't stat
+      if (process.env.NODE_ENV === 'development') {
+        console.warn(`[list-directory] Could not stat: ${fullPath}`, statErr);
+      }
       continue;
     }
 
@@ -221,11 +242,7 @@ export function registerIpcHandlers(): void {
           children: treeNodes,
         };
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          console.error('[list-directory] Async error:', err.message);
-        } else {
-          console.error('[list-directory] Async error:', err);
-        }
+        logError('[list-directory] Async error', err);
         return {
           absolutePath: dirPath,
           baseName: path.basename(dirPath),
@@ -241,11 +258,7 @@ export function registerIpcHandlers(): void {
       const content = await fs.promises.readFile(filePath, 'utf-8');
       return content;
     } catch (err: unknown) {
-      if (err instanceof Error) {
-        console.error('[read-file] Failed:', filePath, err.message);
-      } else {
-        console.error('[read-file] Failed:', filePath, err);
-      }
+      logError(`[read-file] Failed [${filePath}]`, err);
       throw err;
     }
   });
@@ -274,11 +287,7 @@ export function registerIpcHandlers(): void {
         await fs.promises.writeFile(result.filePath, xmlContent, 'utf-8');
         return true;
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          console.error('[export-xml] Failed to save XML:', err.message);
-        } else {
-          console.error('[export-xml] Failed to save XML:', err);
-        }
+        logError('[export-xml] Failed to save XML', err);
         return false;
       }
     }
@@ -304,11 +313,7 @@ export function registerIpcHandlers(): void {
       const content = await fs.promises.readFile(filePath, 'utf-8');
       return content;
     } catch (err: unknown) {
-      if (err instanceof Error) {
-        console.error('[import-xml] Failed to import XML:', err.message);
-      } else {
-        console.error('[import-xml] Failed to import XML:', err);
-      }
+      logError('[import-xml] Failed to import XML', err);
       return null;
     }
   });
@@ -346,11 +351,7 @@ export function registerIpcHandlers(): void {
         await fs.promises.mkdir(targetPath);
         return targetPath;
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          console.error('[create-folder] Error creating folder:', err.message);
-        } else {
-          console.error('[create-folder] Error creating folder:', err);
-        }
+        logError('[create-folder] Error creating folder', err);
         return null;
       }
     }
@@ -376,35 +377,31 @@ export function registerIpcHandlers(): void {
         try {
           const folderStats = await fs.promises.stat(promptComposerFolder);
           if (!folderStats.isDirectory()) {
-            console.error(
-              `[read-prompt-composer-file] .prompt-composer is not a directory: ${promptComposerFolder}`
-            );
+            if (process.env.NODE_ENV === 'development') {
+              console.error(
+                `[read-prompt-composer-file] .prompt-composer is not a directory: ${promptComposerFolder}`
+              );
+            }
             return null;
           }
         } catch (folderErr: unknown) {
-          if (folderErr instanceof Error) {
-            console.error('[read-prompt-composer-file] .prompt-composer not found', folderErr.message);
-          } else {
-            console.error('[read-prompt-composer-file] .prompt-composer not found', folderErr);
-          }
+          logError('[read-prompt-composer-file] .prompt-composer not found', folderErr);
           return null;
         }
 
         const targetPath = path.join(promptComposerFolder, relativeFilename);
         const stats = await fs.promises.stat(targetPath);
         if (!stats.isFile()) {
-          console.warn(`[read-prompt-composer-file] Not a file: ${targetPath}`);
+          if (process.env.NODE_ENV === 'development') {
+            console.warn(`[read-prompt-composer-file] Not a file: ${targetPath}`);
+          }
           return null;
         }
 
         const content = await fs.promises.readFile(targetPath, 'utf-8');
         return content;
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          console.warn(`[read-prompt-composer-file] Could not read file: ${relativeFilename}`, err.message);
-        } else {
-          console.warn(`[read-prompt-composer-file] Could not read file: ${relativeFilename}`, err);
-        }
+        logError(`[read-prompt-composer-file] Could not read file: ${relativeFilename}`, err);
         return null;
       }
     }
@@ -427,11 +424,7 @@ export function registerIpcHandlers(): void {
           result.push({ fileName: gf, source: 'global' });
         }
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          console.warn('[list-all-template-files] Could not list global .prompt-composer files:', err.message);
-        } else {
-          console.warn('[list-all-template-files] Could not list global .prompt-composer files:', err);
-        }
+        logError('[list-all-template-files] Could not list global .prompt-composer files', err);
       }
 
       for (const folder of projectFolders) {
@@ -442,17 +435,10 @@ export function registerIpcHandlers(): void {
             result.push({ fileName: lf, source: 'project' });
           }
         } catch (err: unknown) {
-          if (err instanceof Error) {
-            console.warn(
-              `[list-all-template-files] Could not list .prompt-composer in folder: ${folder}`,
-              err.message
-            );
-          } else {
-            console.warn(
-              `[list-all-template-files] Could not list .prompt-composer in folder: ${folder}`,
-              err
-            );
-          }
+          logError(
+            `[list-all-template-files] Could not list .prompt-composer in folder: ${folder}`,
+            err
+          );
         }
       }
 
@@ -469,18 +455,16 @@ export function registerIpcHandlers(): void {
         const targetPath = path.join(globalFolder, fileName);
         const stats = await fs.promises.stat(targetPath);
         if (!stats.isFile()) {
-          console.warn(`[read-global-prompt-composer-file] Not a file: ${targetPath}`);
+          if (process.env.NODE_ENV === 'development') {
+            console.warn(`[read-global-prompt-composer-file] Not a file: ${targetPath}`);
+          }
           return null;
         }
 
         const content = await fs.promises.readFile(targetPath, 'utf-8');
         return content;
       } catch (err: unknown) {
-        if (err instanceof Error) {
-          console.warn(`[read-global-prompt-composer-file] Could not read file: ${fileName}`, err.message);
-        } else {
-          console.warn(`[read-global-prompt-composer-file] Could not read file: ${fileName}`, err);
-        }
+        logError(`[read-global-prompt-composer-file] Could not read file: ${fileName}`, err);
         return null;
       }
     }
@@ -506,11 +490,10 @@ export function registerIpcHandlers(): void {
         await fs.promises.writeFile(targetPath, args.content, 'utf-8');
         return true;
       } catch (err: unknown) {
+        logError(`[write-prompt-composer-file] Error writing file ${args.relativeFilename}`, err);
         if (err instanceof Error) {
-          console.error(`[write-prompt-composer-file] Error writing file ${args.relativeFilename}:`, err.message);
           return { error: `Failed to write file ${args.relativeFilename}: ${err.message}` };
         }
-        console.error('[write-prompt-composer-file] Unknown error:', err);
         return { error: `Failed to write file ${args.relativeFilename}: Unknown error` };
       }
     }

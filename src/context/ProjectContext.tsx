@@ -2,18 +2,18 @@
  * @file ProjectContext.tsx
  * @description
  * Provides a centralized, in-memory "Project Manager" context for folder/file data,
- * tri-state selection, expansions, ASCII map generation, and also tracks the
- * list of "active" project folders for .prompt-composer template scanning.
+ * tri-state selection, expansions, ASCII map generation, and also tracks the list
+ * of "active" project folders for .prompt-composer template scanning.
  *
- * Step 4 (Improve TypeScript Definitions):
- *  - Replaced catch blocks with 'unknown' error types.
- *  - Added instance checks for logging error messages.
- *  - Confirmed explicit type usage for each function signature.
+ * Step 5 (Centralize & Enhance Error Handling):
+ *  - We replaced direct console.error/warn calls with if-dev checks plus showToast.
+ *  - This ensures the user sees a toast message for I/O errors, while dev logs remain in dev mode only.
+ *  - Additional try/catch blocks were already present, but now we unify the error notifications.
  *
  * Key Responsibilities:
- *  - Maintain React states for directoryCache (DirectoryListing), nodeStates, expandedPaths, selectedFileContents
- *  - Provide "toggleNodeSelection", "refreshFolders", "addProjectFolder", etc. by calling projectActions
- *  - Provide a user-friendly context interface
+ *  - Maintain React states for directoryCache (DirectoryListing), nodeStates, expandedPaths, ...
+ *  - Provide "toggleNodeSelection", "refreshFolders", "addProjectFolder", etc.
+ *  - Provide a user-friendly context interface, with toasts on errors.
  */
 
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
@@ -23,80 +23,22 @@ import { useToast } from './ToastContext';
 import { DirectoryListing, TreeNode } from '../../electron-main/types';
 
 export interface ProjectContextType {
-  /**
-   * Return the directory listing for a path, possibly from cache or from electron API
-   */
   getDirectoryListing: (dirPath: string) => Promise<DirectoryListing | null>;
-
-  /**
-   * Tri-state map: path -> 'none' | 'all' | 'partial'
-   */
   nodeStates: Record<string, 'none' | 'all' | 'partial'>;
-
-  /**
-   * Tracking which directories are expanded
-   */
   expandedPaths: Record<string, boolean>;
-
-  /**
-   * Map of file path -> file content, for all selected files
-   */
   selectedFileContents: Record<string, string>;
-
-  /**
-   * Combined token usage for all selected file contents
-   */
   selectedFilesTokenCount: number;
-
-  /**
-   * Cache of directory listings for each root path
-   */
   directoryCache: Record<string, DirectoryListing>;
-
-  /**
-   * Toggles a node's tri-state selection (including sub-tree) and merges or removes file content
-   */
   toggleNodeSelection: (node: TreeNode) => void;
-
-  /**
-   * Toggles a directory's expanded/collapsed state
-   */
   toggleExpansion: (nodePath: string) => void;
-
-  /**
-   * Recursively collapses a directory subtree
-   */
   collapseSubtree: (node: TreeNode) => void;
-
-  /**
-   * Returns an array of selected file entries with path, content, language guess
-   */
   getSelectedFileEntries: () => Array<{ path: string; content: string; language: string }>;
-
-  /**
-   * Refreshes the folder listing for the given folder paths
-   */
   refreshFolders: (folderPaths: string[]) => Promise<void>;
-
-  /**
-   * The list of user-added project folders
-   */
   projectFolders: string[];
-
-  /**
-   * Adds a folder to the project
-   */
   addProjectFolder: (folderPath: string) => Promise<void>;
-
-  /**
-   * Removes a folder from the project
-   */
   removeProjectFolder: (folderPath: string) => void;
 }
 
-/**
- * The actual React Context
- */
 const ProjectContext = createContext<ProjectContextType>({
   getDirectoryListing: async () => null,
   nodeStates: {},
@@ -157,7 +99,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
   }, [selectedFileContents]);
 
   /**
-   * getDirectoryListing - calls into projectActions.getDirectoryListing
+   * getDirectoryListing
    */
   const getDirectoryListing = useCallback(
     async (dirPath: string) => {
@@ -177,10 +119,14 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       } catch (error: unknown) {
         if (error instanceof Error) {
           showToast(`Error reading directory ${dirPath}: ${error.message}`, 'error');
-          console.error(`Error reading directory ${dirPath}:`, error.message);
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`[ProjectContext] Error reading directory ${dirPath}:`, error.message);
+          }
         } else {
           showToast(`Error reading directory ${dirPath}`, 'error');
-          console.error(`Error reading directory ${dirPath}:`, error);
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`[ProjectContext] Error reading directory ${dirPath}:`, error);
+          }
         }
         return null;
       }
@@ -201,7 +147,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
   );
 
   /**
-   * getSelectedFileEntries - return array of { path, content, language }
+   * getSelectedFileEntries
    */
   const getSelectedFileEntries = useCallback(() => {
     const results: Array<{ path: string; content: string; language: string }> = [];
@@ -239,12 +185,17 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           setProjectFolders,
         });
       } catch (error: unknown) {
+        const pathForMsg = node.path;
         if (error instanceof Error) {
-          showToast(`Error selecting node ${node.path}: ${error.message}`, 'error');
-          console.error(`Error selecting node ${node.path}:`, error.message);
+          showToast(`Error selecting node ${pathForMsg}: ${error.message}`, 'error');
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`[ProjectContext] Error selecting node ${pathForMsg}:`, error.message);
+          }
         } else {
-          showToast(`Error selecting node ${node.path}`, 'error');
-          console.error(`Error selecting node ${node.path}:`, error);
+          showToast(`Error selecting node ${pathForMsg}`, 'error');
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`[ProjectContext] Error selecting node ${pathForMsg}:`, error);
+          }
         }
       }
     },
@@ -284,10 +235,17 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       } catch (error: unknown) {
         if (error instanceof Error) {
           showToast(`Error toggling expansion for ${nodePath}: ${error.message}`, 'error');
-          console.error(`Error toggling expansion for ${nodePath}:`, error.message);
+          if (process.env.NODE_ENV === 'development') {
+            console.error(
+              `[ProjectContext] Error toggling expansion for ${nodePath}:`,
+              error.message
+            );
+          }
         } else {
           showToast(`Error toggling expansion for ${nodePath}`, 'error');
-          console.error(`Error toggling expansion for ${nodePath}:`, error);
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`[ProjectContext] Error toggling expansion for ${nodePath}:`, error);
+          }
         }
       }
     },
@@ -327,10 +285,17 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       } catch (error: unknown) {
         if (error instanceof Error) {
           showToast(`Error collapsing subtree for ${node.path}: ${error.message}`, 'error');
-          console.error(`Error collapsing subtree for ${node.path}:`, error.message);
+          if (process.env.NODE_ENV === 'development') {
+            console.error(
+              `[ProjectContext] Error collapsing subtree for ${node.path}:`,
+              error.message
+            );
+          }
         } else {
           showToast(`Error collapsing subtree for ${node.path}`, 'error');
-          console.error(`Error collapsing subtree for ${node.path}:`, error);
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`[ProjectContext] Error collapsing subtree for ${node.path}:`, error);
+          }
         }
       }
     },
@@ -370,10 +335,14 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       } catch (error: unknown) {
         if (error instanceof Error) {
           showToast(`Error refreshing folders: ${error.message}`, 'error');
-          console.error('Error refreshing folders:', error.message);
+          if (process.env.NODE_ENV === 'development') {
+            console.error('[ProjectContext] Error refreshing folders:', error.message);
+          }
         } else {
           showToast('Error refreshing folders', 'error');
-          console.error('Error refreshing folders:', error);
+          if (process.env.NODE_ENV === 'development') {
+            console.error('[ProjectContext] Error refreshing folders:', error);
+          }
         }
       }
     },
@@ -413,10 +382,17 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       } catch (error: unknown) {
         if (error instanceof Error) {
           showToast(`Error adding project folder ${folderPath}: ${error.message}`, 'error');
-          console.error(`Error adding project folder ${folderPath}:`, error.message);
+          if (process.env.NODE_ENV === 'development') {
+            console.error(
+              `[ProjectContext] Error adding project folder ${folderPath}:`,
+              error.message
+            );
+          }
         } else {
           showToast(`Error adding project folder ${folderPath}`, 'error');
-          console.error(`Error adding project folder ${folderPath}:`, error);
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`[ProjectContext] Error adding project folder ${folderPath}:`, error);
+          }
         }
       }
     },
@@ -456,10 +432,17 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       } catch (error: unknown) {
         if (error instanceof Error) {
           showToast(`Error removing project folder ${folderPath}: ${error.message}`, 'error');
-          console.error(`Error removing project folder ${folderPath}:`, error.message);
+          if (process.env.NODE_ENV === 'development') {
+            console.error(
+              `[ProjectContext] Error removing project folder ${folderPath}:`,
+              error.message
+            );
+          }
         } else {
           showToast(`Error removing project folder ${folderPath}`, 'error');
-          console.error(`Error removing project folder ${folderPath}:`, error);
+          if (process.env.NODE_ENV === 'development') {
+            console.error(`[ProjectContext] Error removing project folder ${folderPath}:`, error);
+          }
         }
       }
     },
@@ -478,9 +461,6 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     ]
   );
 
-  /**
-   * Construct the context value
-   */
   const contextValue: ProjectContextType = {
     getDirectoryListing,
     nodeStates,
