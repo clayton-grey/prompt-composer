@@ -10,15 +10,13 @@
  *  - getDirectoryListing
  *  - setNodeStateRecursive, recalcSubtreeState, collectAllFilePaths, etc.
  *
- * Step 9 Changes (lazy loading):
- *  - Added an optional 'shallow' parameter to getDirectoryListing() calls.
- *  - In toggleExpansion, if the directory is being expanded and we have no cached children,
- *    we call getDirectoryListing(folderPath, { shallow:true }).
- *  - This prevents loading entire deep subtrees until the user actually expands them.
+ * Step 4 (Improve TypeScript Definitions):
+ *  - Catch blocks changed to (err: unknown), with instance checks for logging.
+ *  - Verified typed signatures for each action function.
  *
  * Edge Cases:
- *  - If the user re-collapses and re-expands, we check if the directory is in cache.
- *    If it is, we do not re-fetch unless the user calls refreshFolders.
+ *  - If the user re-collapses and re-expands a folder, we rely on the in-memory cache
+ *    unless refreshFolders is called.
  */
 
 import { TreeNode, DirectoryListing } from '../context/ProjectContext';
@@ -51,10 +49,8 @@ export async function getDirectoryListing(
   params: ProjectActionsParams,
   options?: { shallow?: boolean }
 ): Promise<DirectoryListing | null> {
-  // If we already have a cache entry for this path and shallow isn't forced again,
-  // return the existing listing.
-  // If the caller wants a deeper read, or wants to refresh, they should call refreshFolders.
   if (params.directoryCache[dirPath] && !options?.shallow) {
+    // Return from cache
     return params.directoryCache[dirPath];
   }
 
@@ -69,8 +65,12 @@ export async function getDirectoryListing(
     });
     params.setDirectoryCache(prev => ({ ...prev, [dirPath]: result }));
     return result;
-  } catch (err) {
-    console.error('[projectActions] Failed to list directory:', dirPath, err);
+  } catch (err: unknown) {
+    if (err instanceof Error) {
+      console.error('[projectActions] Failed to list directory:', dirPath, err.message);
+    } else {
+      console.error('[projectActions] Failed to list directory:', dirPath, err);
+    }
     return null;
   }
 }
@@ -87,8 +87,12 @@ export async function readFile(filePath: string): Promise<string> {
   try {
     const content = await window.electronAPI.readFile(filePath);
     return content;
-  } catch (err) {
-    console.error('[projectActions] readFile error for', filePath, err);
+  } catch (err: unknown) {
+    if (err instanceof Error) {
+      console.error('[projectActions] readFile error for', filePath, err.message);
+    } else {
+      console.error('[projectActions] readFile error for', filePath, err);
+    }
     return '';
   }
 }
@@ -101,7 +105,7 @@ export function setNodeStateRecursive(
   node: TreeNode,
   newState: 'none' | 'all' | 'partial',
   updated: Record<string, 'none' | 'all' | 'partial'>
-) {
+): void {
   updated[node.path] = newState;
   if (node.type === 'directory' && node.children) {
     node.children.forEach(child => {
@@ -153,7 +157,7 @@ export function recalcSubtreeState(
 export function recalcAllRootStates(
   params: ProjectActionsParams,
   updated: Record<string, 'none' | 'all' | 'partial'>
-) {
+): void {
   for (const key in params.directoryCache) {
     const listing = params.directoryCache[key];
     if (!listing) continue;
@@ -175,7 +179,7 @@ export function collectAllFilePaths(
   node: TreeNode,
   updatedStates: Record<string, 'none' | 'all' | 'partial'>,
   results: string[]
-) {
+): void {
   const st = updatedStates[node.path] || 'none';
   if (node.type === 'file' && st === 'all') {
     results.push(node.path);
@@ -192,7 +196,10 @@ export function collectAllFilePaths(
  * Implements the tri-state toggling for a node (file or directory).
  * If it's 'none' or 'partial', set to 'all'; if it's 'all', set to 'none'.
  */
-export async function toggleNodeSelection(node: TreeNode, params: ProjectActionsParams) {
+export async function toggleNodeSelection(
+  node: TreeNode,
+  params: ProjectActionsParams
+): Promise<void> {
   params.setNodeStates(prev => {
     const updated = { ...prev };
     const current = updated[node.path] || 'none';
@@ -201,7 +208,7 @@ export async function toggleNodeSelection(node: TreeNode, params: ProjectActions
     setNodeStateRecursive(node, newState, updated);
     recalcAllRootStates(params, updated);
 
-    // queue file reading updates in microtask
+    // queue file reading updates
     queueMicrotask(() => {
       (async () => {
         const allFilePaths: string[] = [];
@@ -249,25 +256,18 @@ export async function toggleNodeSelection(node: TreeNode, params: ProjectActions
  * If expanding, and we do not yet have children for that folder (or have an empty array),
  * we fetch them shallowly from the main process.
  */
-export function toggleExpansion(nodePath: string, params: ProjectActionsParams) {
+export function toggleExpansion(nodePath: string, params: ProjectActionsParams): void {
   const currentlyExpanded = params.expandedPaths[nodePath] || false;
   const newVal = !currentlyExpanded;
 
-  // If we're about to expand a directory that is uncached or has no children, do a lazy fetch
   if (newVal) {
     const listing = params.directoryCache[nodePath];
     const noChildrenKnown = !listing || listing.children.length === 0;
 
     if (noChildrenKnown) {
-      // fetch shallow children on expansion
       queueMicrotask(() => {
         (async () => {
-          const freshListing = await getDirectoryListing(nodePath, params, { shallow: true });
-          if (freshListing) {
-            // We might want to forcibly set expandedPaths[nodePath] = true
-            // But we rely on the next setExpandedPaths call below to handle it
-            // in the standard way so it doesn't get out of sync.
-          }
+          await getDirectoryListing(nodePath, params, { shallow: true });
         })();
       });
     }
@@ -283,7 +283,7 @@ export function toggleExpansion(nodePath: string, params: ProjectActionsParams) 
  * collapseSubtree
  * Recursively collapses the subtree under a directory.
  */
-export function collapseSubtree(node: TreeNode, params: ProjectActionsParams) {
+export function collapseSubtree(node: TreeNode, params: ProjectActionsParams): void {
   if (node.type !== 'directory') return;
   const stack: TreeNode[] = [node];
   const newExpanded = { ...params.expandedPaths };
@@ -304,14 +304,16 @@ export function collapseSubtree(node: TreeNode, params: ProjectActionsParams) {
  * refreshFolders
  * Reloads each folder path in directoryCache. Then merges or removes selected files accordingly.
  */
-export async function refreshFolders(folderPaths: string[], params: ProjectActionsParams) {
+export async function refreshFolders(
+  folderPaths: string[],
+  params: ProjectActionsParams
+): Promise<void> {
   for (const fPath of folderPaths) {
     if (!window.electronAPI?.listDirectory) {
       console.warn('[projectActions] refreshFolders: electronAPI.listDirectory is unavailable');
       continue;
     }
     try {
-      // We do a full read (non-shallow) to refresh the entire sub-tree
       const freshListing = await window.electronAPI.listDirectory(fPath, { shallow: false });
       if (freshListing) {
         params.setDirectoryCache(prev => ({
@@ -319,8 +321,12 @@ export async function refreshFolders(folderPaths: string[], params: ProjectActio
           [fPath]: freshListing,
         }));
       }
-    } catch (err) {
-      console.error(`[projectActions] Failed to refresh folder: ${fPath}`, err);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        console.error(`[projectActions] Failed to refresh folder: ${fPath}`, err.message);
+      } else {
+        console.error(`[projectActions] Failed to refresh folder: ${fPath}`, err);
+      }
     }
   }
 
@@ -346,14 +352,12 @@ export async function refreshFolders(folderPaths: string[], params: ProjectActio
         const oldFileContents = params.selectedFileContents;
         const newFileContents = { ...oldFileContents };
 
-        // remove unselected
         for (const p of Object.keys(newFileContents)) {
           if (!allFilePaths.includes(p)) {
             delete newFileContents[p];
           }
         }
 
-        // add newly selected
         for (const fileP of allFilePaths) {
           if (!(fileP in newFileContents)) {
             const content = await readFile(fileP);
@@ -374,8 +378,10 @@ export async function refreshFolders(folderPaths: string[], params: ProjectActio
  * Adds a new folderPath to the projectFolders array if not already present,
  * then refreshes its listing (fully), expands it, and sets it to 'all' tri-state selection by default.
  */
-export async function addProjectFolder(folderPath: string, params: ProjectActionsParams) {
-  // 1) Add folder to projectFolders if not present
+export async function addProjectFolder(
+  folderPath: string,
+  params: ProjectActionsParams
+): Promise<void> {
   params.setProjectFolders(prev => {
     if (!prev.includes(folderPath)) {
       return [...prev, folderPath];
@@ -383,10 +389,8 @@ export async function addProjectFolder(folderPath: string, params: ProjectAction
     return prev;
   });
 
-  // 2) Refresh that folder fully (non-shallow)
   await refreshFolders([folderPath], params);
 
-  // 3) Attempt to retrieve from directoryCache
   let listing = params.directoryCache[folderPath];
   if (!listing) {
     listing = await getDirectoryListing(folderPath, params, { shallow: false });
@@ -396,13 +400,11 @@ export async function addProjectFolder(folderPath: string, params: ProjectAction
     return;
   }
 
-  // 4) Expand it (sync)
   params.setExpandedPaths(prev => ({
     ...prev,
     [listing.absolutePath]: true,
   }));
 
-  // 5) set entire folder to 'all'
   params.setNodeStates(prev => {
     const updated = { ...prev };
     const rootNode: TreeNode = {
@@ -422,14 +424,12 @@ export async function addProjectFolder(folderPath: string, params: ProjectAction
         const oldFileContents = params.selectedFileContents;
         const newFileContents = { ...oldFileContents };
 
-        // remove unselected
         for (const p of Object.keys(newFileContents)) {
           if (!allFilePaths.includes(p)) {
             delete newFileContents[p];
           }
         }
 
-        // add newly selected
         for (const fileP of allFilePaths) {
           if (!(fileP in newFileContents)) {
             const content = await readFile(fileP);
@@ -450,7 +450,8 @@ export async function addProjectFolder(folderPath: string, params: ProjectAction
  * Removes a folder from the projectFolders list. We do not remove from nodeStates or directoryCache
  * unless further cleanup is explicitly needed by the UI logic.
  */
-export function removeProjectFolder(folderPath: string, params: ProjectActionsParams) {
+export function removeProjectFolder(folderPath: string, params: ProjectActionsParams): void {
   params.setProjectFolders(prev => prev.filter(p => p !== folderPath));
-  // optionally remove nodeStates & directoryCache for this folder, but we leave it as-is here.
+  // optionally remove nodeStates & directoryCache for this folder
+  // leaving them in place for now
 }

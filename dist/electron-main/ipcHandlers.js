@@ -3,24 +3,15 @@
  * @file ipcHandlers.ts
  * @description
  * Consolidated directory reading logic + asynchronous FS operations for Prompt Composer.
- * We now introduce optional "shallow" loading for large directory structures to enable
- * lazy loading. If shallow=true, we only list immediate children without recursing further.
  *
- * Key Changes in Step 9:
- *  1) Modified the 'list-directory' handler to accept an 'options' argument with { shallow?: boolean }.
- *  2) If shallow=true, do not recurse in readDirectoryTree(); only gather immediate children.
- *  3) Otherwise, preserve the existing recursive behavior.
+ * Step 4 (Improve TypeScript Definitions):
+ *  - Replaced all catch (err: any) with catch (err: unknown), adding instance checks.
+ *  - Ensured each function has explicit return types.
+ *  - Confirmed DirectoryListing, TreeNode usage from types.ts is consistent.
  *
  * Implementation details:
- * - We added an optional parameter to readDirectoryTree() named 'shallow'.
- * - If shallow is true, we skip the recursion step and set children for directories to [].
- * - This logic integrates with the project-level code to fetch subdirectories on-demand
- *   when a folder is expanded.
- *
- * Edge Cases & Error Handling:
- * - If the user or code calls 'list-directory' with shallow=true, subfolders will have empty
- *   children arrays. The caller must request them explicitly if expanded.
- *
+ *  - We now more carefully log errors by verifying err is an Error instance.
+ *  - No other major logic changes were introduced.
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -124,7 +115,12 @@ async function readDirectoryTree(dirPath, ig, isProjectDir, projectRoot, shallow
         entries = await fs_1.default.promises.readdir(dirPath);
     }
     catch (err) {
-        console.error('[list-directory] Failed to read dir (async):', dirPath, err);
+        if (err instanceof Error) {
+            console.error('[list-directory] Failed to read dir (async):', dirPath, err.message);
+        }
+        else {
+            console.error('[list-directory] Failed to read dir (async):', dirPath, err);
+        }
         return results;
     }
     entries.sort((a, b) => a.localeCompare(b));
@@ -208,7 +204,12 @@ function registerIpcHandlers() {
             };
         }
         catch (err) {
-            console.error('[list-directory] Async error:', err);
+            if (err instanceof Error) {
+                console.error('[list-directory] Async error:', err.message);
+            }
+            else {
+                console.error('[list-directory] Async error:', err);
+            }
             return {
                 absolutePath: dirPath,
                 baseName: path_1.default.basename(dirPath),
@@ -223,7 +224,12 @@ function registerIpcHandlers() {
             return content;
         }
         catch (err) {
-            console.error('[read-file] Failed:', filePath, err);
+            if (err instanceof Error) {
+                console.error('[read-file] Failed:', filePath, err.message);
+            }
+            else {
+                console.error('[read-file] Failed:', filePath, err);
+            }
             throw err;
         }
     });
@@ -246,7 +252,12 @@ function registerIpcHandlers() {
             return true;
         }
         catch (err) {
-            console.error('[export-xml] Failed to save XML:', err);
+            if (err instanceof Error) {
+                console.error('[export-xml] Failed to save XML:', err.message);
+            }
+            else {
+                console.error('[export-xml] Failed to save XML:', err);
+            }
             return false;
         }
     });
@@ -270,7 +281,12 @@ function registerIpcHandlers() {
             return content;
         }
         catch (err) {
-            console.error('[import-xml] Failed to import XML:', err);
+            if (err instanceof Error) {
+                console.error('[import-xml] Failed to import XML:', err.message);
+            }
+            else {
+                console.error('[import-xml] Failed to import XML:', err);
+            }
             return null;
         }
     });
@@ -301,7 +317,12 @@ function registerIpcHandlers() {
             return targetPath;
         }
         catch (err) {
-            console.error('[create-folder] Error creating folder:', err);
+            if (err instanceof Error) {
+                console.error('[create-folder] Error creating folder:', err.message);
+            }
+            else {
+                console.error('[create-folder] Error creating folder:', err);
+            }
             return null;
         }
     });
@@ -328,7 +349,12 @@ function registerIpcHandlers() {
                 }
             }
             catch (folderErr) {
-                console.error(`[read-prompt-composer-file] .prompt-composer not found`, folderErr);
+                if (folderErr instanceof Error) {
+                    console.error('[read-prompt-composer-file] .prompt-composer not found', folderErr.message);
+                }
+                else {
+                    console.error('[read-prompt-composer-file] .prompt-composer not found', folderErr);
+                }
                 return null;
             }
             const targetPath = path_1.default.join(promptComposerFolder, relativeFilename);
@@ -341,7 +367,12 @@ function registerIpcHandlers() {
             return content;
         }
         catch (err) {
-            console.warn(`[read-prompt-composer-file] Could not read file: ${relativeFilename}`, err);
+            if (err instanceof Error) {
+                console.warn(`[read-prompt-composer-file] Could not read file: ${relativeFilename}`, err.message);
+            }
+            else {
+                console.warn(`[read-prompt-composer-file] Could not read file: ${relativeFilename}`, err);
+            }
             return null;
         }
     });
@@ -357,7 +388,12 @@ function registerIpcHandlers() {
             }
         }
         catch (err) {
-            console.warn('[list-all-template-files] Could not list global .prompt-composer files:', err);
+            if (err instanceof Error) {
+                console.warn('[list-all-template-files] Could not list global .prompt-composer files:', err.message);
+            }
+            else {
+                console.warn('[list-all-template-files] Could not list global .prompt-composer files:', err);
+            }
         }
         for (const folder of projectFolders) {
             const localDir = path_1.default.join(folder, '.prompt-composer');
@@ -368,7 +404,12 @@ function registerIpcHandlers() {
                 }
             }
             catch (err) {
-                console.warn(`[list-all-template-files] Could not list .prompt-composer in folder: ${folder}`, err);
+                if (err instanceof Error) {
+                    console.warn(`[list-all-template-files] Could not list .prompt-composer in folder: ${folder}`, err.message);
+                }
+                else {
+                    console.warn(`[list-all-template-files] Could not list .prompt-composer in folder: ${folder}`, err);
+                }
             }
         }
         return result;
@@ -387,7 +428,12 @@ function registerIpcHandlers() {
             return content;
         }
         catch (err) {
-            console.warn(`[read-global-prompt-composer-file] Could not read file: ${fileName}`, err);
+            if (err instanceof Error) {
+                console.warn(`[read-global-prompt-composer-file] Could not read file: ${fileName}`, err.message);
+            }
+            else {
+                console.warn(`[read-global-prompt-composer-file] Could not read file: ${fileName}`, err);
+            }
             return null;
         }
     });
@@ -407,8 +453,12 @@ function registerIpcHandlers() {
             return true;
         }
         catch (err) {
-            console.error(`[write-prompt-composer-file] Error writing file ${args.relativeFilename}:`, err);
-            return { error: `Failed to write file ${args.relativeFilename}: ${err.message || 'Unknown error'}` };
+            if (err instanceof Error) {
+                console.error(`[write-prompt-composer-file] Error writing file ${args.relativeFilename}:`, err.message);
+                return { error: `Failed to write file ${args.relativeFilename}: ${err.message}` };
+            }
+            console.error('[write-prompt-composer-file] Unknown error:', err);
+            return { error: `Failed to write file ${args.relativeFilename}: Unknown error` };
         }
     });
 }

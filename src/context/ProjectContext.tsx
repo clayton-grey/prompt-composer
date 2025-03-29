@@ -5,8 +5,10 @@
  * tri-state selection, expansions, ASCII map generation, and also tracks the
  * list of "active" project folders for .prompt-composer template scanning.
  *
- * After unifying TreeNode and DirectoryListing in electron-main/types.ts, we remove
- * the local definitions and import them directly.
+ * Step 4 (Improve TypeScript Definitions):
+ *  - Replaced catch blocks with 'unknown' error types.
+ *  - Added instance checks for logging error messages.
+ *  - Confirmed explicit type usage for each function signature.
  *
  * Key Responsibilities:
  *  - Maintain React states for directoryCache (DirectoryListing), nodeStates, expandedPaths, selectedFileContents
@@ -172,9 +174,14 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           projectFolders,
           setProjectFolders,
         });
-      } catch (error) {
-        showToast(`Error reading directory ${dirPath}: ${(error as Error).message}`, 'error');
-        console.error(`Error reading directory ${dirPath}:`, error);
+      } catch (error: unknown) {
+        if (error instanceof Error) {
+          showToast(`Error reading directory ${dirPath}: ${error.message}`, 'error');
+          console.error(`Error reading directory ${dirPath}:`, error.message);
+        } else {
+          showToast(`Error reading directory ${dirPath}`, 'error');
+          console.error(`Error reading directory ${dirPath}:`, error);
+        }
         return null;
       }
     },
@@ -231,9 +238,14 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           projectFolders,
           setProjectFolders,
         });
-      } catch (error) {
-        showToast(`Error selecting node ${node.path}: ${(error as Error).message}`, 'error');
-        console.error(`Error selecting node ${node.path}:`, error);
+      } catch (error: unknown) {
+        if (error instanceof Error) {
+          showToast(`Error selecting node ${node.path}: ${error.message}`, 'error');
+          console.error(`Error selecting node ${node.path}:`, error.message);
+        } else {
+          showToast(`Error selecting node ${node.path}`, 'error');
+          console.error(`Error selecting node ${node.path}:`, error);
+        }
       }
     },
     [
@@ -269,9 +281,14 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           projectFolders,
           setProjectFolders,
         });
-      } catch (error) {
-        showToast(`Error toggling expansion for ${nodePath}: ${(error as Error).message}`, 'error');
-        console.error(`Error toggling expansion for ${nodePath}:`, error);
+      } catch (error: unknown) {
+        if (error instanceof Error) {
+          showToast(`Error toggling expansion for ${nodePath}: ${error.message}`, 'error');
+          console.error(`Error toggling expansion for ${nodePath}:`, error.message);
+        } else {
+          showToast(`Error toggling expansion for ${nodePath}`, 'error');
+          console.error(`Error toggling expansion for ${nodePath}:`, error);
+        }
       }
     },
     [
@@ -307,12 +324,14 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           projectFolders,
           setProjectFolders,
         });
-      } catch (error) {
-        showToast(
-          `Error collapsing subtree for ${node.path}: ${(error as Error).message}`,
-          'error'
-        );
-        console.error(`Error collapsing subtree for ${node.path}:`, error);
+      } catch (error: unknown) {
+        if (error instanceof Error) {
+          showToast(`Error collapsing subtree for ${node.path}: ${error.message}`, 'error');
+          console.error(`Error collapsing subtree for ${node.path}:`, error.message);
+        } else {
+          showToast(`Error collapsing subtree for ${node.path}`, 'error');
+          console.error(`Error collapsing subtree for ${node.path}:`, error);
+        }
       }
     },
     [
@@ -348,9 +367,14 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           projectFolders,
           setProjectFolders,
         });
-      } catch (error) {
-        showToast(`Error refreshing folders: ${(error as Error).message}`, 'error');
-        console.error('Error refreshing folders:', error);
+      } catch (error: unknown) {
+        if (error instanceof Error) {
+          showToast(`Error refreshing folders: ${error.message}`, 'error');
+          console.error('Error refreshing folders:', error.message);
+        } else {
+          showToast('Error refreshing folders', 'error');
+          console.error('Error refreshing folders:', error);
+        }
       }
     },
     [
@@ -386,12 +410,14 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           projectFolders,
           setProjectFolders,
         });
-      } catch (error) {
-        showToast(
-          `Error adding project folder ${folderPath}: ${(error as Error).message}`,
-          'error'
-        );
-        console.error(`Error adding project folder ${folderPath}:`, error);
+      } catch (error: unknown) {
+        if (error instanceof Error) {
+          showToast(`Error adding project folder ${folderPath}: ${error.message}`, 'error');
+          console.error(`Error adding project folder ${folderPath}:`, error.message);
+        } else {
+          showToast(`Error adding project folder ${folderPath}`, 'error');
+          console.error(`Error adding project folder ${folderPath}:`, error);
+        }
       }
     },
     [
@@ -427,12 +453,14 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           projectFolders,
           setProjectFolders,
         });
-      } catch (error) {
-        showToast(
-          `Error removing project folder ${folderPath}: ${(error as Error).message}`,
-          'error'
-        );
-        console.error(`Error removing project folder ${folderPath}:`, error);
+      } catch (error: unknown) {
+        if (error instanceof Error) {
+          showToast(`Error removing project folder ${folderPath}: ${error.message}`, 'error');
+          console.error(`Error removing project folder ${folderPath}:`, error.message);
+        } else {
+          showToast(`Error removing project folder ${folderPath}`, 'error');
+          console.error(`Error removing project folder ${folderPath}:`, error);
+        }
       }
     },
     [
