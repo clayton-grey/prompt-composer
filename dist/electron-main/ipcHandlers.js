@@ -400,8 +400,8 @@ function registerIpcHandlers() {
             return true;
         }
         catch (err) {
-            console.error('[write-prompt-composer-file] Error writing file:', err);
-            throw err;
+            console.error(`[write-prompt-composer-file] Error writing file ${args.relativeFilename}:`, err);
+            return { error: `Failed to write file ${args.relativeFilename}: ${err.message || 'Unknown error'}` };
         }
     });
 }

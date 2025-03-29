@@ -29,9 +29,7 @@ interface Window {
     /**
      * Show the Open Dialog to select files/folders
      */
-    showOpenDialog: (
-      options: Electron.OpenDialogOptions
-    ) => Promise<Electron.OpenDialogReturnValue>;
+    showOpenDialog: (options: any) => Promise<{ canceled: boolean; filePaths: string[] }>;
 
     /**
      * List the contents of a directory
@@ -67,6 +65,14 @@ interface Window {
      * Read a file from the .prompt-composer folder
      */
     readPromptComposerFile: (relativeFilename: string) => Promise<string | null>;
+
+    /**
+     * Write a file to the .prompt-composer folder
+     */
+    writePromptComposerFile: (args: {
+      relativeFilename: string;
+      content: string;
+    }) => Promise<boolean>;
 
     /**
      * Get the user's home directory

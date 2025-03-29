@@ -447,9 +447,9 @@ export function registerIpcHandlers(): void {
         await fs.promises.writeFile(targetPath, args.content, 'utf-8');
         console.log('[write-prompt-composer-file] Wrote file to', targetPath);
         return true;
-      } catch (err) {
-        console.error('[write-prompt-composer-file] Error writing file:', err);
-        throw err;
+      } catch (err: any) {
+        console.error(`[write-prompt-composer-file] Error writing file ${args.relativeFilename}:`, err);
+        return { error: `Failed to write file ${args.relativeFilename}: ${err.message || 'Unknown error'}` };
       }
     }
   );

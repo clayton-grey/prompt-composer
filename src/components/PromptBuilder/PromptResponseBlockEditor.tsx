@@ -10,9 +10,11 @@
  * each checkbox's onChange references stable values.
  */
 
+/// <reference path="../../types/electron.d.ts" />
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { PromptResponseBlock, Block } from '../../types/Block';
 import { usePrompt } from '../../context/PromptContext';
+import { useToast } from '../../context/ToastContext';
 
 interface PromptResponseBlockEditorProps {
   block: PromptResponseBlock;
@@ -33,6 +35,7 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
   onChange,
 }) => {
   const { blocks, updateBlock } = usePrompt();
+  const { showToast } = useToast();
   const [localContent, setLocalContent] = useState<string>(block.content || '');
   const debounceTimer = useRef<NodeJS.Timeout | null>(null);
 
@@ -65,13 +68,32 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
       };
       updateBlock(updated);
 
-      if (window.electronAPI?.writePromptComposerFile) {
-        window.electronAPI.writePromptComposerFile(block.sourceFile, newVal).catch(err => {
-          console.error('[PromptResponseBlockEditor] Failed to write file:', err);
-        });
+      // Use type assertion to access electronAPI
+      const electronAPI = (window as any).electronAPI;
+      if (electronAPI && electronAPI.writePromptComposerFile) {
+        electronAPI
+          .writePromptComposerFile({
+            relativeFilename: block.sourceFile,
+            content: newVal,
+          })
+          .then(result => {
+            // Check if the result has an error property
+            if (result && typeof result === 'object' && 'error' in result) {
+              showToast(`Could not write to prompt-composer file: ${result.error}`, 'error');
+              console.error('[PromptResponseBlockEditor] Failed to write file:', result.error);
+            }
+            // Optional success toast if needed
+            // else {
+            //   showToast(`Saved ${block.sourceFile}`, 'success');
+            // }
+          })
+          .catch(err => {
+            console.error('[PromptResponseBlockEditor] Failed to write file:', err);
+            showToast(`Could not write to prompt-composer file: ${block.sourceFile}`, 'error');
+          });
       }
     },
-    [block, updateBlock]
+    [block, updateBlock, showToast]
   );
 
   /**

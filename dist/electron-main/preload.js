@@ -54,7 +54,7 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
     /**
      * Step 4: New method for writing to a prompt-composer file (PromptResponseBlock editing).
      */
-    writePromptComposerFile: async (relativeFilename, content) => {
-        return electron_1.ipcRenderer.invoke('write-prompt-composer-file', { relativeFilename, content });
+    writePromptComposerFile: async (args) => {
+        return electron_1.ipcRenderer.invoke('write-prompt-composer-file', args);
     }
 });

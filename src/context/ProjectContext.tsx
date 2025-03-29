@@ -31,6 +31,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { initEncoder, estimateTokens } from '../utils/tokenEstimator';
 import * as projectActions from '../utils/projectActions';
+import { useToast } from '../context/ToastContext';
 
 export interface TreeNode {
   name: string;
@@ -149,8 +150,8 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
   const [selectedFileContents, setSelectedFileContents] = useState<Record<string, string>>({});
   const [selectedFilesTokenCount, setSelectedFilesTokenCount] = useState<number>(0);
-
   const [projectFolders, setProjectFolders] = useState<string[]>([]);
+  const { showToast } = useToast();
 
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -191,20 +192,26 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    */
   const getDirectoryListing = useCallback(
     async (dirPath: string) => {
-      return projectActions.getDirectoryListing(dirPath, {
-        directoryCache,
-        setDirectoryCache,
-        nodeStates,
-        setNodeStates,
-        expandedPaths,
-        setExpandedPaths,
-        selectedFileContents,
-        setSelectedFileContents,
-        projectFolders,
-        setProjectFolders,
-      });
+      try {
+        return await projectActions.getDirectoryListing(dirPath, {
+          directoryCache,
+          setDirectoryCache,
+          nodeStates,
+          setNodeStates,
+          expandedPaths,
+          setExpandedPaths,
+          selectedFileContents,
+          setSelectedFileContents,
+          projectFolders,
+          setProjectFolders,
+        });
+      } catch (error) {
+        showToast(`Error reading directory ${dirPath}: ${error.message}`, 'error');
+        console.error(`Error reading directory ${dirPath}:`, error);
+        return null;
+      }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
   );
 
   /**
@@ -233,20 +240,25 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    */
   const toggleNodeSelection = useCallback(
     (node: TreeNode) => {
-      projectActions.toggleNodeSelection(node, {
-        directoryCache,
-        setDirectoryCache,
-        nodeStates,
-        setNodeStates,
-        expandedPaths,
-        setExpandedPaths,
-        selectedFileContents,
-        setSelectedFileContents,
-        projectFolders,
-        setProjectFolders,
-      });
+      try {
+        projectActions.toggleNodeSelection(node, {
+          directoryCache,
+          setDirectoryCache,
+          nodeStates,
+          setNodeStates,
+          expandedPaths,
+          setExpandedPaths,
+          selectedFileContents,
+          setSelectedFileContents,
+          projectFolders,
+          setProjectFolders,
+        });
+      } catch (error) {
+        showToast(`Error selecting node ${node.path}: ${error.message}`, 'error');
+        console.error(`Error selecting node ${node.path}:`, error);
+      }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
   );
 
   /**
@@ -254,20 +266,25 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    */
   const toggleExpansion = useCallback(
     (nodePath: string) => {
-      projectActions.toggleExpansion(nodePath, {
-        directoryCache,
-        setDirectoryCache,
-        nodeStates,
-        setNodeStates,
-        expandedPaths,
-        setExpandedPaths,
-        selectedFileContents,
-        setSelectedFileContents,
-        projectFolders,
-        setProjectFolders,
-      });
+      try {
+        projectActions.toggleExpansion(nodePath, {
+          directoryCache,
+          setDirectoryCache,
+          nodeStates,
+          setNodeStates,
+          expandedPaths,
+          setExpandedPaths,
+          selectedFileContents,
+          setSelectedFileContents,
+          projectFolders,
+          setProjectFolders,
+        });
+      } catch (error) {
+        showToast(`Error toggling expansion for ${nodePath}: ${error.message}`, 'error');
+        console.error(`Error toggling expansion for ${nodePath}:`, error);
+      }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
   );
 
   /**
@@ -275,20 +292,25 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    */
   const collapseSubtree = useCallback(
     (node: TreeNode) => {
-      projectActions.collapseSubtree(node, {
-        directoryCache,
-        setDirectoryCache,
-        nodeStates,
-        setNodeStates,
-        expandedPaths,
-        setExpandedPaths,
-        selectedFileContents,
-        setSelectedFileContents,
-        projectFolders,
-        setProjectFolders,
-      });
+      try {
+        projectActions.collapseSubtree(node, {
+          directoryCache,
+          setDirectoryCache,
+          nodeStates,
+          setNodeStates,
+          expandedPaths,
+          setExpandedPaths,
+          selectedFileContents,
+          setSelectedFileContents,
+          projectFolders,
+          setProjectFolders,
+        });
+      } catch (error) {
+        showToast(`Error collapsing subtree for ${node.path}: ${error.message}`, 'error');
+        console.error(`Error collapsing subtree for ${node.path}:`, error);
+      }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
   );
 
   /**
@@ -296,20 +318,25 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    */
   const refreshFolders = useCallback(
     async (folderPaths: string[]) => {
-      await projectActions.refreshFolders(folderPaths, {
-        directoryCache,
-        setDirectoryCache,
-        nodeStates,
-        setNodeStates,
-        expandedPaths,
-        setExpandedPaths,
-        selectedFileContents,
-        setSelectedFileContents,
-        projectFolders,
-        setProjectFolders,
-      });
+      try {
+        await projectActions.refreshFolders(folderPaths, {
+          directoryCache,
+          setDirectoryCache,
+          nodeStates,
+          setNodeStates,
+          expandedPaths,
+          setExpandedPaths,
+          selectedFileContents,
+          setSelectedFileContents,
+          projectFolders,
+          setProjectFolders,
+        });
+      } catch (error) {
+        showToast(`Error refreshing folders: ${error.message}`, 'error');
+        console.error('Error refreshing folders:', error);
+      }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
   );
 
   /**
@@ -317,20 +344,25 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    */
   const addProjectFolder = useCallback(
     async (folderPath: string) => {
-      await projectActions.addProjectFolder(folderPath, {
-        directoryCache,
-        setDirectoryCache,
-        nodeStates,
-        setNodeStates,
-        expandedPaths,
-        setExpandedPaths,
-        selectedFileContents,
-        setSelectedFileContents,
-        projectFolders,
-        setProjectFolders,
-      });
+      try {
+        await projectActions.addProjectFolder(folderPath, {
+          directoryCache,
+          setDirectoryCache,
+          nodeStates,
+          setNodeStates,
+          expandedPaths,
+          setExpandedPaths,
+          selectedFileContents,
+          setSelectedFileContents,
+          projectFolders,
+          setProjectFolders,
+        });
+      } catch (error) {
+        showToast(`Error adding project folder ${folderPath}: ${error.message}`, 'error');
+        console.error(`Error adding project folder ${folderPath}:`, error);
+      }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
   );
 
   /**
@@ -338,20 +370,25 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    */
   const removeProjectFolder = useCallback(
     (folderPath: string) => {
-      projectActions.removeProjectFolder(folderPath, {
-        directoryCache,
-        setDirectoryCache,
-        nodeStates,
-        setNodeStates,
-        expandedPaths,
-        setExpandedPaths,
-        selectedFileContents,
-        setSelectedFileContents,
-        projectFolders,
-        setProjectFolders,
-      });
+      try {
+        projectActions.removeProjectFolder(folderPath, {
+          directoryCache,
+          setDirectoryCache,
+          nodeStates,
+          setNodeStates,
+          expandedPaths,
+          setExpandedPaths,
+          selectedFileContents,
+          setSelectedFileContents,
+          projectFolders,
+          setProjectFolders,
+        });
+      } catch (error) {
+        showToast(`Error removing project folder ${folderPath}: ${error.message}`, 'error');
+        console.error(`Error removing project folder ${folderPath}:`, error);
+      }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
   );
 
   /**
