@@ -10,30 +10,19 @@
  *  - getDirectoryListing
  *  - setNodeStateRecursive, recalcSubtreeState, collectAllFilePaths, etc.
  *
- * Motivation for final refactor:
- *  - We remove all "await" calls from synchronous React callbacks (like setSelectedFileContents)
- *    and place them in an async microtask.
- *  - We gather the old selectedFileContents from the context, then read missing files
- *    with `await readFile(...)`, then do one final setSelectedFileContents with the updated map.
+ * Step 9 Changes (lazy loading):
+ *  - Added an optional 'shallow' parameter to getDirectoryListing() calls.
+ *  - In toggleExpansion, if the directory is being expanded and we have no cached children,
+ *    we call getDirectoryListing(folderPath, { shallow:true }).
+ *  - This prevents loading entire deep subtrees until the user actually expands them.
  *
- * Implementation details:
- *  - After tri-state or folder expansions, we do:
- *       queueMicrotask(() => {
- *         (async () => {
- *           // 1) Build a new object for selectedFileContents
- *           // 2) For newly selected files, read them
- *           // 3) setSelectedFileContents(newObject)
- *         })();
- *       });
- *    This ensures "await" is valid inside the async block.
+ * Edge Cases:
+ *  - If the user re-collapses and re-expands, we check if the directory is in cache.
+ *    If it is, we do not re-fetch unless the user calls refreshFolders.
  */
 
 import { TreeNode, DirectoryListing } from '../context/ProjectContext';
 
-/**
- * @interface ProjectActionsParams
- * The shape of the parameters (state & setState) used by all project actions.
- */
 export interface ProjectActionsParams {
   directoryCache: Record<string, DirectoryListing>;
   setDirectoryCache: React.Dispatch<React.SetStateAction<Record<string, DirectoryListing>>>;
@@ -54,25 +43,30 @@ export interface ProjectActionsParams {
 /**
  * getDirectoryListing
  * Retrieves the directory listing from cache if available, otherwise calls electronAPI
- * and stores the result in directoryCache.
- *
- * @param dirPath The folder path to list
- * @param params  The context state & actions
- * @returns A Promise resolving to the DirectoryListing or null on failure
+ * and stores the result in directoryCache. You can pass an {shallow:true} option if you only
+ * want the immediate children (lazy loading).
  */
 export async function getDirectoryListing(
   dirPath: string,
-  params: ProjectActionsParams
+  params: ProjectActionsParams,
+  options?: { shallow?: boolean }
 ): Promise<DirectoryListing | null> {
-  if (params.directoryCache[dirPath]) {
+  // If we already have a cache entry for this path and shallow isn't forced again,
+  // return the existing listing.
+  // If the caller wants a deeper read, or wants to refresh, they should call refreshFolders.
+  if (params.directoryCache[dirPath] && !options?.shallow) {
     return params.directoryCache[dirPath];
   }
+
   if (!window?.electronAPI?.listDirectory) {
     console.warn('[projectActions] No electronAPI.listDirectory found.');
     return null;
   }
+
   try {
-    const result = await window.electronAPI.listDirectory(dirPath);
+    const result = await window.electronAPI.listDirectory(dirPath, {
+      shallow: options?.shallow ?? false,
+    });
     params.setDirectoryCache(prev => ({ ...prev, [dirPath]: result }));
     return result;
   } catch (err) {
@@ -84,9 +78,6 @@ export async function getDirectoryListing(
 /**
  * readFile
  * Reads the file content from disk using electronAPI.readFile
- *
- * @param filePath The full file path
- * @returns The file content or an empty string on failure
  */
 export async function readFile(filePath: string): Promise<string> {
   if (!window?.electronAPI?.readFile) {
@@ -122,8 +113,6 @@ export function setNodeStateRecursive(
 /**
  * recalcSubtreeState
  * Recomputes the tri-state selection for a directory node based on its children.
- *
- * @returns The final state for this node ('none', 'all', or 'partial')
  */
 export function recalcSubtreeState(
   node: TreeNode,
@@ -202,11 +191,8 @@ export function collectAllFilePaths(
  * toggleNodeSelection
  * Implements the tri-state toggling for a node (file or directory).
  * If it's 'none' or 'partial', set to 'all'; if it's 'all', set to 'none'.
- *
- * Then merges or removes selectedFileContents accordingly in a queued microtask.
  */
 export async function toggleNodeSelection(node: TreeNode, params: ProjectActionsParams) {
-  // 1) Update the nodeStates synchronously
   params.setNodeStates(prev => {
     const updated = { ...prev };
     const current = updated[node.path] || 'none';
@@ -215,11 +201,9 @@ export async function toggleNodeSelection(node: TreeNode, params: ProjectActions
     setNodeStateRecursive(node, newState, updated);
     recalcAllRootStates(params, updated);
 
-    // 2) We'll queue a microtask to handle reading new files and removing unselected
+    // queue file reading updates in microtask
     queueMicrotask(() => {
       (async () => {
-        // Gather the currently updated nodeStates in "updated"
-        // (the "updated" object is closed over by this function)
         const allFilePaths: string[] = [];
         for (const key in params.directoryCache) {
           const listing = params.directoryCache[key];
@@ -233,18 +217,17 @@ export async function toggleNodeSelection(node: TreeNode, params: ProjectActions
           collectAllFilePaths(rootNode, updated, allFilePaths);
         }
 
-        // Build a new object for selectedFileContents from the current
         const oldFileContents = params.selectedFileContents;
         const newFileContents = { ...oldFileContents };
 
-        // 2A) Remove unselected
+        // remove unselected
         for (const pathKey of Object.keys(newFileContents)) {
           if (!allFilePaths.includes(pathKey)) {
             delete newFileContents[pathKey];
           }
         }
 
-        // 2B) For newly selected, load file content
+        // add newly selected
         for (const fileP of allFilePaths) {
           if (!(fileP in newFileContents)) {
             const content = await readFile(fileP);
@@ -252,7 +235,6 @@ export async function toggleNodeSelection(node: TreeNode, params: ProjectActions
           }
         }
 
-        // 2C) Now set it
         params.setSelectedFileContents(newFileContents);
       })();
     });
@@ -263,12 +245,37 @@ export async function toggleNodeSelection(node: TreeNode, params: ProjectActions
 
 /**
  * toggleExpansion
- * Toggles a directory's expanded/collapsed state in expandedPaths (sync).
+ * Toggles a directory's expanded/collapsed state in expandedPaths.
+ * If expanding, and we do not yet have children for that folder (or have an empty array),
+ * we fetch them shallowly from the main process.
  */
 export function toggleExpansion(nodePath: string, params: ProjectActionsParams) {
+  const currentlyExpanded = params.expandedPaths[nodePath] || false;
+  const newVal = !currentlyExpanded;
+
+  // If we're about to expand a directory that is uncached or has no children, do a lazy fetch
+  if (newVal) {
+    const listing = params.directoryCache[nodePath];
+    const noChildrenKnown = !listing || listing.children.length === 0;
+
+    if (noChildrenKnown) {
+      // fetch shallow children on expansion
+      queueMicrotask(() => {
+        (async () => {
+          const freshListing = await getDirectoryListing(nodePath, params, { shallow: true });
+          if (freshListing) {
+            // We might want to forcibly set expandedPaths[nodePath] = true
+            // But we rely on the next setExpandedPaths call below to handle it
+            // in the standard way so it doesn't get out of sync.
+          }
+        })();
+      });
+    }
+  }
+
   params.setExpandedPaths(prev => ({
     ...prev,
-    [nodePath]: !prev[nodePath],
+    [nodePath]: newVal,
   }));
 }
 
@@ -298,14 +305,14 @@ export function collapseSubtree(node: TreeNode, params: ProjectActionsParams) {
  * Reloads each folder path in directoryCache. Then merges or removes selected files accordingly.
  */
 export async function refreshFolders(folderPaths: string[], params: ProjectActionsParams) {
-  // 1) Attempt to refresh each folder's listing
   for (const fPath of folderPaths) {
     if (!window.electronAPI?.listDirectory) {
       console.warn('[projectActions] refreshFolders: electronAPI.listDirectory is unavailable');
       continue;
     }
     try {
-      const freshListing = await window.electronAPI.listDirectory(fPath);
+      // We do a full read (non-shallow) to refresh the entire sub-tree
+      const freshListing = await window.electronAPI.listDirectory(fPath, { shallow: false });
       if (freshListing) {
         params.setDirectoryCache(prev => ({
           ...prev,
@@ -317,15 +324,12 @@ export async function refreshFolders(folderPaths: string[], params: ProjectActio
     }
   }
 
-  // 2) Recalc tri-state
   params.setNodeStates(prev => {
     const updated = { ...prev };
     recalcAllRootStates(params, updated);
 
-    // 3) queue a microtask to load or remove file contents
     queueMicrotask(() => {
       (async () => {
-        // gather allFilePaths from updated nodeStates
         const allFilePaths: string[] = [];
         for (const key in params.directoryCache) {
           const listing = params.directoryCache[key];
@@ -339,7 +343,6 @@ export async function refreshFolders(folderPaths: string[], params: ProjectActio
           collectAllFilePaths(rootNode, updated, allFilePaths);
         }
 
-        // build new file contents
         const oldFileContents = params.selectedFileContents;
         const newFileContents = { ...oldFileContents };
 
@@ -369,7 +372,7 @@ export async function refreshFolders(folderPaths: string[], params: ProjectActio
 /**
  * addProjectFolder
  * Adds a new folderPath to the projectFolders array if not already present,
- * then refreshes its listing, expands it, and sets it to 'all' tri-state selection by default.
+ * then refreshes its listing (fully), expands it, and sets it to 'all' tri-state selection by default.
  */
 export async function addProjectFolder(folderPath: string, params: ProjectActionsParams) {
   // 1) Add folder to projectFolders if not present
@@ -380,13 +383,13 @@ export async function addProjectFolder(folderPath: string, params: ProjectAction
     return prev;
   });
 
-  // 2) Refresh that folder
+  // 2) Refresh that folder fully (non-shallow)
   await refreshFolders([folderPath], params);
 
   // 3) Attempt to retrieve from directoryCache
   let listing = params.directoryCache[folderPath];
   if (!listing) {
-    listing = await getDirectoryListing(folderPath, params);
+    listing = await getDirectoryListing(folderPath, params, { shallow: false });
   }
   if (!listing) {
     console.warn('[projectActions] addProjectFolder: listing not found after refresh', folderPath);
@@ -411,7 +414,6 @@ export async function addProjectFolder(folderPath: string, params: ProjectAction
     setNodeStateRecursive(rootNode, 'all', updated);
     recalcAllRootStates(params, updated);
 
-    // 6) queue microtask to load file contents for everything in that folder
     queueMicrotask(() => {
       (async () => {
         const allFilePaths: string[] = [];
@@ -445,11 +447,10 @@ export async function addProjectFolder(folderPath: string, params: ProjectAction
 
 /**
  * removeProjectFolder
- * Removes a folder from the projectFolders list. Does not automatically remove
- * selected files or states from nodeStates or directoryCache, unless you specifically
- * want that logic here.
+ * Removes a folder from the projectFolders list. We do not remove from nodeStates or directoryCache
+ * unless further cleanup is explicitly needed by the UI logic.
  */
 export function removeProjectFolder(folderPath: string, params: ProjectActionsParams) {
   params.setProjectFolders(prev => prev.filter(p => p !== folderPath));
-  // Optionally, remove nodeStates & directoryCache for this folder if you prefer.
+  // optionally remove nodeStates & directoryCache for this folder, but we leave it as-is here.
 }

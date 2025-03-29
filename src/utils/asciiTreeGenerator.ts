@@ -3,40 +3,17 @@
  * @description
  * Provides unified logic for generating ASCII directory trees for one or more root folders.
  *
- * Consolidates similar code previously found in:
- *  - ProjectContext.generateAsciiTree
- *  - fileMapBuilder.ts
- *  - PromptContext.generateCombinedAsciiMapsForFolders
+ * Step 9 Changes:
+ *  - We add a simple memoization approach to avoid regenerating the same ASCII tree
+ *    if the same folder array is passed in consecutively.
+ *  - We store the previous input array + output string in a local variable.
+ *  - If the next call has exactly the same folder array (same order and entries),
+ *    we return the cached result.
  *
- * Exported Functions:
- *  1) generateAsciiTree(folders: string[]): Promise<string>
- *     - Accepts an array of folder paths.
- *     - For each folder, calls electronAPI.listDirectory to get the directory structure.
- *     - Recursively builds an ASCII representation of the tree.
- *     - Combines the ASCII output for all folders into one final string.
- *
- * Implementation Details:
- *  - We define a TreeNode interface matching the shape returned by listDirectory (which includes children[]).
- *  - We define a helper function buildAsciiLines for recursion.
- *  - For each folder in the input array, we retrieve its directory listing via electronAPI, then build lines.
- *  - We label the top folder with the absolute path and represent subfolders/files as:
- *       ├── ...
- *       └── ...
- *  - Directories are prefixed with "[D] " to distinguish them from files.
- *  - We return the combined ASCII for all folders, separated by blank lines if multiple roots are given.
- *
- * Edge Cases:
- *  - If electronAPI.listDirectory is unavailable or errors, we log a warning and skip that folder.
- *  - If a folder has no children, we still display the root line with no sub-tree.
- *  - The function sorts directories before files for consistent ordering.
- *
- * Example Usage:
- *    import { generateAsciiTree } from './asciiTreeGenerator';
- *    const ascii = await generateAsciiTree(['/path/to/folderA', '/path/to/folderB']);
- *    console.log(ascii);
- *
- * @notes
- *  - This file was created to unify and remove duplicative ASCII generation logic scattered across the codebase.
+ * Implementation details:
+ *  - The user can call clearAsciiCache() if they suspect the folder structure changed
+ *    drastically and want a fresh generation forcibly. For now, we do not automatically
+ *    clear it when the user calls "refreshFolders"; that can be integrated if desired.
  */
 
 interface TreeNode {
@@ -44,6 +21,18 @@ interface TreeNode {
   path: string;
   type: 'file' | 'directory';
   children?: TreeNode[];
+}
+
+// Cache references
+let lastFoldersInput: string[] | null = null;
+let lastAsciiResult: string | null = null;
+
+/**
+ * Clears the in-memory ASCII tree cache. Useful if the folder structure changes significantly.
+ */
+export function clearAsciiCache(): void {
+  lastFoldersInput = null;
+  lastAsciiResult = null;
 }
 
 /**
@@ -59,14 +48,13 @@ function buildAsciiLines(node: TreeNode, prefix: string = '', isLast: boolean = 
 
   let label = node.name;
   if (node.type === 'directory') {
-    // Indicate directory
     label = '[D] ' + node.name;
   }
 
   lines.push(prefix + nodeMarker + label);
 
   if (node.type === 'directory' && node.children && node.children.length > 0) {
-    // Sort directories first, then files, then alphabetical
+    // Sort directories first, then files
     const sortedChildren = [...node.children].sort((a, b) => {
       if (a.type !== b.type) {
         return a.type === 'directory' ? -1 : 1;
@@ -84,91 +72,105 @@ function buildAsciiLines(node: TreeNode, prefix: string = '', isLast: boolean = 
 }
 
 /**
+ * fetchDirectoryListing
+ * Utility to call electronAPI.listDirectory for a single folder path. This
+ * assumes a full read (shallow=false) for ASCII generation.
+ */
+async function fetchDirectoryListing(folderPath: string): Promise<TreeNode | null> {
+  if (!window.electronAPI?.listDirectory) {
+    console.warn('[asciiTreeGenerator] No electronAPI.listDirectory found. Returning null.');
+    return null;
+  }
+  try {
+    // For ASCII tree generation, we typically want the full tree
+    const listing = await window.electronAPI.listDirectory(folderPath, { shallow: false });
+    if (!listing) {
+      return null;
+    }
+    const rootNode: TreeNode = {
+      name: listing.baseName,
+      path: listing.absolutePath,
+      type: 'directory',
+      children: listing.children,
+    };
+    return rootNode;
+  } catch (err) {
+    console.warn('[asciiTreeGenerator] Failed to process folder:', folderPath, err);
+    return null;
+  }
+}
+
+/**
  * generateAsciiTree
- * Builds a combined ASCII directory tree for one or more folder paths.
+ * Builds a combined ASCII directory tree for one or more folder paths, using a naive memoization.
  *
  * @param folders string[] - An array of folder paths
  * @returns A Promise resolving to a single string containing the ASCII directory tree
  * for each folder, separated by blank lines if multiple folders are provided.
  *
- * Implementation Steps:
- *  1) For each folderPath:
- *     - Call electronAPI.listDirectory(folderPath) to obtain { absolutePath, baseName, children }
- *     - Construct a root node representing that directory, then recursively build lines for its children.
- *     - Prefix the output with <file_map> / </file_map> lines for easy insertion in the final prompt if needed.
- *  2) Combine all folder ASCII maps with a double newline separator.
- *  3) If any error occurs or electronAPI is unavailable, we log a warning and skip that folder.
- *
- * Example:
- *    const asciiStr = await generateAsciiTree(['/Users/myuser/ProjectA']);
- *    console.log(asciiStr);
+ * Caching Approach:
+ *  - If the input array is identical (length + each folder path) to lastFoldersInput,
+ *    we return lastAsciiResult. Otherwise, we generate and store in the cache.
  */
 export async function generateAsciiTree(folders: string[]): Promise<string> {
-  // If no folders, return empty
   if (!folders || folders.length === 0) {
     return '';
   }
 
-  // Check electron API
-  if (!window.electronAPI?.listDirectory) {
-    console.warn('[asciiTreeGenerator] No electronAPI.listDirectory found. Returning empty.');
-    return '';
+  // Check naive cache
+  const isSameAsCached =
+    lastFoldersInput &&
+    lastFoldersInput.length === folders.length &&
+    lastFoldersInput.every((f, idx) => f === folders[idx]);
+
+  if (isSameAsCached && lastAsciiResult) {
+    return lastAsciiResult;
   }
 
   let finalOutput = '';
 
   for (let i = 0; i < folders.length; i++) {
     const folderPath = folders[i];
-    try {
-      const listing = await window.electronAPI.listDirectory(folderPath);
-      if (!listing) {
-        console.warn(
-          `[asciiTreeGenerator] No directory listing returned for folder: ${folderPath}`
-        );
-        continue;
-      }
-
-      const rootNode: TreeNode = {
-        name: listing.baseName,
-        path: listing.absolutePath,
-        type: 'directory',
-        children: listing.children,
-      };
-
-      // Begin with <file_map> tag
-      let lines: string[] = [];
-      lines.push('<file_map>');
-      lines.push(rootNode.path);
-
-      // Sort children in the same manner
-      if (rootNode.children && rootNode.children.length > 0) {
-        const sortedChildren = [...rootNode.children].sort((a, b) => {
-          if (a.type !== b.type) {
-            return a.type === 'directory' ? -1 : 1;
-          }
-          return a.name.localeCompare(b.name);
-        });
-        sortedChildren.forEach((child, idx) => {
-          const isLast = idx === sortedChildren.length - 1;
-          lines.push(...buildAsciiLines(child, '', isLast));
-        });
-      }
-
-      lines.push('</file_map>');
-      // Add extra blank line if multiple folders
-      if (i < folders.length - 1) {
-        lines.push('');
-      }
-
-      finalOutput += lines.join('\n');
-      if (i < folders.length - 1) {
-        finalOutput += '\n';
-      }
-    } catch (err) {
-      console.warn('[asciiTreeGenerator] Failed to process folder:', folderPath, err);
+    const rootNode = await fetchDirectoryListing(folderPath);
+    if (!rootNode) {
       continue;
+    }
+
+    let lines: string[] = [];
+    lines.push('<file_map>');
+    lines.push(rootNode.path);
+
+    // Sort top-level children
+    if (rootNode.children && rootNode.children.length > 0) {
+      const sortedChildren = [...rootNode.children].sort((a, b) => {
+        if (a.type !== b.type) {
+          return a.type === 'directory' ? -1 : 1;
+        }
+        return a.name.localeCompare(b.name);
+      });
+
+      sortedChildren.forEach((child, idx) => {
+        const isLast = idx === sortedChildren.length - 1;
+        lines.push(...buildAsciiLines(child, '', isLast));
+      });
+    }
+
+    lines.push('</file_map>');
+    if (i < folders.length - 1) {
+      lines.push('');
+    }
+
+    finalOutput += lines.join('\n');
+    if (i < folders.length - 1) {
+      finalOutput += '\n';
     }
   }
 
-  return finalOutput.trim();
+  const trimmed = finalOutput.trim();
+
+  // Store in naive cache
+  lastFoldersInput = [...folders];
+  lastAsciiResult = trimmed;
+
+  return trimmed;
 }

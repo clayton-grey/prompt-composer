@@ -3,12 +3,24 @@
  * @file ipcHandlers.ts
  * @description
  * Consolidated directory reading logic + asynchronous FS operations for Prompt Composer.
- * Now references shared types from electron-main/types.ts to reduce redundancy.
+ * We now introduce optional "shallow" loading for large directory structures to enable
+ * lazy loading. If shallow=true, we only list immediate children without recursing further.
  *
- * Changes:
- *  - Removed local interface TreeNode and ListDirectoryResult
- *  - Imported { DirectoryListing, TreeNode } from ./types
- *  - Renamed references from ListDirectoryResult => DirectoryListing
+ * Key Changes in Step 9:
+ *  1) Modified the 'list-directory' handler to accept an 'options' argument with { shallow?: boolean }.
+ *  2) If shallow=true, do not recurse in readDirectoryTree(); only gather immediate children.
+ *  3) Otherwise, preserve the existing recursive behavior.
+ *
+ * Implementation details:
+ * - We added an optional parameter to readDirectoryTree() named 'shallow'.
+ * - If shallow is true, we skip the recursion step and set children for directories to [].
+ * - This logic integrates with the project-level code to fetch subdirectories on-demand
+ *   when a folder is expanded.
+ *
+ * Edge Cases & Error Handling:
+ * - If the user or code calls 'list-directory' with shallow=true, subfolders will have empty
+ *   children arrays. The caller must request them explicitly if expanded.
+ *
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -97,9 +109,15 @@ async function createIgnoreForPath(targetPath, projectRoot) {
     return { ig: igInstance, isProjectDir };
 }
 /**
- * Recursively reads a directory, returning an array of TreeNodes
+ * Recursively (or shallowly) reads a directory, returning an array of TreeNodes
+ * @param dirPath The directory path
+ * @param ig The ignore rules instance
+ * @param isProjectDir Whether this path is within the recognized project root
+ * @param projectRoot The project root path
+ * @param shallow If true, only read immediate children (skip recursion)
+ * @returns TreeNode[]
  */
-async function readDirectoryTree(dirPath, ig, isProjectDir, projectRoot) {
+async function readDirectoryTree(dirPath, ig, isProjectDir, projectRoot, shallow = false) {
     const results = [];
     let entries = [];
     try {
@@ -129,15 +147,28 @@ async function readDirectoryTree(dirPath, ig, isProjectDir, projectRoot) {
             continue;
         }
         if (stats.isDirectory()) {
-            const children = await readDirectoryTree(fullPath, ig, isProjectDir, projectRoot);
-            results.push({
-                name: entry,
-                path: fullPath,
-                type: 'directory',
-                children,
-            });
+            if (shallow) {
+                // Provide an empty children array
+                results.push({
+                    name: entry,
+                    path: fullPath,
+                    type: 'directory',
+                    children: [],
+                });
+            }
+            else {
+                // Recursively read its children
+                const children = await readDirectoryTree(fullPath, ig, isProjectDir, projectRoot, false);
+                results.push({
+                    name: entry,
+                    path: fullPath,
+                    type: 'directory',
+                    children,
+                });
+            }
         }
         else {
+            // File
             const ext = path_1.default.extname(entry).toLowerCase();
             if (ALLOWED_EXTENSIONS.includes(ext)) {
                 results.push({
@@ -152,10 +183,15 @@ async function readDirectoryTree(dirPath, ig, isProjectDir, projectRoot) {
 }
 /**
  * registerIpcHandlers
+ *
+ * The 'list-directory' channel now accepts:
+ *   (dirPath: string, options?: { shallow?: boolean })
+ * We default shallow=false if not provided.
  */
 function registerIpcHandlers() {
     // list-directory
-    electron_1.ipcMain.handle('list-directory', async (_event, dirPath) => {
+    electron_1.ipcMain.handle('list-directory', async (_event, dirPath, options) => {
+        const shallow = options?.shallow ?? false;
         try {
             let targetPath = dirPath;
             if (!path_1.default.isAbsolute(dirPath)) {
@@ -163,7 +199,7 @@ function registerIpcHandlers() {
             }
             const projectRoot = process.cwd();
             const { ig, isProjectDir } = await createIgnoreForPath(targetPath, projectRoot);
-            const treeNodes = await readDirectoryTree(targetPath, ig, isProjectDir, projectRoot);
+            const treeNodes = await readDirectoryTree(targetPath, ig, isProjectDir, projectRoot, shallow);
             const baseName = path_1.default.basename(targetPath);
             return {
                 absolutePath: targetPath,
