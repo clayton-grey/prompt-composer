@@ -4,37 +4,19 @@
  * Implements the left sidebar for Prompt Composer, displaying and managing project folders,
  * the file tree, and a footer showing the total token usage of selected files.
  *
- * Recent changes (Button Re-order & Visibility, Step 7):
- * ------------------------------------------------------------------------------
- * 1) **Re-order buttons** in the top controls to:
- *    - Copy File Block Output
- *    - Refresh
- *    - Add Folder
+ * In this update (Step 1: Unify ASCII Tree Generation):
+ *  - We remove usage of generateAsciiTree from ProjectContext (since it no longer exists).
+ *  - Instead, we import the unified generateAsciiTree from asciiTreeGenerator.ts,
+ *    and call generateAsciiTree([folder]) in handleCopyFileBlockOutput for each project folder.
  *
- * 2) **Hide** the Copy and Refresh buttons unless there is at least one project folder.
- *
- * 3) Adjust the file tree **minimum width** to 270px.
- *
- * Implementation Details:
- *  - We only show Copy/Refresh if `projectFolders.length > 0`.
- *  - We re-ordered the existing buttons in the UI.
- *  - We updated the containing <aside> class from min-w-[250px] to min-w-[270px].
- *  - All other logic remains unchanged.
- *
- * Edge Cases:
- *  - If the user has no folders, they only see the "Add Folder" button.
- *  - Once the user adds at least one folder, the copy/refresh buttons become visible.
- *
- * Dependencies:
- *  - React, TypeScript
- *  - ProjectContext for folder, file, and tree actions
- *  - ToastContext for optional success/failure messaging
+ * The rest of the logic remains the same for tri-state selection, refresh, and folder addition.
  */
 
 import React from 'react';
 import FileTree from './Sidebar/FileTree';
 import { useProject } from '../context/ProjectContext';
 import { useToast } from '../context/ToastContext';
+import { generateAsciiTree } from '../utils/asciiTreeGenerator';
 
 const Sidebar: React.FC = () => {
   const {
@@ -44,15 +26,12 @@ const Sidebar: React.FC = () => {
     refreshFolders,
     selectedFilesTokenCount,
     getSelectedFileEntries,
-    generateAsciiTree,
   } = useProject();
 
   const { showToast } = useToast();
 
   /**
    * handleAddFolder
-   * Invokes the Electron file dialog to select a folder, then calls addProjectFolder to
-   * load it into the sidebar. If the user cancels, we do nothing.
    */
   const handleAddFolder = async () => {
     try {
@@ -77,8 +56,6 @@ const Sidebar: React.FC = () => {
 
   /**
    * handleRefresh
-   * Calls `refreshFolders` for all currently loaded project folders,
-   * re-fetching their directory listings from disk.
    */
   const handleRefresh = async () => {
     try {
@@ -90,7 +67,6 @@ const Sidebar: React.FC = () => {
 
   /**
    * handleRemoveFolder
-   * Removes the specified folder from our projectFolders array in context.
    */
   const handleRemoveFolder = (folderPath: string) => {
     removeProjectFolder(folderPath);
@@ -98,16 +74,15 @@ const Sidebar: React.FC = () => {
 
   /**
    * handleCopyFileBlockOutput
-   * Gathers ASCII tree for each folder and then appends all selected file contents,
-   * wrapping them in <file_contents> blocks. Copies the final string to the clipboard.
+   * Gathers ASCII tree for each folder plus selected file contents, copies the final string.
    */
   const handleCopyFileBlockOutput = async () => {
     try {
       let finalOutput = '';
 
-      // For each project folder, generate the ASCII tree and append it
+      // For each project folder, generate the ASCII tree
       for (const folder of projectFolders) {
-        const ascii = await generateAsciiTree(folder);
+        const ascii = await generateAsciiTree([folder]);
         if (ascii) {
           finalOutput += ascii.trim() + '\n\n';
         }
@@ -249,9 +224,7 @@ const Sidebar: React.FC = () => {
         ))}
       </div>
 
-      {/* Footer: same height as the EditorFooter => h-10, text-sm 
-          Replacing label with: [square-check icon] [coins icon] selectedFilesTokenCount
-      */}
+      {/* Footer: same height as the EditorFooter => h-10, text-sm */}
       <div className="h-10 flex items-center px-4 border-t border-gray-300 dark:border-gray-600 bg-gray-300 dark:bg-gray-800 text-gray-800 dark:text-gray-100 flex-none text-sm justify-start gap-2">
         {/* square-check icon */}
         <svg

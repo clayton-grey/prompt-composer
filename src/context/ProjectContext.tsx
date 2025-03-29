@@ -5,10 +5,21 @@
  * tri-state selection, expansions, ASCII map generation, and also tracks the
  * list of "active" project folders for .prompt-composer template scanning.
  *
- * FINAL Fix to ensure immediate token usage on folder add:
- *  - After marking root node as "all", we directly gather all files from that node,
- *    read them, and set `selectedFileContents` in one step. No waiting on multiple
- *    asynchronous setState calls. This ensures the usage is updated before the user sees 0.
+ * In this update (Step 1: Unify ASCII Tree Generation):
+ *  - We REMOVE the local generateAsciiTree method and references to it.
+ *  - We rely on the new asciiTreeGenerator.ts function for ASCII building. However, this context
+ *    no longer directly needs a "generateAsciiTree" method; any components can import
+ *    the new utility function directly if needed.
+ *
+ * Final Responsibilities of ProjectContext:
+ *  - Manage tri-state selection of files
+ *  - Maintain expandedPaths for directories
+ *  - Provide refresh logic for folder trees
+ *  - Provide add/remove project folder logic
+ *  - Keep track of selectedFileContents
+ *  - Provide in-memory caching of directory listings
+ *
+ * The ASCII tree generation has now been moved to asciiTreeGenerator.ts
  */
 
 import React, { createContext, useContext, useCallback, useState, useEffect, useRef } from 'react';
@@ -55,7 +66,12 @@ interface ProjectContextType {
   toggleNodeSelection: (node: TreeNode) => void;
   toggleExpansion: (nodePath: string) => void;
   collapseSubtree: (node: TreeNode) => void;
-  generateAsciiTree: (rootPath: string) => Promise<string>;
+
+  /**
+   * We removed the generateAsciiTree method from the context,
+   * as it's now handled by asciiTreeGenerator.ts
+   */
+
   getSelectedFileEntries: () => Array<{ path: string; content: string; language: string }>;
   refreshFolders: (folderPaths: string[]) => Promise<void>;
 
@@ -74,7 +90,6 @@ const ProjectContext = createContext<ProjectContextType>({
   toggleNodeSelection: () => {},
   toggleExpansion: () => {},
   collapseSubtree: () => {},
-  generateAsciiTree: async () => '',
   getSelectedFileEntries: () => [],
   refreshFolders: async () => {},
   projectFolders: [],
@@ -99,7 +114,6 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
 
   /**
    * Recompute token usage for selected files
-   * No artificial multiplier is used.
    */
   useEffect(() => {
     if (debounceRef.current) {
@@ -152,6 +166,9 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     [directoryCache]
   );
 
+  /**
+   * Utility function to recursively set node state in the tri-state selection.
+   */
   function setNodeStateRecursive(
     node: TreeNode,
     newState: NodeState,
@@ -165,6 +182,9 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     }
   }
 
+  /**
+   * Recalculates the state for an entire subtree.
+   */
   function recalcSubtreeState(node: TreeNode, updated: Record<string, NodeState>): NodeState {
     const currentState = updated[node.path] || 'none';
     if (node.type === 'file') {
@@ -211,6 +231,9 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     }
   }
 
+  /**
+   * Gathers all file paths in a subtree with 'all' selection
+   */
   function collectAllFilePaths(
     node: TreeNode,
     updatedStates: Record<string, NodeState>,
@@ -229,10 +252,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
 
   /**
    * toggleNodeSelection
-   * Standard tri-state toggling for the user interactions.
-   * This uses the older approach of an async function that sets state,
-   * then calls sync. For initial folder adds, we'll skip this approach
-   * in favor of a direct approach in addProjectFolder.
+   * Standard tri-state toggling logic.
    */
   const toggleNodeSelection = useCallback(
     (node: TreeNode) => {
@@ -269,18 +289,16 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
             }
             // Add newly selected
             const newlySelected = allFilePaths.filter(p => !(p in result));
-            if (newlySelected.length === 0) {
-              return result;
+            for (const fileP of newlySelected) {
+              // load asynchronously
+              (async () => {
+                const content = await readFile(fileP);
+                setSelectedFileContents(oldSel => ({
+                  ...oldSel,
+                  [fileP]: content,
+                }));
+              })();
             }
-            // We'll load them now
-            newlySelected.forEach(async fileP => {
-              const content = await readFile(fileP);
-              // Update content in setState
-              setSelectedFileContents(oldSel => ({
-                ...oldSel,
-                [fileP]: content,
-              }));
-            });
             return result;
           });
         })();
@@ -291,6 +309,9 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     [directoryCache]
   );
 
+  /**
+   * Recalculate states for all root nodes
+   */
   function recalcAllRootStates(updated: Record<string, NodeState>) {
     for (const key in directoryCache) {
       const listing = directoryCache[key];
@@ -305,6 +326,9 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     }
   }
 
+  /**
+   * toggleExpansion
+   */
   const toggleExpansion = useCallback((nodePath: string) => {
     setExpandedPaths(prev => ({
       ...prev,
@@ -312,6 +336,10 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     }));
   }, []);
 
+  /**
+   * collapseSubtree
+   * Closes a directory and all subdirectories
+   */
   const collapseSubtree = useCallback(
     (node: TreeNode) => {
       if (node.type !== 'directory') return;
@@ -333,73 +361,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
   );
 
   /**
-   * generateAsciiTree
-   * For a root folder, build an ASCII map of the entire subtree.
-   */
-  const generateAsciiTree = useCallback(
-    async (rootPath: string): Promise<string> => {
-      const listing = await getDirectoryListing(rootPath);
-      if (!listing) {
-        console.warn('[ProjectContext] generateAsciiTree: No listing for', rootPath);
-        return '';
-      }
-      const rootNode: TreeNode = {
-        name: listing.baseName,
-        path: listing.absolutePath,
-        type: 'directory',
-        children: listing.children,
-      };
-
-      const lines: string[] = [];
-      lines.push('<file_map>');
-      lines.push(rootNode.path);
-
-      function buildAsciiLines(node: TreeNode, prefix = '', isLast = true): string[] {
-        const out: string[] = [];
-        const nodeMarker = isLast ? '└── ' : '├── ';
-        const displayName = node.type === 'directory' ? `[D] ${node.name}` : node.name;
-        out.push(prefix + nodeMarker + displayName);
-
-        if (node.type === 'directory' && node.children && node.children.length > 0) {
-          const sortedChildren = [...node.children].sort((a, b) => {
-            if (a.type !== b.type) {
-              return a.type === 'directory' ? -1 : 1;
-            }
-            return a.name.localeCompare(b.name);
-          });
-
-          const childPrefix = prefix + (isLast ? '    ' : '│   ');
-          sortedChildren.forEach((child, idx) => {
-            const childIsLast = idx === sortedChildren.length - 1;
-            out.push(...buildAsciiLines(child, childPrefix, childIsLast));
-          });
-        }
-        return out;
-      }
-
-      if (rootNode.children && rootNode.children.length > 0) {
-        const sortedRootChildren = [...rootNode.children].sort((a, b) => {
-          if (a.type !== b.type) {
-            return a.type === 'directory' ? -1 : 1;
-          }
-          return a.name.localeCompare(b.name);
-        });
-
-        sortedRootChildren.forEach((child, idx) => {
-          const isLast = idx === sortedRootChildren.length - 1;
-          lines.push(...buildAsciiLines(child, '', isLast));
-        });
-      }
-
-      lines.push('</file_map>');
-      return lines.join('\n');
-    },
-    [getDirectoryListing]
-  );
-
-  /**
    * getSelectedFileEntries
-   * Returns the array of file paths & content for 'all' selected files.
    */
   const getSelectedFileEntries = useCallback(() => {
     const results: Array<{ path: string; content: string; language: string }> = [];
@@ -420,7 +382,6 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
 
   /**
    * refreshFolders
-   * For each folder path, we re-fetch listing, recalc states, remove unselected files, etc.
    */
   const refreshFolders = useCallback(
     async (folderPaths: string[]): Promise<void> => {
@@ -448,8 +409,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
         setNodeStates(prev => {
           const updated = { ...prev };
           recalcAllRootStates(updated);
-          // We do not forcibly wait for the entire file read cycle for normal refresh
-          // This is only used for manual refresh or existing folder
+
           (async function runSync() {
             const allFilePaths: string[] = [];
             for (const key in directoryCache) {
@@ -474,13 +434,15 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
               }
               // add newly selected
               const newlySelected = allFilePaths.filter(p => !(p in result));
-              newlySelected.forEach(async fileP => {
-                const content = await readFile(fileP);
-                setSelectedFileContents(oldSel => ({
-                  ...oldSel,
-                  [fileP]: content,
-                }));
-              });
+              for (const fileP of newlySelected) {
+                (async () => {
+                  const content = await readFile(fileP);
+                  setSelectedFileContents(oldSel => ({
+                    ...oldSel,
+                    [fileP]: content,
+                  }));
+                })();
+              }
               return result;
             });
           })();
@@ -496,9 +458,6 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
 
   /**
    * addProjectFolder
-   * After we load the listing, we set the entire root node to 'all',
-   * then gather all files under it, read them, set selectedFileContents in one step.
-   * This ensures immediate token usage.
    */
   const addProjectFolder = useCallback(
     async (folderPath: string) => {
@@ -512,7 +471,6 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       // Refresh the folder listing so we have it in directoryCache
       await refreshFolders([folderPath]);
 
-      // Wait for directory listing
       let listing = directoryCache[folderPath];
       if (!listing) {
         listing = await getDirectoryListing(folderPath);
@@ -531,7 +489,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
         [listing.absolutePath]: true,
       }));
 
-      // 1) Mark the entire folder as 'all'
+      // Mark entire folder as 'all'
       const updatedStates = { ...nodeStates };
       const rootNode: TreeNode = {
         name: listing.baseName,
@@ -543,27 +501,22 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       recalcAllRootStates(updatedStates);
       setNodeStates(updatedStates);
 
-      // 2) Gather all files under it
+      // Gather all files
       const allFilePaths: string[] = [];
       collectAllFilePaths(rootNode, updatedStates, allFilePaths);
 
-      // 3) Read them all
+      // Load them
       const newFileMap: Record<string, string> = { ...selectedFileContents };
-      // Remove any that are no longer in allFilePaths
       for (const pathKey of Object.keys(newFileMap)) {
         if (!allFilePaths.includes(pathKey)) {
           delete newFileMap[pathKey];
         }
       }
-
-      // Load newly selected
       const newlySelected = allFilePaths.filter(p => !(p in newFileMap));
       for (const fileP of newlySelected) {
         const content = await readFile(fileP);
         newFileMap[fileP] = content;
       }
-
-      // 4) Set them in one step => triggers token usage calculation
       setSelectedFileContents(newFileMap);
     },
     [directoryCache, refreshFolders, getDirectoryListing, nodeStates, selectedFileContents]
@@ -571,8 +524,6 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
 
   /**
    * removeProjectFolder
-   * Removes from projectFolders.
-   * (Potentially unselect or clear states. We'll skip for now.)
    */
   const removeProjectFolder = useCallback((folderPath: string) => {
     setProjectFolders(prev => prev.filter(p => p !== folderPath));
@@ -588,7 +539,6 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     toggleNodeSelection,
     toggleExpansion,
     collapseSubtree,
-    generateAsciiTree,
     getSelectedFileEntries,
     refreshFolders,
     projectFolders,

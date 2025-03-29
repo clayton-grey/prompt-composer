@@ -1,15 +1,20 @@
 /**
  * @file PromptContext.tsx
  * @description
- * Manages the array of prompt blocks.
+ * Manages the array of prompt blocks, raw editing, flattening logic, and token usage.
  *
- * In this update, we fix the file map toggle by automatically generating
- * a projectAsciiMap for FileBlock if includeProjectMap===true but no projectAsciiMap
- * is set. This happens in getFlattenedPrompt() before calling flattenBlocksAsync.
+ * In this update (Step 1: Unify ASCII Tree Generation):
+ *  - We REMOVE the function generateCombinedAsciiMapsForFolders, which was used to
+ *    generate ASCII for multiple folders. Instead, we import the new
+ *    generateAsciiTree function from asciiTreeGenerator.ts.
+ *  - Where we previously called generateCombinedAsciiMapsForFolders in getFlattenedPrompt,
+ *    we now call generateAsciiTree([ ... ]) from asciiTreeGenerator.
  *
- * We combine ASCII for all project folders, if multiple exist.
- * If no folders exist, we skip.
- * Then we store it in block.projectAsciiMap for flattenBlocksAsync to embed.
+ * Key Responsibilities (unchanged):
+ *  - Flatten blocks to produce final prompt string
+ *  - Store Prompt Settings
+ *  - Provide methods for raw template editing
+ *  - Provide prompt response block logic
  */
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
@@ -19,65 +24,7 @@ import { flattenBlocksAsync } from '../utils/flattenPrompt';
 import { parseTemplateBlocksAsync } from '../utils/templateBlockParserAsync';
 import { initEncoder, estimateTokens } from '../utils/tokenEstimator';
 import { useProject } from './ProjectContext';
-
-// We'll import a function to generate ASCII map from multiple project folders
-// We'll replicate or use the existing code from the "copy file block output" approach
-async function generateCombinedAsciiMapsForFolders(folderPaths: string[]): Promise<string> {
-  if (!window.electronAPI?.listDirectory) {
-    console.warn(
-      '[PromptContext] No electronAPI.listDirectory found. Skipping ASCII map generation.'
-    );
-    return '';
-  }
-
-  // We'll do a minimal approach: for each folder path, we call 'listDirectory' and build an ASCII map
-  // We combine them with a <file_map> heading for each folder.
-  let finalMap = '';
-  for (const folder of folderPaths) {
-    try {
-      const listing = await window.electronAPI.listDirectory(folder);
-      finalMap += '<file_map>\n';
-      finalMap += listing.absolutePath + '\n';
-      // We'll generate lines via a recursive function:
-      function buildLines(node: any, prefix: string, isLast: boolean): string[] {
-        const lines: string[] = [];
-        const nodeMarker = isLast ? '└── ' : '├── ';
-        let label = node.name;
-        if (node.type === 'directory') {
-          label = '[D] ' + node.name;
-        }
-        lines.push(prefix + nodeMarker + label);
-
-        if (node.children && node.children.length > 0) {
-          const childPrefix = prefix + (isLast ? '    ' : '│   ');
-          node.children.forEach((child: any, idx: number) => {
-            const childIsLast = idx === node.children.length - 1;
-            lines.push(...buildLines(child, childPrefix, childIsLast));
-          });
-        }
-
-        return lines;
-      }
-
-      // sort the children for consistent output
-      listing.children.sort((a: any, b: any) => a.name.localeCompare(b.name));
-
-      listing.children.forEach((child: any, idx: number) => {
-        const isLast = idx === listing.children.length - 1;
-        finalMap += buildLines(child, '', isLast).join('\n') + '\n';
-      });
-      finalMap += '</file_map>\n\n';
-    } catch (err) {
-      console.error(
-        '[PromptContext] generateCombinedAsciiMapsForFolders error for folder:',
-        folder,
-        err
-      );
-    }
-  }
-
-  return finalMap.trim();
-}
+import { generateAsciiTree } from '../utils/asciiTreeGenerator';
 
 interface PromptSettings {
   maxTokens: number;
@@ -266,31 +213,26 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
 
   /**
    * getFlattenedPrompt
-   * Before we flatten, we see if there's any FILE_BLOCK with includeProjectMap===true
-   * but no projectAsciiMap. We generate a combined ASCII from all project folders,
-   * store it in block.projectAsciiMap, so flatten sees it.
+   * If a FileBlock has includeProjectMap===true but no projectAsciiMap, we generate ASCII
+   * by calling generateAsciiTree(projectFolders).
    */
   const getFlattenedPrompt = useCallback(async (): Promise<string> => {
     // Potentially generate ASCII map if needed
     let updatedBlocks = [...blocks];
 
-    // We'll do a quick pass to see if any FileBlock needs an ASCII map
     for (let i = 0; i < updatedBlocks.length; i++) {
       const b = updatedBlocks[i];
       if (b.type === 'files') {
         const fb = b as FilesBlock;
         if (fb.includeProjectMap && (!fb.projectAsciiMap || !fb.projectAsciiMap.trim())) {
-          // Generate if we have project folders
           if (projectFolders.length > 0) {
-            const combinedMap = await generateCombinedAsciiMapsForFolders(projectFolders);
-            // store in the block so flatten sees it
+            // Use new asciiTreeGenerator
+            const combinedMap = await generateAsciiTree(projectFolders);
             fb.projectAsciiMap = combinedMap;
-            updatedBlocks[i] = fb;
           } else {
-            // no project folders => can't generate
             fb.projectAsciiMap = '';
-            updatedBlocks[i] = fb;
           }
+          updatedBlocks[i] = fb;
         }
       }
     }
@@ -305,6 +247,10 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     setSettingsState(newSettings);
   }, []);
 
+  /**
+   * replaceTemplateGroup
+   * We do a partial re-parse of a "group" if the user does raw editing.
+   */
   const replaceTemplateGroup = useCallback(
     async (leadBlockId: string, groupId: string, newText: string, oldRawText: string) => {
       if (newText === oldRawText) {
