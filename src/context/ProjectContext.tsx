@@ -5,41 +5,32 @@
  * tri-state selection, expansions, ASCII map generation, and also tracks the
  * list of "active" project folders for .prompt-composer template scanning.
  *
- * In this update (Step 1: Unify ASCII Tree Generation):
- *  - We REMOVE the local generateAsciiTree method and references to it.
- *  - We rely on the new asciiTreeGenerator.ts function for ASCII building. However, this context
- *    no longer directly needs a "generateAsciiTree" method; any components can import
- *    the new utility function directly if needed.
+ * Step 2: We have refactored the logic for toggling node selection, refreshing folders,
+ * adding/removing project folders, reading file/directory, etc., into a separate
+ * "src/utils/projectActions.ts" module. This ensures the context remains minimal,
+ * focusing on storing state and providing the final context value.
  *
- * Final Responsibilities of ProjectContext:
- *  - Manage tri-state selection of files
- *  - Maintain expandedPaths for directories
- *  - Provide refresh logic for folder trees
- *  - Provide add/remove project folder logic
- *  - Keep track of selectedFileContents
- *  - Provide in-memory caching of directory listings
+ * Now, ProjectContext primarily:
+ *  - Initializes React state (directoryCache, nodeStates, expandedPaths, etc.)
+ *  - Delegates logic to projectActions
+ *  - Exports a provider that any component can consume
  *
- * The ASCII tree generation has now been moved to asciiTreeGenerator.ts
+ * Key Responsibilities (after Step 2 refactor):
+ *  - Maintain React states for directoryCache, nodeStates, expandedPaths, selectedFileContents
+ *  - Provide "toggleNodeSelection", "refreshFolders", "addProjectFolder", etc. by calling
+ *    the extracted projectActions
+ *  - Provide a user-friendly context interface
+ *
+ * Known Limitations:
+ *  - Very large directories can still cause performance issues; see optional Step 8 for lazy loading
+ *
+ * The ASCII tree generation is separate (asciiTreeGenerator.ts),
+ * The token usage is computed in a separate effect (only for selected files).
  */
 
-import React, { createContext, useContext, useCallback, useState, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { initEncoder, estimateTokens } from '../utils/tokenEstimator';
-
-declare global {
-  interface Window {
-    electronAPI?: {
-      listDirectory: (dirPath: string) => Promise<any>;
-      readFile: (filePath: string) => Promise<string>;
-      showOpenDialog: (options: any) => Promise<{ canceled: boolean; filePaths: string[] }>;
-      sendMessage: (channel: string, data: any) => void;
-      onMessage: (channel: string, callback: (data: any) => void) => void;
-      verifyFileExistence?: (filePath: string) => Promise<boolean>;
-      listAllTemplateFiles?: (args: {
-        projectFolders: string[];
-      }) => Promise<Array<{ fileName: string; source: 'global' | 'project' }>>;
-    };
-  }
-}
+import * as projectActions from '../utils/projectActions';
 
 export interface TreeNode {
   name: string;
@@ -57,29 +48,80 @@ export interface DirectoryListing {
 type NodeState = 'none' | 'all' | 'partial';
 
 interface ProjectContextType {
+  /**
+   * Return the directory listing for a path, possibly from cache or from electron API
+   */
   getDirectoryListing: (dirPath: string) => Promise<DirectoryListing | null>;
+
+  /**
+   * Tri-state map: path -> 'none' | 'all' | 'partial'
+   */
   nodeStates: Record<string, NodeState>;
+
+  /**
+   * Tracking which directories are expanded
+   */
   expandedPaths: Record<string, boolean>;
+
+  /**
+   * Map of file path -> file content, for all selected files
+   */
   selectedFileContents: Record<string, string>;
+
+  /**
+   * Combined token usage for all selected file contents
+   */
   selectedFilesTokenCount: number;
+
+  /**
+   * Cache of directory listings for each root path
+   */
   directoryCache: Record<string, DirectoryListing>;
+
+  /**
+   * Toggles a node's tri-state selection (including sub-tree) and merges or removes file content
+   */
   toggleNodeSelection: (node: TreeNode) => void;
+
+  /**
+   * Toggles a directory's expanded/collapsed state
+   */
   toggleExpansion: (nodePath: string) => void;
+
+  /**
+   * Recursively collapses a directory subtree
+   */
   collapseSubtree: (node: TreeNode) => void;
 
   /**
-   * We removed the generateAsciiTree method from the context,
-   * as it's now handled by asciiTreeGenerator.ts
+   * Returns an array of selected file entries with path, content, language guess
    */
-
   getSelectedFileEntries: () => Array<{ path: string; content: string; language: string }>;
+
+  /**
+   * Refreshes the folder listing for the given folder paths
+   */
   refreshFolders: (folderPaths: string[]) => Promise<void>;
 
+  /**
+   * The list of user-added project folders
+   */
   projectFolders: string[];
+
+  /**
+   * Adds a folder to the project
+   */
   addProjectFolder: (folderPath: string) => Promise<void>;
+
+  /**
+   * Removes a folder from the project
+   */
   removeProjectFolder: (folderPath: string) => void;
 }
 
+/**
+ * The actual React Context
+ */
 const ProjectContext = createContext<ProjectContextType>({
   getDirectoryListing: async () => null,
   nodeStates: {},
@@ -97,7 +139,11 @@ const ProjectContext = createContext<ProjectContextType>({
   removeProjectFolder: () => {},
 });
 
+/**
+ * Provider for the ProjectContext
+ */
 export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
+  // State values
   const [directoryCache, setDirectoryCache] = useState<Record<string, DirectoryListing>>({});
   const [nodeStates, setNodeStates] = useState<Record<string, NodeState>>({});
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
@@ -108,13 +154,12 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
 
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Initialize the token estimator
   useEffect(() => {
     initEncoder('gpt-4');
   }, []);
 
-  /**
-   * Recompute token usage for selected files
-   */
+  // Recompute token usage for selected files
   useEffect(() => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
@@ -142,226 +187,29 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
   }, [selectedFileContents]);
 
   /**
-   * getDirectoryListing
-   * Cache results in directoryCache to avoid repeated lookups.
+   * getDirectoryListing wrapper that calls the projectActions version
    */
   const getDirectoryListing = useCallback(
     async (dirPath: string) => {
-      if (directoryCache[dirPath]) {
-        return directoryCache[dirPath];
-      }
-      if (!window?.electronAPI?.listDirectory) {
-        console.warn('[ProjectContext] No electronAPI.listDirectory found.');
-        return null;
-      }
-      try {
-        const result = await window.electronAPI.listDirectory(dirPath);
-        setDirectoryCache(prev => ({ ...prev, [dirPath]: result }));
-        return result;
-      } catch (err) {
-        console.error('[ProjectContext] Failed to list directory:', dirPath, err);
-        return null;
-      }
-    },
-    [directoryCache]
-  );
-
-  /**
-   * Utility function to recursively set node state in the tri-state selection.
-   */
-  function setNodeStateRecursive(
-    node: TreeNode,
-    newState: NodeState,
-    updated: Record<string, NodeState>
-  ) {
-    updated[node.path] = newState;
-    if (node.type === 'directory' && node.children) {
-      node.children.forEach(child => {
-        setNodeStateRecursive(child, newState, updated);
-      });
-    }
-  }
-
-  /**
-   * Recalculates the state for an entire subtree.
-   */
-  function recalcSubtreeState(node: TreeNode, updated: Record<string, NodeState>): NodeState {
-    const currentState = updated[node.path] || 'none';
-    if (node.type === 'file') {
-      return currentState;
-    }
-    if (!node.children || node.children.length === 0) {
-      return currentState;
-    }
-
-    let childAllCount = 0;
-    let childNoneCount = 0;
-    const totalChildren = node.children.length;
-    for (const child of node.children) {
-      const childState = recalcSubtreeState(child, updated);
-      if (childState === 'all') childAllCount++;
-      if (childState === 'none') childNoneCount++;
-    }
-
-    if (childAllCount === totalChildren) {
-      updated[node.path] = 'all';
-    } else if (childNoneCount === totalChildren) {
-      updated[node.path] = 'none';
-    } else {
-      updated[node.path] = 'partial';
-    }
-
-    return updated[node.path];
-  }
-
-  /**
-   * readFile from disk, using electronAPI if available.
-   */
-  async function readFile(filePath: string): Promise<string> {
-    if (!window?.electronAPI?.readFile) {
-      console.warn('[ProjectContext] readFile: no electronAPI.readFile found');
-      return '';
-    }
-    try {
-      const content = await window.electronAPI.readFile(filePath);
-      return content;
-    } catch (err) {
-      console.error('[ProjectContext] readFile error for', filePath, err);
-      return '';
-    }
-  }
-
-  /**
-   * Gathers all file paths in a subtree with 'all' selection
-   */
-  function collectAllFilePaths(
-    node: TreeNode,
-    updatedStates: Record<string, NodeState>,
-    results: string[]
-  ) {
-    const st = updatedStates[node.path] || 'none';
-    if (node.type === 'file' && st === 'all') {
-      results.push(node.path);
-    }
-    if (node.type === 'directory' && node.children) {
-      node.children.forEach(child => {
-        collectAllFilePaths(child, updatedStates, results);
-      });
-    }
-  }
-
-  /**
-   * toggleNodeSelection
-   * Standard tri-state toggling logic.
-   */
-  const toggleNodeSelection = useCallback(
-    (node: TreeNode) => {
-      setNodeStates(prev => {
-        const updated = { ...prev };
-        const current = updated[node.path] || 'none';
-        const newState = current === 'all' ? 'none' : 'all';
-
-        setNodeStateRecursive(node, newState, updated);
-        recalcAllRootStates(updated);
-
-        // We read new files in a separate async step
-        (async function runSync() {
-          const allFilePaths: string[] = [];
-          for (const key in directoryCache) {
-            const listing = directoryCache[key];
-            if (!listing) continue;
-            const rootNode: TreeNode = {
-              name: listing.baseName,
-              path: listing.absolutePath,
-              type: 'directory',
-              children: listing.children,
-            };
-            collectAllFilePaths(rootNode, updated, allFilePaths);
-          }
-          // Merge newly selected files
-          setSelectedFileContents(prevFiles => {
-            const result = { ...prevFiles };
-            // Remove unselected
-            for (const p of Object.keys(result)) {
-              if (!allFilePaths.includes(p)) {
-                delete result[p];
-              }
-            }
-            // Add newly selected
-            const newlySelected = allFilePaths.filter(p => !(p in result));
-            for (const fileP of newlySelected) {
-              // load asynchronously
-              (async () => {
-                const content = await readFile(fileP);
-                setSelectedFileContents(oldSel => ({
-                  ...oldSel,
-                  [fileP]: content,
-                }));
-              })();
-            }
-            return result;
-          });
-        })();
-
-        return updated;
+      return projectActions.getDirectoryListing(dirPath, {
+        directoryCache,
+        setDirectoryCache,
+        nodeStates,
+        setNodeStates,
+        expandedPaths,
+        setExpandedPaths,
+        selectedFileContents,
+        setSelectedFileContents,
+        projectFolders,
+        setProjectFolders,
       });
     },
-    [directoryCache]
-  );
-
-  /**
-   * Recalculate states for all root nodes
-   */
-  function recalcAllRootStates(updated: Record<string, NodeState>) {
-    for (const key in directoryCache) {
-      const listing = directoryCache[key];
-      if (!listing) continue;
-      const rootNode: TreeNode = {
-        name: listing.baseName,
-        path: listing.absolutePath,
-        type: 'directory',
-        children: listing.children,
-      };
-      recalcSubtreeState(rootNode, updated);
-    }
-  }
-
-  /**
-   * toggleExpansion
-   */
-  const toggleExpansion = useCallback((nodePath: string) => {
-    setExpandedPaths(prev => ({
-      ...prev,
-      [nodePath]: !prev[nodePath],
-    }));
-  }, []);
-
-  /**
-   * collapseSubtree
-   * Closes a directory and all subdirectories
-   */
-  const collapseSubtree = useCallback(
-    (node: TreeNode) => {
-      if (node.type !== 'directory') return;
-      const stack: TreeNode[] = [node];
-      const newExpanded = { ...expandedPaths };
-
-      while (stack.length > 0) {
-        const curr = stack.pop()!;
-        newExpanded[curr.path] = false;
-        if (curr.children) {
-          curr.children.forEach(c => {
-            if (c.type === 'directory') stack.push(c);
-          });
-        }
-      }
-      setExpandedPaths(newExpanded);
-    },
-    [expandedPaths]
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
   );
 
   /**
    * getSelectedFileEntries
+   * Return an array of objects with path, content, guessed language
    */
   const getSelectedFileEntries = useCallback(() => {
     const results: Array<{ path: string; content: string; language: string }> = [];
@@ -381,79 +229,87 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
   }, [selectedFileContents]);
 
   /**
+   * toggleNodeSelection
+   */
+  const toggleNodeSelection = useCallback(
+    (node: TreeNode) => {
+      projectActions.toggleNodeSelection(node, {
+        directoryCache,
+        setDirectoryCache,
+        nodeStates,
+        setNodeStates,
+        expandedPaths,
+        setExpandedPaths,
+        selectedFileContents,
+        setSelectedFileContents,
+        projectFolders,
+        setProjectFolders,
+      });
+    },
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
+  );
+
+  /**
+   * toggleExpansion
+   */
+  const toggleExpansion = useCallback(
+    (nodePath: string) => {
+      projectActions.toggleExpansion(nodePath, {
+        directoryCache,
+        setDirectoryCache,
+        nodeStates,
+        setNodeStates,
+        expandedPaths,
+        setExpandedPaths,
+        selectedFileContents,
+        setSelectedFileContents,
+        projectFolders,
+        setProjectFolders,
+      });
+    },
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
+  );
+
+  /**
+   * collapseSubtree
+   */
+  const collapseSubtree = useCallback(
+    (node: TreeNode) => {
+      projectActions.collapseSubtree(node, {
+        directoryCache,
+        setDirectoryCache,
+        nodeStates,
+        setNodeStates,
+        expandedPaths,
+        setExpandedPaths,
+        selectedFileContents,
+        setSelectedFileContents,
+        projectFolders,
+        setProjectFolders,
+      });
+    },
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
+  );
+
+  /**
    * refreshFolders
    */
   const refreshFolders = useCallback(
-    async (folderPaths: string[]): Promise<void> => {
-      try {
-        for (const fPath of folderPaths) {
-          if (!window.electronAPI?.listDirectory) {
-            console.warn(
-              '[ProjectContext] refreshFolders: electronAPI.listDirectory is unavailable'
-            );
-            continue;
-          }
-          try {
-            const freshListing = await window.electronAPI.listDirectory(fPath);
-            if (freshListing) {
-              setDirectoryCache(prev => ({
-                ...prev,
-                [fPath]: freshListing,
-              }));
-            }
-          } catch (err) {
-            console.error(`[ProjectContext] Failed to refresh folder: ${fPath}`, err);
-          }
-        }
-
-        setNodeStates(prev => {
-          const updated = { ...prev };
-          recalcAllRootStates(updated);
-
-          (async function runSync() {
-            const allFilePaths: string[] = [];
-            for (const key in directoryCache) {
-              const listing = directoryCache[key];
-              if (!listing) continue;
-              const rootNode: TreeNode = {
-                name: listing.baseName,
-                path: listing.absolutePath,
-                type: 'directory',
-                children: listing.children,
-              };
-              collectAllFilePaths(rootNode, updated, allFilePaths);
-            }
-
-            setSelectedFileContents(prevFiles => {
-              const result = { ...prevFiles };
-              // remove unselected
-              for (const p of Object.keys(result)) {
-                if (!allFilePaths.includes(p)) {
-                  delete result[p];
-                }
-              }
-              // add newly selected
-              const newlySelected = allFilePaths.filter(p => !(p in result));
-              for (const fileP of newlySelected) {
-                (async () => {
-                  const content = await readFile(fileP);
-                  setSelectedFileContents(oldSel => ({
-                    ...oldSel,
-                    [fileP]: content,
-                  }));
-                })();
-              }
-              return result;
-            });
-          })();
-
-          return updated;
-        });
-      } catch (err) {
-        console.error('[ProjectContext] refreshFolders error:', err);
-      }
+    async (folderPaths: string[]) => {
+      await projectActions.refreshFolders(folderPaths, {
+        directoryCache,
+        setDirectoryCache,
+        nodeStates,
+        setNodeStates,
+        expandedPaths,
+        setExpandedPaths,
+        selectedFileContents,
+        setSelectedFileContents,
+        projectFolders,
+        setProjectFolders,
+      });
     },
-    [directoryCache]
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
   );
 
   /**
@@ -461,74 +317,46 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    */
   const addProjectFolder = useCallback(
     async (folderPath: string) => {
-      setProjectFolders(prev => {
-        if (!prev.includes(folderPath)) {
-          return [...prev, folderPath];
-        }
-        return prev;
+      await projectActions.addProjectFolder(folderPath, {
+        directoryCache,
+        setDirectoryCache,
+        nodeStates,
+        setNodeStates,
+        expandedPaths,
+        setExpandedPaths,
+        selectedFileContents,
+        setSelectedFileContents,
+        projectFolders,
+        setProjectFolders,
       });
-
-      // Refresh the folder listing so we have it in directoryCache
-      await refreshFolders([folderPath]);
-
-      let listing = directoryCache[folderPath];
-      if (!listing) {
-        listing = await getDirectoryListing(folderPath);
-      }
-      if (!listing) {
-        console.warn(
-          '[ProjectContext] addProjectFolder: listing not found after refresh',
-          folderPath
-        );
-        return;
-      }
-
-      // Expand it
-      setExpandedPaths(prev => ({
-        ...prev,
-        [listing.absolutePath]: true,
-      }));
-
-      // Mark entire folder as 'all'
-      const updatedStates = { ...nodeStates };
-      const rootNode: TreeNode = {
-        name: listing.baseName,
-        path: listing.absolutePath,
-        type: 'directory',
-        children: listing.children,
-      };
-      setNodeStateRecursive(rootNode, 'all', updatedStates);
-      recalcAllRootStates(updatedStates);
-      setNodeStates(updatedStates);
-
-      // Gather all files
-      const allFilePaths: string[] = [];
-      collectAllFilePaths(rootNode, updatedStates, allFilePaths);
-
-      // Load them
-      const newFileMap: Record<string, string> = { ...selectedFileContents };
-      for (const pathKey of Object.keys(newFileMap)) {
-        if (!allFilePaths.includes(pathKey)) {
-          delete newFileMap[pathKey];
-        }
-      }
-      const newlySelected = allFilePaths.filter(p => !(p in newFileMap));
-      for (const fileP of newlySelected) {
-        const content = await readFile(fileP);
-        newFileMap[fileP] = content;
-      }
-      setSelectedFileContents(newFileMap);
     },
-    [directoryCache, refreshFolders, getDirectoryListing, nodeStates, selectedFileContents]
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
   );
 
   /**
    * removeProjectFolder
    */
-  const removeProjectFolder = useCallback((folderPath: string) => {
-    setProjectFolders(prev => prev.filter(p => p !== folderPath));
-  }, []);
+  const removeProjectFolder = useCallback(
+    (folderPath: string) => {
+      projectActions.removeProjectFolder(folderPath, {
+        directoryCache,
+        setDirectoryCache,
+        nodeStates,
+        setNodeStates,
+        expandedPaths,
+        setExpandedPaths,
+        selectedFileContents,
+        setSelectedFileContents,
+        projectFolders,
+        setProjectFolders,
+      });
+    },
+    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders]
+  );
 
+  /**
+   * Construct the context value
+   */
   const contextValue: ProjectContextType = {
     getDirectoryListing,
     nodeStates,
@@ -549,6 +377,10 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
   return <ProjectContext.Provider value={contextValue}>{children}</ProjectContext.Provider>;
 };
 
+/**
+ * useProject
+ * Hook to consume the ProjectContext
+ */
 export function useProject(): ProjectContextType {
   return useContext(ProjectContext);
 }
