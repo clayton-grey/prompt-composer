@@ -2,9 +2,12 @@
  * @file templateBlockParserAsync.ts
  * @description
  * Parses the template string for {{FILE_BLOCK}}, {{TEXT_BLOCK=...}}, {{PROMPT_RESPONSE=...}}, etc.
+ * Optionally flattens nested templates using `flattenTemplate` if `flatten=true`.
  *
- * In this update, we ensure that FILE_BLOCK placeholders default to `includeProjectMap: true`,
- * so that the user can toggle it off later in the UI, and the flatten process respects that.
+ * Step 7 (Refine Type Declarations):
+ *  - Added additional doc comments describing the typed signature for parseTemplateBlocksAsync.
+ *  - Confirmed no usage of `any`.
+ *  - Provided clarifications for parsePlaceholder and its typed return of Block[].
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -15,7 +18,22 @@ type ErrorCallback = (message: string) => void;
 
 /**
  * parseTemplateBlocksAsync
- * ...
+ *
+ * Parses a single template text and returns an array of blocks. For instance:
+ *    - Plain text segments become TemplateBlock objects with `type='template'`
+ *    - {{TEXT_BLOCK=Some text}} => a TextBlock
+ *    - {{FILE_BLOCK}} => a FilesBlock
+ *    - {{PROMPT_RESPONSE=filename.txt}} => a PromptResponseBlock
+ *
+ * If `flatten=true`, we first call flattenTemplate() to inline any nested templates
+ * (i.e. placeholders like {{SOME_OTHER_TEMPLATE}} referencing separate files).
+ *
+ * @param sourceText    The raw template text
+ * @param forceGroupId  Optionally enforce all returned blocks to share this group ID
+ * @param forceLeadBlockId  Optionally force the first block's ID to match this and treat as group lead
+ * @param onError       Optional callback for parse errors
+ * @param flatten       Whether to flatten nested templates prior to placeholder parsing
+ * @returns Promise<Block[]> a typed array of blocks (TextBlock, TemplateBlock, FilesBlock, etc.)
  */
 export async function parseTemplateBlocksAsync(
   sourceText: string,
@@ -35,9 +53,12 @@ export async function parseTemplateBlocksAsync(
   let match: RegExpExecArray | null;
   let leadAssigned = false;
 
-  // Regex capturing {{SOMETHING=maybeValue}}
+  // Regex capturing placeholders of the form {{PLACEHOLDER}} or {{PLACEHOLDER=value}}
   const placeholderRegex = /(\{\{([A-Za-z0-9_\-]+)(?:=([^}]*))?\}\})/g;
 
+  /**
+   * Utility to quickly build a 'template' segment block for plain text
+   */
   function newTemplateSegmentBlock(textSegment: string): TemplateBlock {
     return {
       id: uuidv4(),
@@ -51,10 +72,11 @@ export async function parseTemplateBlocksAsync(
     };
   }
 
+  // Loop over all placeholders
   while ((match = placeholderRegex.exec(finalText)) !== null) {
-    const fullPlaceholder = match[1];
-    const placeholderName = match[2];
-    const placeholderValue = match[3];
+    const fullPlaceholder = match[1]; // e.g. '{{TEXT_BLOCK=Some text}}'
+    const placeholderName = match[2]; // e.g. 'TEXT_BLOCK'
+    const placeholderValue = match[3]; // e.g. 'Some text'
     const matchIndex = match.index;
 
     // text up to this placeholder => create a template segment block
@@ -127,6 +149,7 @@ export async function parseTemplateBlocksAsync(
     }
   }
 
+  // If we ended up with no blocks at all, add a single empty template block
   if (blocks.length === 0) {
     const emptyBlock: TemplateBlock = {
       id: forceLeadBlockId || uuidv4(),
@@ -141,12 +164,11 @@ export async function parseTemplateBlocksAsync(
     blocks.push(emptyBlock);
   }
 
-  // Try loading content for any promptResponse blocks
+  // Attempt to load initial content for any promptResponse blocks
   for (const b of blocks) {
     if (b.type === 'promptResponse') {
       const prb = b as PromptResponseBlock;
       let fileContent: string | null = null;
-
       try {
         if (window.electronAPI?.readPromptComposerFile) {
           fileContent = await window.electronAPI.readPromptComposerFile(prb.sourceFile);
@@ -157,7 +179,6 @@ export async function parseTemplateBlocksAsync(
       } catch (err) {
         console.warn('[parseTemplateBlocksAsync] Could not load promptResponse file:', err);
       }
-
       prb.content = fileContent || '';
     }
   }
@@ -167,7 +188,16 @@ export async function parseTemplateBlocksAsync(
 
 /**
  * parsePlaceholder
- * Creates appropriate block(s) for placeholders.
+ *
+ * Given a placeholderName (e.g. 'TEXT_BLOCK', 'FILE_BLOCK', 'PROMPT_RESPONSE') and optional value,
+ * returns one or more Blocks representing that placeholder. If unknown, returns an empty array.
+ *
+ * @param placeholderName  The text after '{{' and before '=' or '}}'
+ * @param placeholderValue The optional value after '=' and before '}}'
+ * @param groupId          The group ID to assign to these blocks
+ * @param makeLeadBlockId  (string | false) If truthy, we set the first block's ID, isGroupLead, locked = false
+ * @param onError          Optional callback to report parse errors
+ * @returns An array of zero or more typed Blocks
  */
 function parsePlaceholder(
   placeholderName: string,
@@ -236,19 +266,9 @@ function parsePlaceholder(
     return [prb];
   }
 
+  // If unknown, return an empty array. We'll let the caller handle it.
   onError?.(
     `Unknown placeholder: {{${placeholderName}${placeholderValue ? '=' + placeholderValue : ''}}}`
   );
-
-  const unknown: TemplateBlock = {
-    id: newId(),
-    type: 'template',
-    label: 'Unknown Placeholder',
-    content: `{{${placeholderName}${placeholderValue ? '=' + placeholderValue : ''}}}`,
-    variables: [],
-    locked: true,
-    groupId,
-    isGroupLead: false,
-  };
-  return [unknown];
+  return [];
 }

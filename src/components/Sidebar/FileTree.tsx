@@ -2,28 +2,28 @@
  * @file FileTree.tsx
  * @description
  * A simpler component that renders the root folder(s) from projectFolders
- * and provides tri-state selection for files/folders.
+ * and provides tri-state selection for files/folders using typed React props.
  *
- * Accessibility Improvements (Step 5):
- *  - We replaced the clickable <span> for tri-state selection with a more accessible approach:
- *    - role="button", tabIndex=0, aria-label, and a keyDown handler so keyboard users can toggle.
- *  - This ensures that the user can tab to the element and press Enter to change the selection.
+ * Step 7 (Refine Type Declarations):
+ *  - Added clarifying doc comments about the FileTreeProps interface and internal methods.
+ *  - Confirmed no usage of `any`.
+ *  - Ensured all event handlers have typed parameters.
  *
  * Key Responsibilities:
- *  1) Display the file/folder structure from directoryCache
- *  2) Use ProjectContext nodeStates for tri-state selection
- *  3) Manage expansions, toggling directories, removing root folders
+ *  1) Display the file/folder structure from directoryCache (via ProjectContext)
+ *  2) Provide tri-state selection (none/partial/all) for each node
+ *  3) Manage expansions/collapses and removal of root folders
  *
- * Implementation notes:
- *  - Because we keep tri-state logic in ProjectContext, we just call toggleNodeSelection(node).
- *  - We ensure that interactive icons have appropriate ARIA labels or titles for screen readers.
- *  - We do not transform the node into a button <button> because we want to keep the icon layout.
- *    Instead, we add role="button" and tabIndex=0 plus keyDown for accessibility.
+ * Accessibility:
+ *  - role="button", tabIndex=0, aria-label for keyboard toggling of tri-state selection
  */
 
 import React, { useEffect } from 'react';
 import { useProject, TreeNode } from '../../context/ProjectContext';
 
+/**
+ * NodeState can be 'none', 'all', or 'partial'
+ */
 type NodeState = 'none' | 'all' | 'partial';
 
 interface FileTreeProps {
@@ -34,10 +34,15 @@ interface FileTreeProps {
 
   /**
    * Callback invoked when the user removes a folder from the UI.
+   * This is typically provided by the parent Sidebar component
+   * that manages the project folders array.
    */
   onRemoveFolder: (folderPath: string) => void;
 }
 
+/**
+ * A typed React functional component that displays a tri-state file tree.
+ */
 const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   const {
     getDirectoryListing,
@@ -62,13 +67,12 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }, [folders, directoryCache, getDirectoryListing]);
 
   /**
-   * Renders a tri-state check icon for a node with proper ARIA attributes
+   * Renders a tri-state checkbox icon for a node with proper ARIA attributes
    */
-  function renderSelectionIcon(nodePath: string, nodeType: 'file' | 'directory') {
+  function renderSelectionIcon(nodePath: string, nodeType: 'file' | 'directory'): JSX.Element {
     const st = nodeStates[nodePath] || 'none';
 
-    // We'll define a callback for toggling this node
-    const onClick = (e: React.MouseEvent) => {
+    const onClick = (e: React.MouseEvent<HTMLSpanElement>) => {
       e.stopPropagation();
       const node = findNodeByPath(nodePath);
       if (node) {
@@ -78,8 +82,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       }
     };
 
-    // Keyboard support for toggling selection
-    const onKeyDown = (e: React.KeyboardEvent) => {
+    const onKeyDown = (e: React.KeyboardEvent<HTMLSpanElement>) => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         e.stopPropagation();
@@ -133,7 +136,6 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       }
     }
 
-    // Provide an aria-label describing the action, plus role="button" and tabIndex=0 for keyboard
     return (
       <span
         onClick={onClick}
@@ -149,27 +151,21 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }
 
   /**
-   * Creates a new folder inside the specified directory
+   * Creates a new folder inside the specified directory (demonstration of typed usage).
    */
   async function createFolder(parentPath: string) {
     if (!window?.electronAPI?.createFolder) {
       console.error('[FileTree] createFolder: electronAPI.createFolder not available');
       return;
     }
-
     try {
       const newFolderPath = await window.electronAPI.createFolder({
         parentPath,
         folderName: 'Untitled Folder',
       });
-
       if (newFolderPath) {
         toggleExpansion(parentPath);
-        if (refreshFolders) {
-          await refreshFolders([parentPath]);
-        }
-      } else {
-        console.error('[FileTree] Failed to create new folder');
+        await refreshFolders([parentPath]);
       }
     } catch (err) {
       console.error('[FileTree] Error creating folder:', err);
@@ -179,11 +175,10 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   /**
    * Renders a small folder icon, open or closed, or blank for files.
    */
-  function renderFolderIcon(node: TreeNode) {
+  function renderFolderIcon(node: TreeNode): JSX.Element {
     if (node.type === 'file') {
       return <span className="w-4 mr-1" />;
     }
-    // directory
     const isExpanded = expandedPaths[node.path] || false;
     if (isExpanded) {
       // open folder
@@ -218,11 +213,11 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           aria-hidden="true"
         >
           <path
-            d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9
-               a2 2 0 0 1-1.69-.9l-.81-1.2
-               A2 2 0 0 0 7.93 3H4
-               a2 2 0 0 0-2 2v13
-               a2 2 0 0 0 2 2Z"
+            d="M20 20a2 2 0 0 0 2-2V8a2
+               2 0 0 0-2-2h-7.9a2 2 0 0
+               1-1.69-.9l-.81-1.2A2 2
+               0 0 0 7.93 3H4a2 2 0 0
+               0-2 2v13a2 2 0 0 0 2 2Z"
           />
         </svg>
       </span>
@@ -239,19 +234,18 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       return {
         name: listing.baseName,
         path: listing.absolutePath,
-        type: 'directory',
+        type: 'directory' as const,
         children: listing.children,
       };
     }
 
-    // Otherwise search through all folders
+    // Otherwise search subtrees
     for (const rootPath in directoryCache) {
       if (!directoryCache[rootPath]) continue;
-
-      const rootNode = {
+      const rootNode: TreeNode = {
         name: directoryCache[rootPath].baseName,
         path: directoryCache[rootPath].absolutePath,
-        type: 'directory' as const,
+        type: 'directory',
         children: directoryCache[rootPath].children,
       };
 
@@ -263,7 +257,6 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           const found = searchNode(child);
           if (found) return found;
         }
-
         return null;
       }
 
@@ -283,7 +276,6 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       e.stopPropagation();
       toggleExpansion(node.path);
     };
-
     const className = `flex items-start py-1 ${
       depth > 0 ? 'pl-4' : ''
     } hover:bg-gray-100 dark:hover:bg-gray-600 transition-colors duration-100`;
@@ -302,7 +294,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           </div>
           {isExpanded && node.children && (
             <div className="ml-4 border-l border-gray-300 dark:border-gray-600">
-              {node.children.map(child => renderNode(child, depth + 1))}
+              {node.children.map((child, idx) => renderNode(child, depth + 1))}
             </div>
           )}
         </div>
@@ -342,11 +334,10 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
   }
 
   /**
-   * Renders a root folder (top-level directory)
+   * Render each root folder
    */
   function renderRootFolder(folderPath: string) {
     const listing = directoryCache[folderPath];
-
     if (!listing) {
       return (
         <div key={folderPath} className="text-gray-500 text-xs mb-2">
@@ -379,15 +370,10 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
     return (
       <div key={folderPath} className="mb-2">
         <div className="flex items-center bg-transparent p-1">
-          {/* Tri-state icon for root */}
           {renderSelectionIcon(node.path, 'directory')}
-
-          {/* Folder icon */}
           <span onClick={onFolderClick} className="cursor-pointer flex items-center">
             {renderFolderIcon(node)}
           </span>
-
-          {/* Folder name */}
           <span
             className="truncate overflow-hidden whitespace-nowrap max-w-[140px] text-gray-800 dark:text-gray-100 font-semibold"
             onClick={onFolderClick}
@@ -395,7 +381,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
             {node.name}
           </span>
 
-          {/* Buttons */}
+          {/* Additional folder-level actions */}
           <div className="flex items-center ml-2">
             <button
               onClick={handleCollapseClick}
@@ -438,7 +424,7 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
           </div>
         </div>
 
-        {/* If expanded, render children */}
+        {/* Child nodes if expanded */}
         {isExpanded && node.children && node.children.length > 0 && (
           <div className="pl-6">{node.children.map(child => renderNode(child, 1))}</div>
         )}

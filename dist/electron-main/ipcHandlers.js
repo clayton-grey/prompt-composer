@@ -2,17 +2,13 @@
 /**
  * @file ipcHandlers.ts
  * @description
- * Consolidated directory reading logic + Asynchronous FS operations for Prompt Composer.
+ * Consolidated directory reading logic + asynchronous FS operations for Prompt Composer.
+ * Now references shared types from electron-main/types.ts to reduce redundancy.
  *
- * In this update (Step 6: Add Support for .promptignore):
- *  - We enhance createIgnoreForPath to also look for ".prompt-composer/.promptignore" in the project root.
- *  - If found, we merge those rules with the existing .gitignore-based ignore.
- *
- * Key Changes:
- *  - Added logic in createIgnoreForPath to read .prompt-composer/.promptignore and merge its patterns.
- *
- * Other Existing IPC Handlers:
- *  - list-directory, read-file, export-xml, import-xml, show-open-dialog, etc.
+ * Changes:
+ *  - Removed local interface TreeNode and ListDirectoryResult
+ *  - Imported { DirectoryListing, TreeNode } from ./types
+ *  - Renamed references from ListDirectoryResult => DirectoryListing
  */
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -38,9 +34,7 @@ const ALLOWED_EXTENSIONS = [
     '.sql',
 ];
 /**
- * Lists the template files in a given folder path. Used by listAllTemplateFiles to gather .txt or .md files.
- * @param folderPath - The absolute path to the .prompt-composer folder
- * @returns An array of filenames (string[]) that end with .txt or .md
+ * Lists .txt or .md files in a .prompt-composer folder
  */
 async function listPromptComposerFiles(folderPath) {
     try {
@@ -66,56 +60,44 @@ async function listPromptComposerFiles(folderPath) {
 }
 /**
  * createIgnoreForPath
- * Merges .gitignore rules with an optional .prompt-composer/.promptignore file if isProjectDir is true.
- * If the target path is external, we try to read its local .gitignore or apply minimal defaults.
- *
- * @param targetPath - The absolute directory path the user wants to list
- * @param projectRoot - The absolute path to the main project root (process.cwd())
- * @returns An object with { ig: ignore.Ignore, isProjectDir: boolean }
  */
 async function createIgnoreForPath(targetPath, projectRoot) {
-    let ig = (0, ignore_1.default)();
+    let igInstance = (0, ignore_1.default)();
     const isProjectDir = targetPath.startsWith(projectRoot);
     if (isProjectDir) {
         const gitignorePath = path_1.default.join(projectRoot, '.gitignore');
         try {
             const gitignoreContent = await fs_1.default.promises.readFile(gitignorePath, 'utf-8');
-            ig = ig.add(gitignoreContent.split('\n'));
+            igInstance = igInstance.add(gitignoreContent.split('\n'));
         }
         catch {
-            // If .gitignore doesn't exist, skip
+            // skip if .gitignore doesn't exist
         }
-        // NEW in Step 6: also merge .promptignore from .prompt-composer
         const promptignorePath = path_1.default.join(projectRoot, '.prompt-composer', '.promptignore');
-        console.log(promptignorePath);
         try {
             const promptignoreContent = await fs_1.default.promises.readFile(promptignorePath, 'utf-8');
-            ig = ig.add(promptignoreContent.split('\n'));
-            console.log('NUMBERWANG');
-            console.log(promptignoreContent);
+            igInstance = igInstance.add(promptignoreContent.split('\n'));
         }
         catch {
-            console.log('WANGERNUMB');
-            // If .promptignore doesn't exist or fails to read, silently skip
+            // skip if .promptignore doesn't exist
         }
     }
     else {
-        // External folder outside project root
+        // external folder outside project root
         const externalGitignorePath = path_1.default.join(targetPath, '.gitignore');
         try {
             const gitignoreContent = await fs_1.default.promises.readFile(externalGitignorePath, 'utf-8');
-            ig = ig.add(gitignoreContent.split('\n'));
+            igInstance = igInstance.add(gitignoreContent.split('\n'));
         }
         catch {
-            // If no .gitignore found, apply minimal defaults
-            ig = ig.add(['node_modules', '.git', '.DS_Store', '*.log']);
+            // minimal defaults
+            igInstance = igInstance.add(['node_modules', '.git', '.DS_Store', '*.log']);
         }
     }
-    return { ig, isProjectDir };
+    return { ig: igInstance, isProjectDir };
 }
 /**
- * Recursively reads a directory and returns an array of TreeNodes
- * respecting the ignore rules from createIgnoreForPath. Called by 'list-directory' below.
+ * Recursively reads a directory, returning an array of TreeNodes
  */
 async function readDirectoryTree(dirPath, ig, isProjectDir, projectRoot) {
     const results = [];
@@ -169,44 +151,47 @@ async function readDirectoryTree(dirPath, ig, isProjectDir, projectRoot) {
     return results;
 }
 /**
- * Registers the IPC handlers for the Electron main process.
- * This includes listing directories, reading files, exporting/importing XML, etc.
+ * registerIpcHandlers
  */
 function registerIpcHandlers() {
+    // list-directory
     electron_1.ipcMain.handle('list-directory', async (_event, dirPath) => {
         try {
             let targetPath = dirPath;
             if (!path_1.default.isAbsolute(dirPath)) {
                 targetPath = path_1.default.join(process.cwd(), dirPath);
             }
-            console.log('[list-directory] Processing directory (async):', targetPath);
             const projectRoot = process.cwd();
             const { ig, isProjectDir } = await createIgnoreForPath(targetPath, projectRoot);
-            const tree = await readDirectoryTree(targetPath, ig, isProjectDir, projectRoot);
+            const treeNodes = await readDirectoryTree(targetPath, ig, isProjectDir, projectRoot);
             const baseName = path_1.default.basename(targetPath);
             return {
                 absolutePath: targetPath,
                 baseName,
-                children: tree,
+                children: treeNodes,
             };
         }
         catch (err) {
             console.error('[list-directory] Async error:', err);
-            throw err;
+            return {
+                absolutePath: dirPath,
+                baseName: path_1.default.basename(dirPath),
+                children: [],
+            };
         }
     });
+    // read-file
     electron_1.ipcMain.handle('read-file', async (_event, filePath) => {
         try {
-            console.log('[read-file] Reading file:', filePath);
             const content = await fs_1.default.promises.readFile(filePath, 'utf-8');
-            console.log('[read-file] Content length:', content.length);
             return content;
         }
         catch (err) {
-            console.error('[read-file] Failed to read file:', filePath, err);
+            console.error('[read-file] Failed:', filePath, err);
             throw err;
         }
     });
+    // export-xml
     electron_1.ipcMain.handle('export-xml', async (_event, { defaultFileName, xmlContent }) => {
         try {
             const saveDialogOptions = {
@@ -219,11 +204,9 @@ function registerIpcHandlers() {
             };
             const result = await electron_1.dialog.showSaveDialog(saveDialogOptions);
             if (result.canceled || !result.filePath) {
-                console.log('[export-xml] Save dialog canceled');
                 return false;
             }
             await fs_1.default.promises.writeFile(result.filePath, xmlContent, 'utf-8');
-            console.log('[export-xml] Successfully saved XML to:', result.filePath);
             return true;
         }
         catch (err) {
@@ -231,6 +214,7 @@ function registerIpcHandlers() {
             return false;
         }
     });
+    // import-xml
     electron_1.ipcMain.handle('import-xml', async () => {
         try {
             const openDialogOptions = {
@@ -243,12 +227,10 @@ function registerIpcHandlers() {
             };
             const result = await electron_1.dialog.showOpenDialog(openDialogOptions);
             if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
-                console.log('[import-xml] Open dialog canceled');
                 return null;
             }
             const filePath = result.filePaths[0];
             const content = await fs_1.default.promises.readFile(filePath, 'utf-8');
-            console.log('[import-xml] Successfully read XML from:', filePath);
             return content;
         }
         catch (err) {
@@ -256,9 +238,11 @@ function registerIpcHandlers() {
             return null;
         }
     });
+    // show-open-dialog
     electron_1.ipcMain.handle('show-open-dialog', async (_event, options) => {
         return electron_1.dialog.showOpenDialog(options);
     });
+    // create-folder
     electron_1.ipcMain.handle('create-folder', async (_event, { parentPath, folderName }) => {
         let baseName = folderName;
         let suffix = 1;
@@ -278,7 +262,6 @@ function registerIpcHandlers() {
         }
         try {
             await fs_1.default.promises.mkdir(targetPath);
-            console.log('[create-folder] Successfully created folder at:', targetPath);
             return targetPath;
         }
         catch (err) {
@@ -286,6 +269,7 @@ function registerIpcHandlers() {
             return null;
         }
     });
+    // verify-file-existence
     electron_1.ipcMain.handle('verify-file-existence', async (_event, filePath) => {
         try {
             await fs_1.default.promises.stat(filePath);
@@ -295,12 +279,11 @@ function registerIpcHandlers() {
             return false;
         }
     });
+    // read-prompt-composer-file
     electron_1.ipcMain.handle('read-prompt-composer-file', async (_event, relativeFilename) => {
         try {
             const projectRoot = process.cwd();
-            console.log(`[read-prompt-composer-file] Project root: ${projectRoot}`);
             const promptComposerFolder = path_1.default.join(projectRoot, '.prompt-composer');
-            console.log(`[read-prompt-composer-file] Looking in folder: ${promptComposerFolder}`);
             try {
                 const folderStats = await fs_1.default.promises.stat(promptComposerFolder);
                 if (!folderStats.isDirectory()) {
@@ -309,18 +292,16 @@ function registerIpcHandlers() {
                 }
             }
             catch (folderErr) {
-                console.error(`[read-prompt-composer-file] .prompt-composer not found at: ${promptComposerFolder}`, folderErr);
+                console.error(`[read-prompt-composer-file] .prompt-composer not found`, folderErr);
                 return null;
             }
             const targetPath = path_1.default.join(promptComposerFolder, relativeFilename);
-            console.log(`[read-prompt-composer-file] Looking for file: ${targetPath}`);
             const stats = await fs_1.default.promises.stat(targetPath);
             if (!stats.isFile()) {
                 console.warn(`[read-prompt-composer-file] Not a file: ${targetPath}`);
                 return null;
             }
             const content = await fs_1.default.promises.readFile(targetPath, 'utf-8');
-            console.log(`[read-prompt-composer-file] Successfully read file: ${relativeFilename}`);
             return content;
         }
         catch (err) {
@@ -328,13 +309,10 @@ function registerIpcHandlers() {
             return null;
         }
     });
-    /**
-     * Step 3 modification: Overhauled 'list-all-template-files' to accept { projectFolders: string[] }.
-     */
+    // list-all-template-files
     electron_1.ipcMain.handle('list-all-template-files', async (_event, args) => {
         const { projectFolders } = args || { projectFolders: [] };
         const result = [];
-        // Global .prompt-composer
         const globalDir = path_1.default.join(os_1.default.homedir(), '.prompt-composer');
         try {
             const globalFiles = await listPromptComposerFiles(globalDir);
@@ -359,18 +337,17 @@ function registerIpcHandlers() {
         }
         return result;
     });
+    // read-global-prompt-composer-file
     electron_1.ipcMain.handle('read-global-prompt-composer-file', async (_event, fileName) => {
         try {
             const globalFolder = path_1.default.join(os_1.default.homedir(), '.prompt-composer');
             const targetPath = path_1.default.join(globalFolder, fileName);
-            console.log(`[read-global-prompt-composer-file] Looking for file at: ${targetPath}`);
             const stats = await fs_1.default.promises.stat(targetPath);
             if (!stats.isFile()) {
                 console.warn(`[read-global-prompt-composer-file] Not a file: ${targetPath}`);
                 return null;
             }
             const content = await fs_1.default.promises.readFile(targetPath, 'utf-8');
-            console.log(`[read-global-prompt-composer-file] Successfully read file: ${fileName}`);
             return content;
         }
         catch (err) {
@@ -378,25 +355,19 @@ function registerIpcHandlers() {
             return null;
         }
     });
-    /**
-     * Step 4: Add the ability to write to a prompt-composer file.
-     * This is used by the new "PromptResponseBlock" to persist content.
-     */
+    // write-prompt-composer-file
     electron_1.ipcMain.handle('write-prompt-composer-file', async (_event, args) => {
         try {
             const projectRoot = process.cwd();
             const promptComposerFolder = path_1.default.join(projectRoot, '.prompt-composer');
-            // Ensure the folder exists
             try {
                 await fs_1.default.promises.stat(promptComposerFolder);
             }
-            catch (err) {
-                console.log('[write-prompt-composer-file] .prompt-composer does not exist, creating it');
+            catch {
                 await fs_1.default.promises.mkdir(promptComposerFolder, { recursive: true });
             }
             const targetPath = path_1.default.join(promptComposerFolder, args.relativeFilename);
             await fs_1.default.promises.writeFile(targetPath, args.content, 'utf-8');
-            console.log('[write-prompt-composer-file] Wrote file to', targetPath);
             return true;
         }
         catch (err) {

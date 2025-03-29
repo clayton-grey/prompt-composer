@@ -5,50 +5,22 @@
  * tri-state selection, expansions, ASCII map generation, and also tracks the
  * list of "active" project folders for .prompt-composer template scanning.
  *
- * Step 2: We have refactored the logic for toggling node selection, refreshing folders,
- * adding/removing project folders, reading file/directory, etc., into a separate
- * "src/utils/projectActions.ts" module. This ensures the context remains minimal,
- * focusing on storing state and providing the final context value.
+ * After unifying TreeNode and DirectoryListing in electron-main/types.ts, we remove
+ * the local definitions and import them directly.
  *
- * Now, ProjectContext primarily:
- *  - Initializes React state (directoryCache, nodeStates, expandedPaths, etc.)
- *  - Delegates logic to projectActions
- *  - Exports a provider that any component can consume
- *
- * Key Responsibilities (after Step 2 refactor):
- *  - Maintain React states for directoryCache, nodeStates, expandedPaths, selectedFileContents
- *  - Provide "toggleNodeSelection", "refreshFolders", "addProjectFolder", etc. by calling
- *    the extracted projectActions
+ * Key Responsibilities:
+ *  - Maintain React states for directoryCache (DirectoryListing), nodeStates, expandedPaths, selectedFileContents
+ *  - Provide "toggleNodeSelection", "refreshFolders", "addProjectFolder", etc. by calling projectActions
  *  - Provide a user-friendly context interface
- *
- * Known Limitations:
- *  - Very large directories can still cause performance issues; see optional Step 8 for lazy loading
- *
- * The ASCII tree generation is separate (asciiTreeGenerator.ts),
- * The token usage is computed in a separate effect (only for selected files).
  */
 
 import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import { initEncoder, estimateTokens } from '../utils/tokenEstimator';
 import * as projectActions from '../utils/projectActions';
-import { useToast } from '../context/ToastContext';
+import { useToast } from './ToastContext';
+import { DirectoryListing, TreeNode } from '../../electron-main/types';
 
-export interface TreeNode {
-  name: string;
-  path: string;
-  type: 'file' | 'directory';
-  children?: TreeNode[];
-}
-
-export interface DirectoryListing {
-  absolutePath: string;
-  baseName: string;
-  children: TreeNode[];
-}
-
-type NodeState = 'none' | 'all' | 'partial';
-
-interface ProjectContextType {
+export interface ProjectContextType {
   /**
    * Return the directory listing for a path, possibly from cache or from electron API
    */
@@ -57,7 +29,7 @@ interface ProjectContextType {
   /**
    * Tri-state map: path -> 'none' | 'all' | 'partial'
    */
-  nodeStates: Record<string, NodeState>;
+  nodeStates: Record<string, 'none' | 'all' | 'partial'>;
 
   /**
    * Tracking which directories are expanded
@@ -140,27 +112,22 @@ const ProjectContext = createContext<ProjectContextType>({
   removeProjectFolder: () => {},
 });
 
-/**
- * Provider for the ProjectContext
- */
 export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
-  // State values
   const [directoryCache, setDirectoryCache] = useState<Record<string, DirectoryListing>>({});
-  const [nodeStates, setNodeStates] = useState<Record<string, NodeState>>({});
+  const [nodeStates, setNodeStates] = useState<Record<string, 'none' | 'all' | 'partial'>>({});
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
   const [selectedFileContents, setSelectedFileContents] = useState<Record<string, string>>({});
   const [selectedFilesTokenCount, setSelectedFilesTokenCount] = useState<number>(0);
   const [projectFolders, setProjectFolders] = useState<string[]>([]);
   const { showToast } = useToast();
-
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Initialize the token estimator
+  // Initialize the token estimator once
   useEffect(() => {
     initEncoder('gpt-4');
   }, []);
 
-  // Recompute token usage for selected files
+  // Recompute token usage for selected files with a small debounce
   useEffect(() => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
@@ -188,7 +155,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
   }, [selectedFileContents]);
 
   /**
-   * getDirectoryListing wrapper that calls the projectActions version
+   * getDirectoryListing - calls into projectActions.getDirectoryListing
    */
   const getDirectoryListing = useCallback(
     async (dirPath: string) => {
@@ -206,17 +173,28 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           setProjectFolders,
         });
       } catch (error) {
-        showToast(`Error reading directory ${dirPath}: ${error.message}`, 'error');
+        showToast(`Error reading directory ${dirPath}: ${(error as Error).message}`, 'error');
         console.error(`Error reading directory ${dirPath}:`, error);
         return null;
       }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
+    [
+      directoryCache,
+      nodeStates,
+      expandedPaths,
+      selectedFileContents,
+      projectFolders,
+      showToast,
+      setDirectoryCache,
+      setNodeStates,
+      setExpandedPaths,
+      setSelectedFileContents,
+      setProjectFolders,
+    ]
   );
 
   /**
-   * getSelectedFileEntries
-   * Return an array of objects with path, content, guessed language
+   * getSelectedFileEntries - return array of { path, content, language }
    */
   const getSelectedFileEntries = useCallback(() => {
     const results: Array<{ path: string; content: string; language: string }> = [];
@@ -254,11 +232,23 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           setProjectFolders,
         });
       } catch (error) {
-        showToast(`Error selecting node ${node.path}: ${error.message}`, 'error');
+        showToast(`Error selecting node ${node.path}: ${(error as Error).message}`, 'error');
         console.error(`Error selecting node ${node.path}:`, error);
       }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
+    [
+      directoryCache,
+      nodeStates,
+      expandedPaths,
+      selectedFileContents,
+      projectFolders,
+      showToast,
+      setDirectoryCache,
+      setNodeStates,
+      setExpandedPaths,
+      setSelectedFileContents,
+      setProjectFolders,
+    ]
   );
 
   /**
@@ -280,11 +270,23 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           setProjectFolders,
         });
       } catch (error) {
-        showToast(`Error toggling expansion for ${nodePath}: ${error.message}`, 'error');
+        showToast(`Error toggling expansion for ${nodePath}: ${(error as Error).message}`, 'error');
         console.error(`Error toggling expansion for ${nodePath}:`, error);
       }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
+    [
+      directoryCache,
+      nodeStates,
+      expandedPaths,
+      selectedFileContents,
+      projectFolders,
+      showToast,
+      setDirectoryCache,
+      setNodeStates,
+      setExpandedPaths,
+      setSelectedFileContents,
+      setProjectFolders,
+    ]
   );
 
   /**
@@ -306,11 +308,26 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           setProjectFolders,
         });
       } catch (error) {
-        showToast(`Error collapsing subtree for ${node.path}: ${error.message}`, 'error');
+        showToast(
+          `Error collapsing subtree for ${node.path}: ${(error as Error).message}`,
+          'error'
+        );
         console.error(`Error collapsing subtree for ${node.path}:`, error);
       }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
+    [
+      directoryCache,
+      nodeStates,
+      expandedPaths,
+      selectedFileContents,
+      projectFolders,
+      showToast,
+      setDirectoryCache,
+      setNodeStates,
+      setExpandedPaths,
+      setSelectedFileContents,
+      setProjectFolders,
+    ]
   );
 
   /**
@@ -332,11 +349,23 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           setProjectFolders,
         });
       } catch (error) {
-        showToast(`Error refreshing folders: ${error.message}`, 'error');
+        showToast(`Error refreshing folders: ${(error as Error).message}`, 'error');
         console.error('Error refreshing folders:', error);
       }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
+    [
+      directoryCache,
+      nodeStates,
+      expandedPaths,
+      selectedFileContents,
+      projectFolders,
+      showToast,
+      setDirectoryCache,
+      setNodeStates,
+      setExpandedPaths,
+      setSelectedFileContents,
+      setProjectFolders,
+    ]
   );
 
   /**
@@ -358,11 +387,26 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           setProjectFolders,
         });
       } catch (error) {
-        showToast(`Error adding project folder ${folderPath}: ${error.message}`, 'error');
+        showToast(
+          `Error adding project folder ${folderPath}: ${(error as Error).message}`,
+          'error'
+        );
         console.error(`Error adding project folder ${folderPath}:`, error);
       }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
+    [
+      directoryCache,
+      nodeStates,
+      expandedPaths,
+      selectedFileContents,
+      projectFolders,
+      showToast,
+      setDirectoryCache,
+      setNodeStates,
+      setExpandedPaths,
+      setSelectedFileContents,
+      setProjectFolders,
+    ]
   );
 
   /**
@@ -384,11 +428,26 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           setProjectFolders,
         });
       } catch (error) {
-        showToast(`Error removing project folder ${folderPath}: ${error.message}`, 'error');
+        showToast(
+          `Error removing project folder ${folderPath}: ${(error as Error).message}`,
+          'error'
+        );
         console.error(`Error removing project folder ${folderPath}:`, error);
       }
     },
-    [directoryCache, nodeStates, expandedPaths, selectedFileContents, projectFolders, showToast]
+    [
+      directoryCache,
+      nodeStates,
+      expandedPaths,
+      selectedFileContents,
+      projectFolders,
+      showToast,
+      setDirectoryCache,
+      setNodeStates,
+      setExpandedPaths,
+      setSelectedFileContents,
+      setProjectFolders,
+    ]
   );
 
   /**
@@ -415,8 +474,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
 };
 
 /**
- * useProject
- * Hook to consume the ProjectContext
+ * useProject - a hook for consuming the ProjectContext
  */
 export function useProject(): ProjectContextType {
   return useContext(ProjectContext);
