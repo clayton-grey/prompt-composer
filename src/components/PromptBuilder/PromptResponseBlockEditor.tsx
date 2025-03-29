@@ -5,9 +5,17 @@
  * of bullet-style checkboxes even if locked, but no other text edits when locked. We also
  * switch between lock/unlock states with a button.
  *
- * This version includes a fix for the closure bug that caused a "Cannot read properties of null (reading '1')"
- * error when toggling checkboxes. We store local copies of match data in parseCheckboxLine to ensure
- * each checkbox's onChange references stable values.
+ * Accessibility Improvements (Step 5):
+ *  - Added a `title` and `aria-label` for the lock/unlock button for screen readers.
+ *  - Minor updates to ensure better clarity for keyboard and screen reader users.
+ *
+ * Implementation details:
+ *  - The text area is editable only if `block.locked === false` and the parent group is not in raw edit mode.
+ *  - If locked, user can still toggle bullet checkboxes (like - [ ] ) unless we are in raw edit mode.
+ *  - Debounced saving to .prompt-composer file via electronAPI.
+ *
+ * @notes
+ * - We ensure an aria-label or title is present on interactive elements for accessibility.
  */
 
 /// <reference path="../../types/electron.d.ts" />
@@ -76,18 +84,14 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
             relativeFilename: block.sourceFile,
             content: newVal,
           })
-          .then(result => {
+          .then((result: any) => {
             // Check if the result has an error property
             if (result && typeof result === 'object' && 'error' in result) {
               showToast(`Could not write to prompt-composer file: ${result.error}`, 'error');
               console.error('[PromptResponseBlockEditor] Failed to write file:', result.error);
             }
-            // Optional success toast if needed
-            // else {
-            //   showToast(`Saved ${block.sourceFile}`, 'success');
-            // }
           })
-          .catch(err => {
+          .catch((err: any) => {
             console.error('[PromptResponseBlockEditor] Failed to write file:', err);
             showToast(`Could not write to prompt-composer file: ${block.sourceFile}`, 'error');
           });
@@ -128,9 +132,6 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
    * handleCheckboxToggle
    * Called when user toggles a bullet checkbox in read-only mode.
    * We find the correct occurrence in the line and replace [ ] with [X] or vice versa.
-   * @param lineIndex which line
-   * @param matchIndex which occurrence in that line
-   * @param oldVal ' ' or 'X'
    */
   const handleCheckboxToggle = (lineIndex: number, matchIndex: number, oldVal: string) => {
     if (!canToggleCheckboxes) return;
@@ -145,7 +146,6 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
     const updatedLine = line.replace(CHECKBOX_PATTERN, (fullMatch, group1) => {
       if (occurrences === matchIndex) {
         occurrences++;
-        // replace that group with newVal
         return `- [${newVal}]`;
       } else {
         occurrences++;
@@ -177,7 +177,6 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
     let match: RegExpExecArray | null;
     let matchCount = 0; // index of the match in this line
 
-    // We compile a fresh pattern each time because pattern.exec is stateful.
     const pattern = new RegExp(CHECKBOX_PATTERN, 'g');
 
     while ((match = pattern.exec(line)) !== null) {
@@ -195,7 +194,6 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
 
       // store local copy of matchCount so each checkbox has stable data
       const localMatchIndex = matchCount;
-
       const handleChange = () => {
         handleCheckboxToggle(lineIndex, localMatchIndex, oldValLocal);
       };
@@ -257,6 +255,8 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
               type="button"
               onClick={handleToggleLocked}
               className="p-1 rounded hover:bg-gray-300 dark:hover:bg-gray-600"
+              title="Toggle lock"
+              aria-label="Toggle lock"
             >
               {block.locked ? (
                 /* Locked icon */
@@ -271,6 +271,7 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   className="lucide lucide-lock-icon lucide-lock w-5 h-5"
+                  aria-hidden="true"
                 >
                   <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
                   <path d="M7 11V7a5 5 0 0 1 10 0v4" />
@@ -288,6 +289,7 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   className="lucide lucide-lock-open-icon lucide-lock-open w-5 h-5"
+                  aria-hidden="true"
                 >
                   <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
                   <path d="M7 11V7a5 5 0 0 1 9.9-1" />

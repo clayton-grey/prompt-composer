@@ -5,14 +5,16 @@
  * from global + project .prompt-composer directories. Upon user selection,
  * it reads the file content and uses our parser to generate blocks.
  *
- * Step 4 Changes (Error Feedback):
- *  - We now import and use the `useToast` hook from ToastContext to display error messages.
+ * Accessibility Improvements (Step 5):
+ *  - Added a keyDown handler on the overlay. If user presses 'Escape', we close the modal.
+ *  - Ensured the outer overlay has tabIndex={-1} to catch keyboard events,
+ *    while we still shift focus to the modal content.
+ *  - This improves user experience for quick keyboard-based closing of the modal.
  *
- * Step 5 Changes (Accessibility):
- *  - Added role="dialog" aria-modal="true" to the inner modal.
- *  - Use a ref for focus management when the modal opens.
- *  - `aria-labelledby` referencing the title <h2> element.
- *  - Return focus to previously active element on close.
+ * Implementation details:
+ *  - The modal can be closed by clicking the overlay background or pressing ESC.
+ *  - We keep track of a reference to the modalContentRef for focusing.
+ *  - Users can tab from the content to the Cancel button.
  */
 
 import React, { useEffect, useState, useRef } from 'react';
@@ -43,10 +45,10 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   // We read from project context to get the currently tracked projectFolders
   const { projectFolders } = useProject();
 
-  // Step 4: We use the toast for error feedback
+  // We use the toast for error feedback
   const { showToast } = useToast();
 
-  // Step 5: Accessibility - track modal content ref and previously focused element
+  // Accessibility references
   const modalContentRef = useRef<HTMLDivElement>(null);
   const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
 
@@ -66,7 +68,6 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   // Focus the modal content when open
   useEffect(() => {
     if (isOpen) {
-      // Delay focusing to avoid potential race conditions
       setTimeout(() => {
         modalContentRef.current?.focus();
       }, 50);
@@ -124,14 +125,23 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
         showToast(msg, 'error');
       });
 
-      // Insert the resulting blocks into the composition
       onInsertBlocks(parsedBlocks);
 
-      // Close the modal
       onClose();
     } catch (err) {
       console.error('[TemplateSelectorModal] handleSelectTemplate error:', err);
       showToast(`Failed to load template: ${String(err)}`, 'error');
+    }
+  }
+
+  /**
+   * handleOverlayKeyDown
+   * If the user presses Escape, close the modal. We do not trap other keys.
+   */
+  function handleOverlayKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      onClose();
     }
   }
 
@@ -143,13 +153,15 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
       onClick={e => {
         if (e.target === e.currentTarget) onClose();
       }}
+      onKeyDown={handleOverlayKeyDown}
+      tabIndex={-1}
+      aria-modal="true"
+      role="dialog"
+      aria-labelledby="templateSelectorModalTitle"
     >
       <div
         className="bg-white dark:bg-gray-800 w-full max-w-md p-4 rounded shadow-lg"
         onClick={e => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="templateSelectorModalTitle"
         ref={modalContentRef}
         tabIndex={-1}
       >
