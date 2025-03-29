@@ -16,19 +16,21 @@
  *
  * Key changes from previous version:
  *  - The <textarea> no longer scrolls internally; it grows vertically as the user types.
- *  - We added `handleResize` logic, called on input changes or content updates.
+ *  - Only writes to disk when locking the block or toggling checkboxes (not during typing).
+ *  - Preserves cursor position during typing and resizing operations.
+ *  - Prevents jumpiness during selection and editing.
  *
  * Behavior:
  *  - If the block is locked, we show read-only text with optional bullet checkboxes toggles.
  *  - If unlocked, the user can edit text in a self-resizing <textarea> (just like TextBlockEditor).
- *  - We still support toggling lock/unlock via the button, updating the .prompt-composer file after changes.
+ *  - We only write to disk when locking the block or toggling checkboxes.
  *
  * Edge Cases:
  *  - If user types extremely large amounts of text, the <textarea> can grow to a large height. This is intended.
  *  - For bullet toggles, we only allow them if the block is locked but not raw editing (and canToggleCheckboxes is true).
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { PromptResponseBlock, Block } from '../../types/Block';
 import { usePrompt } from '../../context/PromptContext';
 import { useToast } from '../../context/ToastContext';
@@ -45,11 +47,6 @@ interface PromptResponseBlockEditorProps {
  */
 const CHECKBOX_PATTERN = /- \[([ xX])\]/g;
 
-/**
- * Debounce constant for writes to disk (500ms).
- */
-const DEBOUNCE_MS = 500;
-
 const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
   block,
   onChange,
@@ -58,9 +55,6 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
   const { showToast } = useToast();
 
   const [localContent, setLocalContent] = useState<string>(block.content || '');
-
-  // We use a ref to track the timer for debounce
-  const debounceTimer = useRef<NodeJS.Timeout | null>(null);
 
   // For auto-resizing text area
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -87,6 +81,15 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
       handleResizeTextArea();
     }
   }, [localContent, canEditFully]);
+
+  // Add this after the useEffect hooks - ensures correct initial sizing
+  useLayoutEffect(() => {
+    // Run only when the textarea is visible and after it's mounted
+    if (canEditFully && textAreaRef.current) {
+      // Force immediate sizing calculation
+      handleResizeTextArea();
+    }
+  }, [canEditFully]);
 
   /**
    * Writes updated content to .prompt-composer, updates block in context
@@ -125,34 +128,65 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
   /**
    * handleFullTextChange
    * Called when user types in the <textarea> (unlocked mode)
+   * We only store changes locally. No disk writes during normal typing.
    */
   const handleFullTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newVal = e.target.value;
+
+    // Remember cursor position before React updates the component
+    const cursorPos = e.target.selectionStart;
+    const cursorEnd = e.target.selectionEnd;
+
+    // Update local state without triggering disk writes
     setLocalContent(newVal);
 
-    if (debounceTimer.current) {
-      clearTimeout(debounceTimer.current);
-    }
-    debounceTimer.current = setTimeout(() => {
-      persistChanges(newVal);
-    }, DEBOUNCE_MS);
+    // Schedule resize in next animation frame
+    requestAnimationFrame(() => {
+      if (textAreaRef.current && document.activeElement === textAreaRef.current) {
+        handleResizeTextArea();
+
+        // Restore cursor position
+        textAreaRef.current.setSelectionRange(cursorPos, cursorEnd);
+      }
+    });
+
+    // No debounced writes to disk during editing - only update context
+    updateBlock({
+      ...block,
+      content: newVal,
+    });
   };
 
   /**
    * handleToggleLocked
    * Toggles the locked property (locked <-> unlocked)
+   * Only writes to disk when locking
    */
   const handleToggleLocked = () => {
+    const newLockedState = !block.locked;
+
+    // Only write to disk when locking the block
+    if (newLockedState) {
+      persistChanges(localContent);
+    }
+
+    // Create updated block with new lock state
     const updated: PromptResponseBlock = {
       ...block,
-      locked: !block.locked,
+      locked: newLockedState,
     };
+
+    // Pass to parent first to ensure UI updates
+    onChange(updated);
+
+    // Then update in context
     updateBlock(updated);
   };
 
   /**
    * handleCheckboxToggle
    * For bullet toggles in read-only mode. We replace [ ] with [X] or vice versa.
+   * Since we're in locked mode, write to disk immediately.
    */
   const handleCheckboxToggle = (lineIndex: number, matchIndex: number, oldVal: string) => {
     if (!canToggleCheckboxes) return;
@@ -174,14 +208,20 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
 
     lines[lineIndex] = updatedLine;
     const updatedContent = lines.join('\n');
+
+    // Update local state
     setLocalContent(updatedContent);
 
-    if (debounceTimer.current) {
-      clearTimeout(debounceTimer.current);
-    }
-    debounceTimer.current = setTimeout(() => {
-      persistChanges(updatedContent);
-    }, DEBOUNCE_MS);
+    // Update block in context
+    const updated: PromptResponseBlock = {
+      ...block,
+      content: updatedContent,
+    };
+    updateBlock(updated);
+    onChange(updated);
+
+    // Write to disk immediately (since we're in locked mode)
+    persistChanges(updatedContent);
   };
 
   /**
@@ -259,14 +299,27 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
   };
 
   /**
-   * handleResizeTextArea
-   * The auto-resizing logic for the editable <textarea>.
+   * Simple auto-resize that preserves cursor position
    */
   const handleResizeTextArea = () => {
-    const el = textAreaRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
+    const textarea = textAreaRef.current;
+    if (!textarea) return;
+
+    // Save cursor position
+    const isActive = document.activeElement === textarea;
+    const cursorStart = isActive ? textarea.selectionStart : null;
+    const cursorEnd = isActive ? textarea.selectionEnd : null;
+    const scrollTop = textarea.scrollTop;
+
+    // Clear height and resize
+    textarea.style.height = 'auto';
+    textarea.style.height = `${textarea.scrollHeight}px`;
+
+    // Restore cursor position only if needed
+    if (isActive && cursorStart !== null && cursorEnd !== null) {
+      textarea.setSelectionRange(cursorStart, cursorEnd);
+      textarea.scrollTop = scrollTop;
+    }
   };
 
   return (
@@ -336,7 +389,14 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
             placeholder="Type your response..."
             value={localContent}
             onChange={handleFullTextChange}
-            onInput={handleResizeTextArea}
+            onKeyDown={e => {
+              // Immediately resize on Enter/Delete/Backspace, which affect line structure
+              if (e.key === 'Enter' || e.key === 'Backspace' || e.key === 'Delete') {
+                setTimeout(handleResizeTextArea, 0);
+              }
+            }}
+            onPaste={() => setTimeout(handleResizeTextArea, 0)}
+            onCut={() => setTimeout(handleResizeTextArea, 0)}
             aria-label="Prompt Response Editor"
           />
         ) : (
