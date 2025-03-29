@@ -2,7 +2,14 @@
  * @file App.tsx
  * @description
  * Main 2-column layout with a left sidebar (file tree) and right editor column.
- * Updated to set minimum width of the file tree to 250px.
+ * This snippet restores the EditorFooter that might have been lost or removed accidentally.
+ *
+ * Implementation:
+ *  - In the right column, after our main content area, we re-add the <EditorFooter />
+ *    so it appears pinned at the bottom, just like in earlier versions.
+ *  - The footer has a fixed height (e.g., h-10), keeping it consistent with the sidebar's bottom bar.
+ *
+ * You can adapt the styling or remove the partial classes if needed for your layout.
  */
 
 import React, { useRef, useEffect, useState } from 'react';
@@ -14,7 +21,7 @@ import { usePrompt } from './context/PromptContext';
 import { TemplateBlock } from './types/Block';
 import EditorFooter from './components/EditorFooter';
 
-const MIN_SIDEBAR_WIDTH = 270; // changed from 180 to 250
+const MIN_SIDEBAR_WIDTH = 270;
 const MAX_SIDEBAR_WIDTH = 1200;
 
 const App: React.FC = () => {
@@ -25,7 +32,6 @@ const App: React.FC = () => {
 
   const { blocks } = usePrompt();
 
-  // If there's a lead template block editing raw, show the raw editor in place of normal content
   const rawEditingBlock = blocks.find(
     b => b.type === 'template' && b.isGroupLead && b.editingRaw
   ) as TemplateBlock | undefined;
@@ -71,10 +77,14 @@ const App: React.FC = () => {
   return (
     <ToastProvider>
       <div className={`${darkMode ? 'dark' : ''} h-screen w-screen overflow-hidden flex flex-row`}>
-        {/* Left column: sidebar (flex-none) + pinned footer inside the Sidebar */}
+        {/* Left column: sidebar */}
         <div
           className="relative dark:bg-gray-700 bg-gray-200 flex-none flex flex-col"
-          style={{ width: sidebarWidth, minWidth: MIN_SIDEBAR_WIDTH }}
+          style={{
+            width: sidebarWidth,
+            minWidth: MIN_SIDEBAR_WIDTH,
+            maxWidth: '50%',
+          }}
         >
           <Sidebar />
           <div
@@ -83,14 +93,13 @@ const App: React.FC = () => {
           />
         </div>
 
-        {/* Right column: editor (flex-col) => top content, bottom <EditorFooter /> */}
+        {/* Right column: editor => main content + pinned footer */}
         <div className="flex-grow flex flex-col dark:bg-gray-900 bg-gray-50">
-          {/* Main content area */}
           <div className="flex-1 overflow-auto">
             <MainContent />
           </div>
 
-          {/* Editor Footer: h-10 => ensures same height as sidebar's footer area */}
+          {/* Here is the EditorFooter pinned at the bottom */}
           <EditorFooter />
         </div>
       </div>

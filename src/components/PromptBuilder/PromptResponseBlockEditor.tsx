@@ -1,24 +1,33 @@
 /**
  * @file PromptResponseBlockEditor.tsx
  * @description
- * Renders a dotted outline block for the {{PROMPT_RESPONSE=fileName.txt}} tag. Allows toggling
- * of bullet-style checkboxes even if locked, but no other text edits when locked. We also
- * switch between lock/unlock states with a button.
+ * Allows the user to view and edit text for a {{PROMPT_RESPONSE=filename.txt}} block.
+ * In this version, we've adapted the text area to auto-resize just like TextBlockEditor
+ * rather than show an internal scrollbar.
  *
- * Accessibility Improvements (Step 5):
- *  - Added a `title` and `aria-label` for the lock/unlock button for screen readers.
- *  - Minor updates to ensure better clarity for keyboard and screen reader users.
+ * Implementation:
+ *  1) Create a `textareaRef` which references the <textarea>.
+ *  2) On each render and content change, adjust the textarea's height to 'auto', then read
+ *     its `scrollHeight` and set that as the new height (auto-resizing).
+ *  3) Use `break-words` and `whitespace-pre-wrap` to ensure that very long lines wrap properly
+ *     and do not overflow horizontally.
+ *  4) We still preserve the bullet checkbox toggling for read-only mode (locked state),
+ *     while fully editable in unlocked state.
  *
- * Implementation details:
- *  - The text area is editable only if `block.locked === false` and the parent group is not in raw edit mode.
- *  - If locked, user can still toggle bullet checkboxes (like - [ ] ) unless we are in raw edit mode.
- *  - Debounced saving to .prompt-composer file via electronAPI.
+ * Key changes from previous version:
+ *  - The <textarea> no longer scrolls internally; it grows vertically as the user types.
+ *  - We added `handleResize` logic, called on input changes or content updates.
  *
- * @notes
- * - We ensure an aria-label or title is present on interactive elements for accessibility.
+ * Behavior:
+ *  - If the block is locked, we show read-only text with optional bullet checkboxes toggles.
+ *  - If unlocked, the user can edit text in a self-resizing <textarea> (just like TextBlockEditor).
+ *  - We still support toggling lock/unlock via the button, updating the .prompt-composer file after changes.
+ *
+ * Edge Cases:
+ *  - If user types extremely large amounts of text, the <textarea> can grow to a large height. This is intended.
+ *  - For bullet toggles, we only allow them if the block is locked but not raw editing (and canToggleCheckboxes is true).
  */
 
-/// <reference path="../../types/electron.d.ts" />
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { PromptResponseBlock, Block } from '../../types/Block';
 import { usePrompt } from '../../context/PromptContext';
@@ -29,8 +38,6 @@ interface PromptResponseBlockEditorProps {
   onChange: (updatedBlock: Block) => void;
 }
 
-const DEBOUNCE_MS = 500;
-
 /**
  * Regex matching bullet checkboxes:
  *  - e.g. "- [ ] Some text" or "- [X] Some text"
@@ -38,35 +45,51 @@ const DEBOUNCE_MS = 500;
  */
 const CHECKBOX_PATTERN = /- \[([ xX])\]/g;
 
+/**
+ * Debounce constant for writes to disk (500ms).
+ */
+const DEBOUNCE_MS = 500;
+
 const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
   block,
   onChange,
 }) => {
   const { blocks, updateBlock } = usePrompt();
   const { showToast } = useToast();
+
   const [localContent, setLocalContent] = useState<string>(block.content || '');
+
+  // We use a ref to track the timer for debounce
   const debounceTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // If the parent group is in raw edit mode, we disable all interactions
+  // For auto-resizing text area
+  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Determine if the parent group is raw editing
   const isParentRawEditing = isParentGroupInRawEdit(block, blocks);
 
-  // If block is unlocked AND not raw editing => user can freely edit the entire text
+  // If block is unlocked AND not raw editing => user can fully edit text
   const canEditFully = !block.locked && !isParentRawEditing;
 
-  // If block is locked but not raw editing => user sees read-only text, but can toggle checkboxes
-  const canToggleCheckboxes = !isParentRawEditing;
+  // If block is locked but not raw editing => read-only text, but we can still toggle checkboxes
+  const canToggleCheckboxes = !isParentRawEditing && block.locked;
 
   useEffect(() => {
-    // If the block content changes externally, sync to localContent
+    // Sync external block content changes => localContent
     if (block.content !== localContent) {
       setLocalContent(block.content);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [block.content]);
+  }, [block.content, localContent]);
+
+  useEffect(() => {
+    // Whenever localContent changes, auto-resize
+    if (canEditFully) {
+      handleResizeTextArea();
+    }
+  }, [localContent, canEditFully]);
 
   /**
-   * Writes the updated content to the .prompt-composer file,
-   * updates the block in context
+   * Writes updated content to .prompt-composer, updates block in context
    */
   const persistChanges = useCallback(
     (newVal: string) => {
@@ -76,7 +99,7 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
       };
       updateBlock(updated);
 
-      // Use type assertion to access electronAPI
+      // If electronAPI is present, write to .prompt-composer
       const electronAPI = (window as any).electronAPI;
       if (electronAPI && electronAPI.writePromptComposerFile) {
         electronAPI
@@ -85,7 +108,6 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
             content: newVal,
           })
           .then((result: any) => {
-            // Check if the result has an error property
             if (result && typeof result === 'object' && 'error' in result) {
               showToast(`Could not write to prompt-composer file: ${result.error}`, 'error');
               console.error('[PromptResponseBlockEditor] Failed to write file:', result.error);
@@ -118,7 +140,7 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
 
   /**
    * handleToggleLocked
-   * Toggles the locked property (locked <-> unlocked).
+   * Toggles the locked property (locked <-> unlocked)
    */
   const handleToggleLocked = () => {
     const updated: PromptResponseBlock = {
@@ -130,8 +152,7 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
 
   /**
    * handleCheckboxToggle
-   * Called when user toggles a bullet checkbox in read-only mode.
-   * We find the correct occurrence in the line and replace [ ] with [X] or vice versa.
+   * For bullet toggles in read-only mode. We replace [ ] with [X] or vice versa.
    */
   const handleCheckboxToggle = (lineIndex: number, matchIndex: number, oldVal: string) => {
     if (!canToggleCheckboxes) return;
@@ -140,10 +161,8 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
     const lines = localContent.split('\n');
     if (lineIndex < 0 || lineIndex >= lines.length) return;
 
-    const line = lines[lineIndex];
-
     let occurrences = 0;
-    const updatedLine = line.replace(CHECKBOX_PATTERN, (fullMatch, group1) => {
+    const updatedLine = lines[lineIndex].replace(CHECKBOX_PATTERN, (fullMatch, group1) => {
       if (occurrences === matchIndex) {
         occurrences++;
         return `- [${newVal}]`;
@@ -167,15 +186,13 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
 
   /**
    * parseCheckboxLine
-   * Splits a line into segments, rendering text normally,
-   * but each occurrence of "- [ ]" / "- [X]" is turned into a checkbox.
+   * Splits a line into segments, rendering normal text but converting each "- [ ]" or "- [X]" to a checkbox
    */
   const parseCheckboxLine = (line: string, lineIndex: number): React.ReactNode => {
     const segments: React.ReactNode[] = [];
-
     let lastIndex = 0;
     let match: RegExpExecArray | null;
-    let matchCount = 0; // index of the match in this line
+    let matchCount = 0;
 
     const pattern = new RegExp(CHECKBOX_PATTERN, 'g');
 
@@ -183,7 +200,7 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
       const start = match.index;
       const end = start + match[0].length;
 
-      // push text before this match
+      // push text before the match
       if (start > lastIndex) {
         const beforeText = line.substring(lastIndex, start);
         segments.push(<span key={`txt-${start}`}>{beforeText}</span>);
@@ -192,7 +209,6 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
       const oldValLocal = match[1]; // ' ' or 'x'/'X'
       const isChecked = oldValLocal.toUpperCase() === 'X';
 
-      // store local copy of matchCount so each checkbox has stable data
       const localMatchIndex = matchCount;
       const handleChange = () => {
         handleCheckboxToggle(lineIndex, localMatchIndex, oldValLocal);
@@ -215,7 +231,7 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
       lastIndex = end;
     }
 
-    // push remainder
+    // remainder
     if (lastIndex < line.length) {
       const remainder = line.substring(lastIndex);
       segments.push(<span key={`end-${lastIndex}`}>{remainder}</span>);
@@ -226,12 +242,13 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
 
   /**
    * renderReadOnlyContent
-   * We render the entire text, line by line. Each line can contain bullet checkboxes.
+   * We display text line by line, toggling bullet checkboxes if present.
+   * Use break-words so it doesn't overflow on narrow screens.
    */
   const renderReadOnlyContent = () => {
     const lines = localContent.split('\n');
     return (
-      <div className="flex flex-col space-y-1 text-sm text-gray-700 dark:text-gray-100 whitespace-pre-wrap">
+      <div className="flex flex-col space-y-1 text-sm text-gray-700 dark:text-gray-100 whitespace-pre-wrap break-words">
         {lines.map((line, idx) => (
           <div key={idx} className="leading-snug">
             {parseCheckboxLine(line, idx)}
@@ -241,10 +258,21 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
     );
   };
 
+  /**
+   * handleResizeTextArea
+   * The auto-resizing logic for the editable <textarea>.
+   */
+  const handleResizeTextArea = () => {
+    const el = textAreaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  };
+
   return (
     <div className="border-4 border-dashed border-gray-500 rounded p-3 mb-2">
       <div className="text-sm text-gray-800 dark:text-gray-100 space-y-2">
-        {/* Header row: label + file name + lock/unlock button if not raw editing */}
+        {/* Header row: label + filename + lock/unlock */}
         <div className="flex items-center justify-between">
           <span className="font-semibold">
             Prompt Response Block: <span className="italic">{block.sourceFile}</span>
@@ -259,7 +287,7 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
               aria-label="Toggle lock"
             >
               {block.locked ? (
-                /* Locked icon */
+                // locked icon
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="24"
@@ -277,7 +305,7 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
                   <path d="M7 11V7a5 5 0 0 1 10 0v4" />
                 </svg>
               ) : (
-                /* Unlocked icon */
+                // unlocked icon
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   width="24"
@@ -299,18 +327,20 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
           )}
         </div>
 
-        {/* Main content area */}
         {canEditFully ? (
+          // Editable text area (auto-resizing)
           <textarea
-            rows={8}
-            className="w-full text-sm rounded border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 p-2 resize-none"
+            ref={textAreaRef}
+            rows={1}
+            className="w-full text-sm rounded border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 p-2 resize-none whitespace-pre-wrap break-words overflow-hidden"
             placeholder="Type your response..."
             value={localContent}
             onChange={handleFullTextChange}
+            onInput={handleResizeTextArea}
             aria-label="Prompt Response Editor"
           />
         ) : (
-          // Read-only mode (locked or raw editing) => parse lines for checkboxes
+          // Read-only content w/ bullet toggles
           renderReadOnlyContent()
         )}
       </div>
@@ -319,7 +349,8 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
 };
 
 /**
- * Checks if the parent group is in raw editing mode, which means we disable all user edits.
+ * isParentGroupInRawEdit
+ * Check if the parent template group is in raw edit mode, disabling all user edits.
  */
 function isParentGroupInRawEdit(block: PromptResponseBlock, allBlocks: Block[]): boolean {
   if (!block.groupId) return false;
