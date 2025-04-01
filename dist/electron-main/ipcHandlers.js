@@ -465,6 +465,12 @@ function registerIpcHandlers() {
     // read-prompt-composer-file
     electron_1.ipcMain.handle('read-prompt-composer-file', async (_event, fileName, subDirectory) => {
         try {
+            // Sanity check for very long filenames which are likely template content
+            // This happens when template content is mistakenly passed instead of a filename
+            if (fileName && (fileName.length > 100 || fileName.includes('\n'))) {
+                logError('read-prompt-composer-file', 'Invalid filename: Received template content instead of a filename');
+                return null;
+            }
             const projectDir = global.projectRoot || process.cwd();
             let dirPath = path_1.default.join(projectDir, '.prompt-composer');
             // Log more details for debugging

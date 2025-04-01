@@ -139,12 +139,17 @@ export async function flattenTemplate(
 
         if (templateContent) {
           // Found content for the PROMPT_RESPONSE template
-          // We'll keep the PROMPT_RESPONSE tag but replace the inner template name with the actual content
-          const newTag = `{{PROMPT_RESPONSE=${templateContent}}}`;
+          // We should keep the original template name in the placeholder
+          // NOT replace it with the content, which is causing the bug
+          // where template content shows up as filenames
+          const newTag = `{{PROMPT_RESPONSE=${templateName}}}`;
           text = text.replace(fullPlaceholder, newTag);
           console.log(
-            `[flattenTemplate] Replaced PROMPT_RESPONSE template reference with its content`
+            `[flattenTemplate] Replaced PROMPT_RESPONSE template reference with its name tag (not content)`
           );
+
+          // Reset the regex to start from the beginning again to catch any missed placeholders
+          placeholderRegex.lastIndex = 0;
         } else {
           // Template not found, log warning but keep original placeholder
           console.warn(
@@ -163,8 +168,6 @@ export async function flattenTemplate(
           }
         }
 
-        // Reset the regex to start from the beginning again
-        placeholderRegex.lastIndex = 0;
         continue;
       }
     }
