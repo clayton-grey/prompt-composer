@@ -35,7 +35,10 @@ declare global {
       /**
        * Lists the contents of a directory, returning a DirectoryListing object
        */
-      listDirectory: (dirPath: string) => Promise<DirectoryListing>;
+      listDirectory: (
+        dirPath: string,
+        options?: { shallow?: boolean; addToProjectDirectories?: boolean }
+      ) => Promise<DirectoryListing>;
 
       /**
        * Reads the contents of a file from disk (UTF-8)
@@ -93,6 +96,11 @@ declare global {
        * Reads a template file from the global ~/.prompt-composer directory
        */
       readGlobalPromptComposerFile: (fileName: string) => Promise<string | null>;
+
+      /**
+       * Removes a directory from the projectDirectories list in the main process
+       */
+      removeProjectDirectory: (folderPath: string) => Promise<boolean>;
     };
   }
 }

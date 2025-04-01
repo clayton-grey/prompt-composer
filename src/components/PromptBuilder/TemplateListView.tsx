@@ -14,6 +14,7 @@ import { parseTemplateBlocksAsync } from '../../utils/templateBlockParserAsync';
 import { useProject } from '../../context/ProjectContext';
 import { usePrompt } from '../../context/PromptContext';
 import { Block } from '../../types/Block';
+import { clearTemplateCaches } from '../../utils/readTemplateFile';
 
 interface TemplateFileEntry {
   fileName: string;
@@ -90,6 +91,8 @@ const TemplateListView: React.FC = () => {
   };
 
   const handleRefreshClick = () => {
+    // Clear template caches before refreshing the list
+    clearTemplateCaches();
     fetchTemplates();
   };
 

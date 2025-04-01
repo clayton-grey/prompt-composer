@@ -71,8 +71,12 @@ const Sidebar: React.FC = () => {
   /**
    * handleRemoveFolder
    */
-  const handleRemoveFolder = (folderPath: string) => {
-    removeProjectFolder(folderPath);
+  const handleRemoveFolder = async (folderPath: string) => {
+    try {
+      await removeProjectFolder(folderPath);
+    } catch (err) {
+      console.error('[Sidebar] Remove folder error:', err);
+    }
   };
 
   /**

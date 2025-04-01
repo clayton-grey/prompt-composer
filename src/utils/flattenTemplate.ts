@@ -5,40 +5,190 @@
  * nested references (e.g. {{SOMETHING}}) and recursively inlines those references,
  * producing a single-level template with all references resolved.
  *
- * Updated with:
- *  - Better handling of missing templates with clear logs
- *  - Added fallbacks for template resolution
- *  - Better cycle detection
- *  - Improved regex pattern for more reliable placeholder detection
- *  - Enhanced error handling for permission issues
- *  - Added support for PROMPT_RESPONSE with parameters
+ * Features:
+ *  - Template caching for performance
+ *  - Cycle detection to prevent infinite recursion
+ *  - Special tag handling for control structures
+ *  - Graceful error handling for missing templates
+ *  - Support for template fallbacks with alternative extensions
  */
 
 import { tryReadTemplateFile, getDebugTemplatePaths } from './readTemplateFile';
 
-// Updated regex to better match placeholders (allowing more flexible naming)
-// Matches patterns like {{TEMPLATE_NAME}}, {{ TEMPLATE_NAME }}, {{TEMPLATE_NAME.txt}}, etc.
-const placeholderRegex = /\{\{\s*([A-Za-z0-9_\-\.=]+(?:\s*=\s*[A-Za-z0-9_\-\.]+)?)\s*\}\}/g;
+// Matches template placeholders with flexible whitespace and parameter support
+// Examples: {{TEMPLATE_NAME}}, {{ TEMPLATE_NAME }}, {{TEMPLATE_NAME=PARAM}}
+const placeholderRegex =
+  /\{\{[ \t]*([A-Za-z0-9_\-\.=]+(?:[ \t]*=[ \t]*[A-Za-z0-9_\-\.]+)?)[ \t]*\}\}/g;
 
-// Keep track of which templates were missing globally during a session
-// to avoid repeated filesystem checks for missing templates
+// Cache to avoid repeated filesystem checks for missing templates
 const globalMissingTemplateCache = new Set<string>();
 
-// Cache of templates we've successfully loaded to avoid reloading
+// Cache of successfully loaded templates
 const templateCache: Record<string, string> = {};
 
+// Special tags that should not be expanded as templates
+const SPECIAL_TAGS = ['FILE_BLOCK', 'TEXT_BLOCK'];
+
+// Maximum number of expansions to prevent infinite loops
+const MAX_ITERATIONS = 1000;
+
 /**
- * Flatten the template by replacing references to other templates.
- * Known special placeholders are left as-is.
+ * Clear all template caches, including the missing templates cache.
+ * Should be called when project directories change.
+ */
+export function clearAllTemplateCaches(): void {
+  console.log('[flattenTemplate] Clearing all template caches');
+  globalMissingTemplateCache.clear();
+
+  // Clear the successful template cache
+  for (const key in templateCache) {
+    delete templateCache[key];
+  }
+}
+
+/**
+ * Controlled logging that only outputs in development or for critical issues
+ */
+function debugLog(message: string, ...args: any[]): void {
+  const isImportant = message.includes('[ERROR]') || message.includes('[CRITICAL]');
+  if (process.env.NODE_ENV === 'development' || isImportant) {
+    console.log(`[flattenTemplate] ${message}`, ...args);
+  }
+}
+
+/**
+ * Checks if a placeholder represents a special tag that shouldn't be expanded
+ */
+function isSpecialTag(placeholderName: string): boolean {
+  // PROMPT_RESPONSE needs special handling but is not a skippable tag
+  if (placeholderName.startsWith('PROMPT_RESPONSE')) {
+    return false;
+  }
+
+  // Check against list of special tags
+  for (const tag of SPECIAL_TAGS) {
+    if (placeholderName === tag || placeholderName.startsWith(`${tag}=`)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Attempts to load a template with alternative extensions (.txt, .md)
+ * when the specified name doesn't have an extension
+ */
+async function tryLoadWithAlternativeExtensions(templateName: string): Promise<string | null> {
+  if (templateName.includes('.')) {
+    return null; // Skip if already has an extension
+  }
+
+  const extensions = ['.txt', '.md'];
+
+  // Try each extension
+  for (const ext of extensions) {
+    const altName = `${templateName}${ext}`;
+
+    try {
+      const content = await tryReadTemplateFile(altName);
+      if (content) {
+        debugLog(`Found template with extension: ${altName}`);
+        // Cache both original name and alternative name
+        templateCache[templateName] = content;
+        templateCache[altName] = content;
+        return content;
+      }
+    } catch {
+      // Continue to next alternative
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Replaces a placeholder match with new content and updates regex position
+ * to ensure continuous processing without skipping or reprocessing
+ */
+function replaceTextAndUpdateRegex(
+  text: string,
+  match: RegExpExecArray,
+  newContent: string
+): { text: string; newPosition: number } {
+  const beforeMatch = text.substring(0, match.index);
+  const afterMatch = text.substring(match.index + match[0].length);
+  const newText = beforeMatch + newContent + afterMatch;
+
+  // Calculate position after replacement for regex to continue from
+  const newPosition = match.index + newContent.length;
+
+  return { text: newText, newPosition };
+}
+
+/**
+ * Handles PROMPT_RESPONSE placeholder processing
+ * These are special as we verify the template exists but preserve the tag
+ */
+async function processPromptResponse(
+  text: string,
+  match: RegExpExecArray,
+  innerName: string
+): Promise<{ text: string; newPosition: number; processed: boolean }> {
+  // Extract template name from format PROMPT_RESPONSE=TEMPLATE_NAME
+  const templateName = innerName.split('=')[1]?.trim();
+  if (!templateName) {
+    return { text, newPosition: match.index + match[0].length, processed: false };
+  }
+
+  debugLog(`Processing PROMPT_RESPONSE reference to: ${templateName}`);
+
+  // Try to load template to verify it exists
+  let templateContent: string | null = null;
+
+  // Check cache first
+  if (templateCache[templateName]) {
+    templateContent = templateCache[templateName];
+  } else {
+    try {
+      templateContent = await tryReadTemplateFile(templateName);
+      if (templateContent) {
+        templateCache[templateName] = templateContent;
+      }
+    } catch (err) {
+      debugLog(`[ERROR] Error reading template for PROMPT_RESPONSE "${templateName}"`);
+    }
+
+    // Try alternative extensions if no extension specified
+    if (!templateContent) {
+      templateContent = await tryLoadWithAlternativeExtensions(templateName);
+    }
+  }
+
+  if (templateContent) {
+    // For PROMPT_RESPONSE, keep the tag structure (don't inline content)
+    const newTag = `{{PROMPT_RESPONSE=${templateName}}}`;
+    const result = replaceTextAndUpdateRegex(text, match, newTag);
+    return { ...result, processed: true };
+  } else {
+    debugLog(`[WARNING] Template for PROMPT_RESPONSE "${templateName}" not found`);
+    return { text, newPosition: match.index + match[0].length, processed: false };
+  }
+}
+
+/**
+ * Main function to flatten a template by replacing all references with their content
+ * Handles recursion, cycling, and special tags
  */
 export async function flattenTemplate(
   sourceText: string,
   visited: Set<string> = new Set(),
   maxDepth: number = 10
 ): Promise<string> {
+  // Handle edge cases
   if (!sourceText) return sourceText;
   if (maxDepth <= 0) {
-    console.warn('[flattenTemplate] Maximum recursion depth reached. Stopping expansion.');
+    debugLog('[ERROR] Maximum recursion depth reached');
     return sourceText;
   }
 
@@ -47,271 +197,123 @@ export async function flattenTemplate(
   let match: RegExpExecArray | null;
   let iterationCount = 0;
 
-  // For debugging purposes (only in dev mode)
-  console.log(`[flattenTemplate] Starting template flattening, depth: ${10 - maxDepth}`);
-
-  // Find all placeholders in current text before starting expansion
-  const allPlaceholders: string[] = [];
-  let matchFind: RegExpExecArray | null;
+  // Quick check if we have any placeholders to process
   const tempRegex = new RegExp(placeholderRegex);
-  while ((matchFind = tempRegex.exec(text)) !== null) {
-    allPlaceholders.push(matchFind[1].trim());
+  const allPlaceholders: string[] = [];
+  let tempMatch: RegExpExecArray | null;
+
+  while ((tempMatch = tempRegex.exec(text)) !== null) {
+    allPlaceholders.push(tempMatch[1].trim());
   }
 
-  if (allPlaceholders.length > 0) {
-    console.log(
-      `[flattenTemplate] Found ${allPlaceholders.length} placeholders to process: ${allPlaceholders.join(', ')}`
-    );
-  } else {
-    console.log(`[flattenTemplate] No placeholders found in template`);
-    return text; // Early return if no placeholders
+  if (allPlaceholders.length === 0) {
+    return text; // No work needed
   }
+
+  debugLog(
+    `Starting template flattening with ${allPlaceholders.length} placeholders, depth: ${10 - maxDepth}`
+  );
 
   // Reset regex for main processing
   placeholderRegex.lastIndex = 0;
 
+  // Process each placeholder
   while ((match = placeholderRegex.exec(text)) !== null) {
     iterationCount++;
-    if (iterationCount > 1000) {
-      console.warn('[flattenTemplate] Exceeded 1000 expansions - possible recursion loop?');
+    if (iterationCount > MAX_ITERATIONS) {
+      debugLog(`[ERROR] Exceeded ${MAX_ITERATIONS} expansions - possible infinite loop`);
       break;
     }
 
-    const fullPlaceholder = match[0]; // e.g. "{{SOMETHING}}"
-    const innerName = match[1].trim(); // e.g. "SOMETHING" or "PROMPT_RESPONSE=TEMPLATE_NAME"
+    const placeholder = match[0]; // e.g. "{{SOMETHING}}"
+    const tagName = match[1].trim(); // e.g. "SOMETHING" or "PROMPT_RESPONSE=TEMPLATE_NAME"
+
+    debugLog(`Processing placeholder: ${placeholder}`);
 
     // Handle PROMPT_RESPONSE special case
-    if (innerName.startsWith('PROMPT_RESPONSE=')) {
-      const templateName = innerName.split('=')[1]?.trim();
-      if (templateName) {
-        console.log(`[flattenTemplate] Processing PROMPT_RESPONSE reference to: ${templateName}`);
-
-        // Try to load the referenced template
-        let templateContent: string | null = null;
-
-        // Check if we have this template in cache already
-        if (templateCache[templateName]) {
-          console.log(
-            `[flattenTemplate] Using cached template for PROMPT_RESPONSE: ${templateName}`
-          );
-          templateContent = templateCache[templateName];
-        } else {
-          try {
-            console.log(
-              `[flattenTemplate] Trying to read template for PROMPT_RESPONSE: ${templateName}`
-            );
-            templateContent = await tryReadTemplateFile(templateName);
-
-            if (templateContent) {
-              console.log(`[flattenTemplate] Successfully read template: ${templateName}`);
-              // Cache the template for future use
-              templateCache[templateName] = templateContent;
-            }
-          } catch (err) {
-            console.error(
-              `[flattenTemplate] Error reading template file for PROMPT_RESPONSE "${templateName}":`,
-              err
-            );
-          }
-
-          // If template couldn't be read, try with alternative extensions
-          if (!templateContent && !templateName.includes('.')) {
-            const altNames = [`${templateName}.txt`, `${templateName}.md`];
-            for (const altName of altNames) {
-              try {
-                console.log(
-                  `[flattenTemplate] Trying alternative name for PROMPT_RESPONSE: ${altName}`
-                );
-                templateContent = await tryReadTemplateFile(altName);
-                if (templateContent) {
-                  console.log(`[flattenTemplate] Found template with alternative name: ${altName}`);
-                  // Cache both the original name and the alternative name
-                  templateCache[templateName] = templateContent;
-                  templateCache[altName] = templateContent;
-                  break;
-                }
-              } catch {
-                // Ignore errors for alternative names
-              }
-            }
-          }
-        }
-
-        if (templateContent) {
-          // Found content for the PROMPT_RESPONSE template
-          // We should keep the original template name in the placeholder
-          // NOT replace it with the content, which is causing the bug
-          // where template content shows up as filenames
-          const newTag = `{{PROMPT_RESPONSE=${templateName}}}`;
-          text = text.replace(fullPlaceholder, newTag);
-          console.log(
-            `[flattenTemplate] Replaced PROMPT_RESPONSE template reference with its name tag (not content)`
-          );
-
-          // Reset the regex to start from the beginning again to catch any missed placeholders
-          placeholderRegex.lastIndex = 0;
-        } else {
-          // Template not found, log warning but keep original placeholder
-          console.warn(
-            `[flattenTemplate] Could not read template for PROMPT_RESPONSE "${templateName}", leaving as-is`
-          );
-
-          // Show possible paths for debugging
-          try {
-            const possiblePaths = await getDebugTemplatePaths(templateName);
-            if (possiblePaths && possiblePaths.length > 0) {
-              console.log(`[flattenTemplate] Checked these paths for "${templateName}":`);
-              possiblePaths.forEach(p => console.log(`  - ${p}`));
-            }
-          } catch (err) {
-            console.log('[flattenTemplate] Could not retrieve debug paths for template');
-          }
-        }
-
-        continue;
-      }
-    }
-
-    // Skip special tags that shouldn't be expanded
-    if (isSpecialTag(innerName)) {
-      console.log(`[flattenTemplate] Skipping special tag: {{${innerName}}}`);
+    if (tagName.startsWith('PROMPT_RESPONSE=')) {
+      const result = await processPromptResponse(text, match, tagName);
+      text = result.text;
+      placeholderRegex.lastIndex = result.newPosition;
       continue;
     }
 
-    // Skip if we've seen this template before in the current expansion path
-    if (visited.has(innerName)) {
-      console.warn(
-        `[flattenTemplate] Detected cycle or repeated reference for "{{${innerName}}}", leaving as-is`
-      );
+    // Skip special tags
+    if (isSpecialTag(tagName)) {
+      debugLog(`Skipping special tag: {{${tagName}}}`);
       continue;
     }
 
-    // Skip if we know globally that this template is missing
-    if (globalMissingTemplateCache.has(innerName)) {
-      if (!unknownPlaceholdersLogged.has(innerName)) {
-        unknownPlaceholdersLogged.add(innerName);
-        console.warn(`[flattenTemplate] Previously failed template: "{{${innerName}}}", skipping`);
+    // Skip if we've seen this template before (cycle detection)
+    if (visited.has(tagName)) {
+      debugLog(`[WARNING] Detected cycle for "{{${tagName}}}"`);
+      continue;
+    }
+
+    // Skip known missing templates
+    if (globalMissingTemplateCache.has(tagName)) {
+      if (!unknownPlaceholdersLogged.has(tagName)) {
+        unknownPlaceholdersLogged.add(tagName);
+        debugLog(`[WARNING] Using previously failed template: {{${tagName}}}`);
       }
       continue;
     }
 
-    // Check if we have this template in cache already
-    if (templateCache[innerName]) {
-      console.log(`[flattenTemplate] Using cached template for: {{${innerName}}}`);
+    // Use cached template content if available
+    if (templateCache[tagName]) {
+      debugLog(`Using cached template: {{${tagName}}}`);
       const flattenedChild = await flattenTemplate(
-        templateCache[innerName],
-        new Set(visited),
+        templateCache[tagName],
+        new Set([...visited, tagName]),
         maxDepth - 1
       );
-      text = text.replace(fullPlaceholder, flattenedChild);
-      placeholderRegex.lastIndex = 0;
+
+      const result = replaceTextAndUpdateRegex(text, match, flattenedChild);
+      text = result.text;
+      placeholderRegex.lastIndex = result.newPosition;
       continue;
     }
 
-    // Track this template in the current expansion path
-    visited.add(innerName);
+    // Create new visited set for tracking this expansion path
+    const newVisited = new Set([...visited, tagName]);
 
-    let replacement: string | null = null;
+    // Try to load the template
+    let templateContent: string | null = null;
     try {
-      // Attempt to read the template file with detailed error logging
-      console.log(`[flattenTemplate] Trying to read template: {{${innerName}}}`);
-      replacement = await tryReadTemplateFile(innerName);
-
-      if (replacement) {
-        console.log(`[flattenTemplate] Successfully read template: {{${innerName}}}`);
-        // Cache the template for future use
-        templateCache[innerName] = replacement;
+      templateContent = await tryReadTemplateFile(tagName);
+      if (templateContent) {
+        debugLog(`Loaded template: {{${tagName}}}`);
+        templateCache[tagName] = templateContent;
       }
     } catch (err) {
-      if (!unknownPlaceholdersLogged.has(innerName)) {
-        unknownPlaceholdersLogged.add(innerName);
-        console.error(`[flattenTemplate] Error reading template file for "{{${innerName}}}":`, err);
-      }
+      debugLog(`[ERROR] Error reading template {{${tagName}}}`);
     }
 
-    if (!replacement) {
-      // If template couldn't be read, try with alternative extensions if no extension
-      if (!innerName.includes('.')) {
-        const altNames = [`${innerName}.txt`, `${innerName}.md`];
-        for (const altName of altNames) {
-          try {
-            console.log(`[flattenTemplate] Trying alternative name: {{${altName}}}`);
-            replacement = await tryReadTemplateFile(altName);
-            if (replacement) {
-              console.log(`[flattenTemplate] Found template with alternative name: {{${altName}}}`);
-              // Cache both the original name and the alternative name
-              templateCache[innerName] = replacement;
-              templateCache[altName] = replacement;
-              break;
-            }
-          } catch {
-            // Ignore errors for alternative names
-          }
-        }
-      }
+    // Try with alternative extensions if needed
+    if (!templateContent) {
+      templateContent = await tryLoadWithAlternativeExtensions(tagName);
     }
 
-    if (!replacement) {
-      // Template not found, log details and leave the placeholder as-is
-      if (!unknownPlaceholdersLogged.has(innerName)) {
-        unknownPlaceholdersLogged.add(innerName);
-        console.warn(
-          `[flattenTemplate] Could not read template for "{{${innerName}}}", leaving as-is`
-        );
-        globalMissingTemplateCache.add(innerName); // Remember this failure
-
-        // Show possible paths for debugging
-        try {
-          const possiblePaths = await getDebugTemplatePaths(innerName);
-          if (possiblePaths && possiblePaths.length > 0) {
-            console.log(`[flattenTemplate] Checked these paths for "${innerName}":`);
-            possiblePaths.forEach(p => console.log(`  - ${p}`));
-          }
-        } catch (err) {
-          console.log('[flattenTemplate] Could not retrieve debug paths for template');
-        }
-
-        // Suggest where to create the template file
-        console.log(
-          `[flattenTemplate] To fix this, create a template file named "${innerName}" or "${innerName}.txt" in either:`
-        );
-        console.log(`  - .prompt-composer/template/ in your project directory`);
-        console.log(`  - ~/.prompt-composer/template/ in your home directory`);
+    // Handle missing template
+    if (!templateContent) {
+      if (!unknownPlaceholdersLogged.has(tagName)) {
+        unknownPlaceholdersLogged.add(tagName);
+        debugLog(`[CRITICAL] Template {{${tagName}}} not found in any location`);
+        globalMissingTemplateCache.add(tagName);
       }
       continue;
     }
 
-    // Successfully found a template, recursively flatten any nested references in it
-    console.log(`[flattenTemplate] Recursively processing nested templates in {{${innerName}}}`);
-    const flattenedChild = await flattenTemplate(replacement, new Set(visited), maxDepth - 1);
+    // Recursively process the template content
+    const flattenedChild = await flattenTemplate(templateContent, newVisited, maxDepth - 1);
 
-    // Replace the placeholder with the flattened content
-    text = text.replace(fullPlaceholder, flattenedChild);
-    console.log(
-      `[flattenTemplate] Replaced {{${innerName}}} with its content (${flattenedChild.length} chars)`
-    );
+    // Replace placeholder with processed content
+    const result = replaceTextAndUpdateRegex(text, match, flattenedChild);
+    text = result.text;
+    placeholderRegex.lastIndex = result.newPosition;
 
-    // Reset the regex to start from the beginning again
-    placeholderRegex.lastIndex = 0;
+    debugLog(`Replaced {{${tagName}}} with ${flattenedChild.length} chars of content`);
   }
 
   return text;
-}
-
-/**
- * Check if a placeholder name represents a special tag that shouldn't be expanded
- */
-function isSpecialTag(placeholderName: string): boolean {
-  // List of placeholders that shouldn't be expanded
-  const specialTags = ['FILE_BLOCK', 'TEXT_BLOCK'];
-
-  // Check if it's a special tag that should be left as-is
-  // (but not PROMPT_RESPONSE, which needs special handling)
-  for (const tag of specialTags) {
-    if (placeholderName === tag || placeholderName.startsWith(tag + '=')) {
-      return true;
-    }
-  }
-
-  return false;
 }

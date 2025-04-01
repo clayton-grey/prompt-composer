@@ -76,6 +76,12 @@ electron_1.contextBridge.exposeInMainWorld('electronAPI', {
         return electron_1.ipcRenderer.invoke('get-home-directory');
     },
     /**
+     * Removes a directory from the projectDirectories list in the main process
+     */
+    removeProjectDirectory: (folderPath) => {
+        return electron_1.ipcRenderer.invoke('remove-project-directory', folderPath);
+    },
+    /**
      * Lists all template files from global and project .prompt-composer directories
      */
     listAllTemplateFiles: async (args) => {

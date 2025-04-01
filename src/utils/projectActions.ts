@@ -20,6 +20,7 @@
  */
 
 import { TreeNode, DirectoryListing } from '../context/ProjectContext';
+import { clearTemplateCaches } from './readTemplateFile';
 
 export interface ProjectActionsParams {
   directoryCache: Record<string, DirectoryListing>;
@@ -47,7 +48,7 @@ export interface ProjectActionsParams {
 export async function getDirectoryListing(
   dirPath: string,
   params: ProjectActionsParams,
-  options?: { shallow?: boolean }
+  options?: { shallow?: boolean; addToProjectDirectories?: boolean }
 ): Promise<DirectoryListing | null> {
   if (params.directoryCache[dirPath] && !options?.shallow) {
     // Return from cache
@@ -62,6 +63,7 @@ export async function getDirectoryListing(
   try {
     const result = await window.electronAPI.listDirectory(dirPath, {
       shallow: options?.shallow ?? false,
+      addToProjectDirectories: options?.addToProjectDirectories ?? false,
     });
     params.setDirectoryCache(prev => ({ ...prev, [dirPath]: result }));
     return result;
@@ -308,13 +310,19 @@ export async function refreshFolders(
   folderPaths: string[],
   params: ProjectActionsParams
 ): Promise<void> {
+  // Clear template caches to ensure fresh data
+  clearTemplateCaches();
+
   for (const fPath of folderPaths) {
     if (!window.electronAPI?.listDirectory) {
       console.warn('[projectActions] refreshFolders: electronAPI.listDirectory is unavailable');
       continue;
     }
     try {
-      const freshListing = await window.electronAPI.listDirectory(fPath, { shallow: false });
+      const freshListing = await window.electronAPI.listDirectory(fPath, {
+        shallow: false,
+        addToProjectDirectories: true,
+      });
       if (freshListing) {
         params.setDirectoryCache(prev => ({
           ...prev,
@@ -384,6 +392,7 @@ export async function addProjectFolder(
 ): Promise<void> {
   params.setProjectFolders(prev => {
     if (!prev.includes(folderPath)) {
+      clearTemplateCaches();
       return [...prev, folderPath];
     }
     return prev;
@@ -393,7 +402,10 @@ export async function addProjectFolder(
 
   let listing = params.directoryCache[folderPath];
   if (!listing) {
-    listing = await getDirectoryListing(folderPath, params, { shallow: false });
+    listing = await getDirectoryListing(folderPath, params, {
+      shallow: false,
+      addToProjectDirectories: true,
+    });
   }
   if (!listing) {
     console.warn('[projectActions] addProjectFolder: listing not found after refresh', folderPath);
@@ -450,8 +462,33 @@ export async function addProjectFolder(
  * Removes a folder from the projectFolders list. We do not remove from nodeStates or directoryCache
  * unless further cleanup is explicitly needed by the UI logic.
  */
-export function removeProjectFolder(folderPath: string, params: ProjectActionsParams): void {
+export async function removeProjectFolder(
+  folderPath: string,
+  params: ProjectActionsParams
+): Promise<void> {
   params.setProjectFolders(prev => prev.filter(p => p !== folderPath));
-  // optionally remove nodeStates & directoryCache for this folder
-  // leaving them in place for now
+
+  clearTemplateCaches();
+
+  if (window.electronAPI?.removeProjectDirectory) {
+    try {
+      await window.electronAPI.removeProjectDirectory(folderPath);
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        console.error(
+          `[projectActions] Failed to remove project directory from main process: ${folderPath}`,
+          err.message
+        );
+      } else {
+        console.error(
+          `[projectActions] Failed to remove project directory from main process: ${folderPath}`,
+          err
+        );
+      }
+    }
+  } else {
+    console.warn(
+      '[projectActions] removeProjectDirectory: electronAPI.removeProjectDirectory is unavailable'
+    );
+  }
 }

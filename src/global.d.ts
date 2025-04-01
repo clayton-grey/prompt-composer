@@ -21,7 +21,10 @@ interface PermissionsResult {
 
 interface ElectronAPI {
   // File system operations
-  listDirectory: (path: string) => Promise<string[]>;
+  listDirectory: (
+    path: string,
+    options?: { shallow?: boolean; addToProjectDirectories?: boolean }
+  ) => Promise<any>;
   readFile: (path: string) => Promise<string>;
   writeFile: (path: string, content: string) => Promise<void>;
   createFolder: (path: string) => Promise<void>;
@@ -46,6 +49,7 @@ interface ElectronAPI {
   checkPermissions: () => Promise<any>;
   checkFilesystemPermissions: () => Promise<PermissionsResult>;
   getTemplatePaths: (templateName: string) => Promise<string[]>;
+  removeProjectDirectory: (folderPath: string) => Promise<boolean>;
 
   // IPC operations
   sendMessage: (channel: string, message: any) => void;

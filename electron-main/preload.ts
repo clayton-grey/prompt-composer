@@ -40,7 +40,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /**
    * Lists the contents of a directory, returning a DirectoryListing object
    */
-  listDirectory: async (dirPath: string, options?: { shallow?: boolean }) => {
+  listDirectory: async (dirPath: string, options?: { shallow?: boolean; addToProjectDirectories?: boolean }) => {
     return ipcRenderer.invoke('list-directory', dirPath, options);
   },
 
@@ -87,6 +87,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   getHomeDirectory: async () => {
     return ipcRenderer.invoke('get-home-directory');
+  },
+
+  /**
+   * Removes a directory from the projectDirectories list in the main process
+   */
+  removeProjectDirectory: (folderPath: string) => {
+    return ipcRenderer.invoke('remove-project-directory', folderPath);
   },
 
   /**
