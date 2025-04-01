@@ -13,6 +13,7 @@
     "start:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && npm run compile-electron && cross-env NODE_ENV=development electron .\"",
     "build:electron": "npm run compile-electron && electron-builder",
     "dist:all": "npm run build && npm run build:electron",
+    "postdist:all": "./scripts/sign-mac-app.sh",
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,md}\"",
     "prepare": "husky"
   },
@@ -50,12 +51,34 @@
     "files": [
       "dist/",
       "dist/electron-main/",
-      "package.json"
+      "package.json",
+      "node_modules/**/*"
     ],
     "directories": {
       "buildResources": "build",
       "output": "release"
-    }
+    },
+    "asarUnpack": [
+      "node_modules/@dqbd/tiktoken"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": "dmg",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "darkModeSupport": true,
+      "identity": null,
+      "artifactName": "${productName}.${ext}",
+      "extraResources": [
+        {
+          "from": "build/entitlements.mac.plist",
+          "to": "entitlements.mac.plist"
+        }
+      ]
+    },
+    "afterSign": "./scripts/notarize.js"
   },
   "lint-staged": {
     "src/**/*.{ts,tsx,js,jsx,json,css,md}": [

@@ -1,77 +1,176 @@
 /**
  * @file readTemplateFile.ts
  * @description
- * Provides a shared utility function for reading a template file from either the
- * project .prompt-composer folder or the global .prompt-composer folder. This replaces
- * the duplicated tryReadTemplateFile logic found in templateBlockParserAsync.ts and
- * templateResolver.ts, centralizing it in one place.
+ * Provides utilities for reading template files from various locations.
+ * This includes support for both global templates (shared across projects)
+ * and local templates (specific to the current project).
  *
- * Exported Function:
- *  - tryReadTemplateFile(baseName: string): Promise<string | null>
- *    Attempts to read the file from:
- *      1) project .prompt-composer
- *      2) global .prompt-composer
- *      - if the file has no extension, also tries .txt and .md
- *
- * Implementation Details:
- *  - We rely on electronAPI.readPromptComposerFile and electronAPI.readGlobalPromptComposerFile
- *    to fetch file contents. If not found in either location, returns null.
- *  - If the baseName has no extension, we try with .txt and .md appended.
- *  - This ensures consistent fallback behavior in both templateBlockParserAsync and templateResolver.
- *
- * Edge Cases:
- *  - If electronAPI is unavailable, logs a warning and returns null.
- *  - If the file does not exist in project or global directories (with or without .txt/.md), returns null.
- *  - Caller is responsible for handling the null case (missing file).
+ * Enhanced for production mode:
+ * - Improved error handling
+ * - Better path resolution using IPC for renderer process
+ * - Added special handling for sandboxed environments
+ * - More logging for debugging
  */
+
+// Remove direct electron import - this causes __dirname errors in production
+// import { ipcRenderer } from 'electron';
+
+// Cache of template files that we've already verified don't exist
+// to avoid repeated filesystem checks for missing files
+const missingTemplateCache = new Set<string>();
 
 /**
- * Tries to read a file from project .prompt-composer or global .prompt-composer.
- * If the passed-in baseName has no extension, it also tries appending .txt and .md.
+ * Attempts to read a template file from the specified locations, trying
+ * local project templates first, then global templates.
  *
- * @param baseName - The file name or name+extension (e.g. "HELLO.txt" or "HELLO")
- * @returns A Promise resolving to the file contents, or null if not found.
+ * @param templateName - The name of the template to read
+ * @returns The contents of the template file, or null if not found
  */
-export async function tryReadTemplateFile(baseName: string): Promise<string | null> {
-  if (!window.electronAPI) {
-    console.warn('[readTemplateFile] electronAPI not available. Returning null.');
+export async function tryReadTemplateFile(templateName: string): Promise<string | null> {
+  // Don't attempt to look up templates we already know don't exist
+  const cacheKey = templateName.toLowerCase();
+  if (missingTemplateCache.has(cacheKey)) {
+    console.log(`[readTemplateFile] Skipping known missing template: ${templateName}`);
     return null;
   }
 
-  // Attempt direct read from project .prompt-composer
-  let content = await window.electronAPI.readPromptComposerFile(baseName);
-  if (content) {
-    return content;
-  }
+  try {
+    // First try using our special IPC handler that's safer in production mode
+    if (window.electronAPI?.readTemplateFile) {
+      console.log(`[readTemplateFile] Using IPC to read template: ${templateName}`);
 
-  // Attempt direct read from global .prompt-composer
-  content = await window.electronAPI.readGlobalPromptComposerFile(baseName);
-  if (content) {
-    return content;
-  }
+      const content = await window.electronAPI.readTemplateFile(templateName);
+      if (content) {
+        return content;
+      }
 
-  // If baseName includes a dot (like HELLO.txt), skip extension fallback
-  if (baseName.includes('.')) {
+      // Not found through IPC
+      console.log(`[readTemplateFile] Template not found via IPC: ${templateName}`);
+      missingTemplateCache.add(cacheKey);
+      return null;
+    }
+
+    // Fall back to the manual approach if IPC handler is not available
+    console.log(`[readTemplateFile] Using manual path approach for template: ${templateName}`);
+
+    // Try with original name
+    let content = await readTemplateWithName(templateName);
+    if (content) {
+      return content;
+    }
+
+    // If no extension, try with .txt and .md extensions
+    if (!templateName.includes('.')) {
+      content = await readTemplateWithName(templateName + '.txt');
+      if (content) {
+        return content;
+      }
+
+      content = await readTemplateWithName(templateName + '.md');
+      if (content) {
+        return content;
+      }
+    }
+
+    // Not found in any location
+    console.log(`[readTemplateFile] Template not found: ${templateName}`);
+    missingTemplateCache.add(cacheKey);
+    return null;
+  } catch (error) {
+    console.error(`[readTemplateFile] Error reading template ${templateName}:`, error);
+    // Cache the miss so we don't keep trying
+    missingTemplateCache.add(cacheKey);
     return null;
   }
+}
 
-  // If no extension, try .txt and .md
-  const possibleExts = ['.txt', '.md'];
-  for (const ext of possibleExts) {
-    const fullName = baseName + ext;
+/**
+ * Read a template with a specific name from all possible locations
+ */
+async function readTemplateWithName(templateName: string): Promise<string | null> {
+  try {
+    // First try project-specific template
+    const projectContent = await readPromptComposerFile(templateName, 'template');
+    if (projectContent) {
+      console.log(`[readTemplateFile] Found project template: ${templateName}`);
+      return projectContent;
+    }
 
-    // Project
-    let c = await window.electronAPI.readPromptComposerFile(fullName);
-    if (c) {
-      return c;
+    // Then try global template
+    const globalContent = await readGlobalPromptComposerFile(templateName, 'template');
+    if (globalContent) {
+      console.log(`[readTemplateFile] Found global template: ${templateName}`);
+      return globalContent;
     }
-    // Global
-    c = await window.electronAPI.readGlobalPromptComposerFile(fullName);
-    if (c) {
-      return c;
-    }
+
+    return null;
+  } catch (error) {
+    console.error(`[readTemplateFile] Error in readTemplateWithName for ${templateName}:`, error);
+    return null;
   }
+}
 
-  // Not found in any location
-  return null;
+/**
+ * Reads a file from the global .prompt-composer directory
+ *
+ * @param fileName - The name of the file to read
+ * @param subDirectory - Optional subdirectory within .prompt-composer
+ * @returns The contents of the file, or null if not found or error
+ */
+export async function readGlobalPromptComposerFile(
+  fileName: string,
+  subDirectory?: string
+): Promise<string | null> {
+  try {
+    // Use window.electronAPI instead of direct ipcRenderer
+    if (!window.electronAPI) {
+      console.error('[readTemplateFile] No electronAPI available');
+      return null;
+    }
+    return await window.electronAPI.readGlobalPromptComposerFile(fileName, subDirectory);
+  } catch (error) {
+    console.error(`[readTemplateFile] Error reading global file ${fileName}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Reads a file from the project's .prompt-composer directory
+ *
+ * @param fileName - The name of the file to read
+ * @param subDirectory - Optional subdirectory within .prompt-composer
+ * @returns The contents of the file, or null if not found or error
+ */
+export async function readPromptComposerFile(
+  fileName: string,
+  subDirectory?: string
+): Promise<string | null> {
+  try {
+    // Use window.electronAPI instead of direct ipcRenderer
+    if (!window.electronAPI) {
+      console.error('[readTemplateFile] No electronAPI available');
+      return null;
+    }
+    return await window.electronAPI.readPromptComposerFile(fileName, subDirectory);
+  } catch (error) {
+    console.error(`[readTemplateFile] Error reading project file ${fileName}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Gets the full list of possible template paths for debugging purposes
+ */
+export async function getDebugTemplatePaths(templateName: string): Promise<string[]> {
+  try {
+    // Use window.electronAPI instead of direct ipcRenderer
+    if (!window.electronAPI?.getTemplatePaths) {
+      console.error('[readTemplateFile] No getTemplatePaths API available');
+      return [];
+    }
+    return await window.electronAPI.getTemplatePaths(templateName);
+  } catch (error) {
+    console.error(`[readTemplateFile] Error getting template paths for ${templateName}:`, error);
+    return [];
+  }
 }

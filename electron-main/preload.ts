@@ -1,4 +1,3 @@
-
 /**
  * @file preload.ts
  * @description
@@ -112,10 +111,39 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   /**
+   * Reads a template file from either global or project templates
+   * This is a simplified method that handles all the path resolution internally
+   */
+  readTemplateFile: async (templateName: string) => {
+    return ipcRenderer.invoke('read-template-file', templateName);
+  },
+
+  /**
    * Writes a file to the project's .prompt-composer folder
    */
   writePromptComposerFile: async (args: { relativeFilename: string; content: string }) => {
     return ipcRenderer.invoke('write-prompt-composer-file', args);
+  },
+
+  /**
+   * Tests filesystem permissions and reports results
+   */
+  checkPermissions: async () => {
+    return ipcRenderer.invoke('check-permissions');
+  },
+
+  /**
+   * Checks filesystem permissions for various directories
+   */
+  checkFilesystemPermissions: () => {
+    return ipcRenderer.invoke('check-filesystem-permissions');
+  },
+
+  /**
+   * Gets possible template paths for debugging
+   */
+  getTemplatePaths: (templateName: string) => {
+    return ipcRenderer.invoke('get-template-paths', templateName);
   }
 });
       
