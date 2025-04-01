@@ -36,7 +36,7 @@ export interface ProjectContextType {
   refreshFolders: (folderPaths: string[]) => Promise<void>;
   projectFolders: string[];
   addProjectFolder: (folderPath: string) => Promise<void>;
-  removeProjectFolder: (folderPath: string) => void;
+  removeProjectFolder: (folderPath: string) => Promise<void>;
 }
 
 const ProjectContext = createContext<ProjectContextType>({
@@ -53,7 +53,7 @@ const ProjectContext = createContext<ProjectContextType>({
   refreshFolders: async () => {},
   projectFolders: [],
   addProjectFolder: async () => {},
-  removeProjectFolder: () => {},
+  removeProjectFolder: async () => {},
 });
 
 export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
@@ -415,9 +415,9 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    * removeProjectFolder
    */
   const removeProjectFolder = useCallback(
-    (folderPath: string) => {
+    async (folderPath: string) => {
       try {
-        projectActions.removeProjectFolder(folderPath, {
+        await projectActions.removeProjectFolder(folderPath, {
           directoryCache,
           setDirectoryCache,
           nodeStates,

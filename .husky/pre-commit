@@ -1,4 +1,11 @@
 #!/usr/bin/env sh
 . "$(dirname -- "$0")/_/husky.sh"
 
+# Auto-increment patch version
+npm version patch --no-git-tag-version
+
+# Add the updated package.json and package-lock.json to staging
+git add package.json package-lock.json
+
+# Run lint-staged
 npx lint-staged

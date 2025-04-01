@@ -48,4 +48,31 @@ export interface DirectoryListing {
    * Array of TreeNode children in this directory
    */
   children: TreeNode[];
-} 
+}
+
+/**
+ * DirectoryPath
+ * 
+ * Just an alias type for strings that are intended to be directory paths.
+ */
+export type DirectoryPath = string;
+
+/**
+ * FilePath
+ * 
+ * Just an alias type for strings that are intended to be file paths.
+ */
+export type FilePath = string;
+
+declare global {
+  namespace NodeJS {
+    interface Global {
+      projectRoot: string | null;
+    }
+  }
+  
+  var projectRoot: string | null;
+}
+
+// Default initialization
+global.projectRoot = null; 

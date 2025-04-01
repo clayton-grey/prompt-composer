@@ -22,6 +22,7 @@ import { parseTemplateBlocksAsync } from '../../utils/templateBlockParserAsync';
 import { Block } from '../../types/Block';
 import { useProject } from '../../context/ProjectContext';
 import { useToast } from '../../context/ToastContext';
+import { clearTemplateCaches } from '../../utils/readTemplateFile';
 
 interface TemplateSelectorModalProps {
   isOpen: boolean;
@@ -83,6 +84,10 @@ const TemplateSelectorModal: React.FC<TemplateSelectorModalProps> = ({
   async function loadTemplates() {
     try {
       setLoading(true);
+
+      // Clear template caches before loading templates
+      clearTemplateCaches();
+
       if (!window.electronAPI?.listAllTemplateFiles) {
         showToast('Could not load template list - electronAPI unavailable.', 'error');
         setTemplateFiles([]);

@@ -14,6 +14,19 @@ import { v4 as uuidv4 } from 'uuid';
 import { Block, TextBlock, TemplateBlock, FilesBlock, PromptResponseBlock } from '../types/Block';
 import { flattenTemplate } from './flattenTemplate';
 
+// Fix TypeScript error with window.electronAPI
+declare global {
+  interface Window {
+    electronAPI?: {
+      readPromptComposerFile: (fileName: string, subDirectory?: string) => Promise<string | null>;
+      readGlobalPromptComposerFile: (
+        fileName: string,
+        subDirectory?: string
+      ) => Promise<string | null>;
+    };
+  }
+}
+
 type ErrorCallback = (message: string) => void;
 
 /**
@@ -247,7 +260,20 @@ function parsePlaceholder(
   }
 
   if (placeholderName === 'PROMPT_RESPONSE') {
-    const filename = (placeholderValue ?? 'untitled.txt').trim();
+    // Check if placeholderValue looks like template content rather than a filename
+    // This happens when the template content is mistakenly used as a filename
+    let filename = 'untitled.txt';
+    if (placeholderValue) {
+      if (placeholderValue.length > 100 || placeholderValue.includes('\n')) {
+        console.warn(
+          'Detected template content passed as filename. Using default filename instead.'
+        );
+        // Continue with default filename
+      } else {
+        filename = placeholderValue.trim();
+      }
+    }
+
     const prb: PromptResponseBlock = {
       id: newId(),
       type: 'promptResponse',

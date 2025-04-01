@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Basic app execution permissions -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+  <key>com.apple.security.cs.debugger</key>
+  <true/>
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+  
+  <!-- File system access permissions -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+  <key>com.apple.security.files.user-selected.read-only</key>
+  <true/>
+  <key>com.apple.security.files.downloads.read-write</key>
+  <true/>
+  <key>com.apple.security.files.all</key>
+  <true/>
+  
+  <!-- Network permissions -->
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.security.network.server</key>
+  <true/>
+  
+  <!-- Automation permissions -->
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+  
+  <!-- App sandbox exceptions -->
+  <key>com.apple.security.app-sandbox</key>
+  <false/>
+  
+  <!-- Device permissions -->
+  <key>com.apple.security.device.camera</key>
+  <true/>
+  <key>com.apple.security.device.microphone</key>
+  <true/>
+  <key>com.apple.security.device.usb</key>
+  <true/>
+  
+  <!-- Specific path exceptions -->
+  <key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key>
+  <array>
+    <string>/.prompt-composer/</string>
+    <string>/Documents/</string>
+    <string>/Library/Caches/</string>
+    <string>/Library/Application Support/</string>
+    <string>/Desktop/</string>
+    <string>/Downloads/</string>
+    <string>/.cache/</string>
+    <string>/.config/</string>
+    <string>/Library/</string>
+  </array>
+  
+  <key>com.apple.security.temporary-exception.files.absolute-path.read-write</key>
+  <array>
+    <string>/tmp/</string>
+    <string>/private/tmp/</string>
+    <string>/var/tmp/</string>
+    <string>/private/var/tmp/</string>
+  </array>
+</dict>
+</plist> 
