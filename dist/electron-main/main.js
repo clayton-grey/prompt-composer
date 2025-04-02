@@ -308,6 +308,12 @@ function initializeProjectRoot() {
 /**
  * Creates the main application window with specified settings.
  */
+function getIconPath() {
+    if (process.env.NODE_ENV === "development") {
+        return path_1.default.join(process.cwd(), "build", "icon.png");
+    }
+    return "";
+}
 function createWindow() {
     // After building, we expect: dist/electron-main/preload.js
     // so __dirname is dist/electron-main, and we add 'preload.js'
@@ -316,7 +322,8 @@ function createWindow() {
     mainWindow = new electron_1.BrowserWindow({
         width: 1200,
         height: 800,
-        title: 'Prompt Composer',
+        title: "Prompt Composer",
+        icon: getIconPath(),
         webPreferences: {
             preload: preloadPath,
             nodeIntegration: false,
