@@ -21,8 +21,17 @@ import * as os from 'os';
 
 let mainWindow: BrowserWindow | null = null;
 
-// Flag to track if dev tools are open
-let isDevToolsOpen = false;
+/**
+ * Add global declarations
+ */
+declare global {
+  var isDevToolsOpen: boolean;
+  var projectRoot: string | null;
+  var templateCache: Record<string, string> | undefined;
+  var projectDirectories: string[] | undefined;
+}
+
+global.isDevToolsOpen = false;
 
 // Add additional debugging logs for diagnosing issues in packaged builds
 const DEBUG_PROD = process.env.DEBUG_PROD === 'true' || process.env.DEBUG_PROD === '1';
@@ -33,7 +42,7 @@ const logFile = path.join(os.homedir(), '.prompt-composer', 'app.log');
 // Function to initialize logging
 function initializeLogging() {
   // Only set up logging in development or when debug tools are open in production
-  if (process.env.NODE_ENV !== 'development' && !isDevToolsOpen && !DEBUG_PROD) {
+  if (process.env.NODE_ENV !== 'development' && !global.isDevToolsOpen && !DEBUG_PROD) {
     return;
   }
 
@@ -62,7 +71,7 @@ function initializeLogging() {
     
     const timestamp = new Date().toISOString();
     // Only write to file if in development or debug tools are open
-    if (process.env.NODE_ENV === 'development' || isDevToolsOpen || DEBUG_PROD) {
+    if (process.env.NODE_ENV === 'development' || global.isDevToolsOpen || DEBUG_PROD) {
       logStream.write(`[${timestamp}] ${message}\n`);
     }
     originalLog.apply(console, args);
@@ -77,7 +86,7 @@ function initializeLogging() {
     
     const timestamp = new Date().toISOString();
     // Only write to file if in development or debug tools are open
-    if (process.env.NODE_ENV === 'development' || isDevToolsOpen || DEBUG_PROD) {
+    if (process.env.NODE_ENV === 'development' || global.isDevToolsOpen || DEBUG_PROD) {
       logStream.write(`[${timestamp}] ERROR: ${message}\n`);
     }
     originalError.apply(console, args);
@@ -92,7 +101,7 @@ function initializeLogging() {
     
     const timestamp = new Date().toISOString();
     // Only write to file if in development or debug tools are open
-    if (process.env.NODE_ENV === 'development' || isDevToolsOpen || DEBUG_PROD) {
+    if (process.env.NODE_ENV === 'development' || global.isDevToolsOpen || DEBUG_PROD) {
       logStream.write(`[${timestamp}] WARN: ${message}\n`);
     }
     originalWarn.apply(console, args);
@@ -102,15 +111,6 @@ function initializeLogging() {
 // Initialize logging only in development mode initially
 if (process.env.NODE_ENV === 'development' || DEBUG_PROD) {
   initializeLogging();
-}
-
-/**
- * Add global declarations
- */
-declare global {
-  var projectRoot: string | null;
-  var templateCache: Record<string, string> | undefined;
-  var projectDirectories: string[] | undefined;
 }
 
 /**
@@ -353,14 +353,22 @@ function createWindow(): void {
 
   // Listen for DevTools open/close events
   mainWindow.webContents.on('devtools-opened', () => {
-    isDevToolsOpen = true;
+    global.isDevToolsOpen = true;
+    // Notify renderer process
+    if (mainWindow) {
+      mainWindow.webContents.send("devtools-changed", true);
+    }
     // Initialize logging when DevTools are opened
     initializeLogging();
     console.log('[Electron Main] DevTools opened - enabling logging');
   });
   
   mainWindow.webContents.on('devtools-closed', () => {
-    isDevToolsOpen = false;
+    global.isDevToolsOpen = false;
+    // Notify renderer process
+    if (mainWindow) {
+      mainWindow.webContents.send("devtools-changed", false);
+    }
     console.log('[Electron Main] DevTools closed - logging disabled for future messages');
     // Note: We don't reset the console functions here as that could cause issues
   });

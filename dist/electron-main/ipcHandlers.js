@@ -301,6 +301,10 @@ const ensureDirectoryExists = (dirPath) => {
  * We default shallow=false and addToProjectDirectories=false if not provided.
  */
 function registerIpcHandlers() {
+    // IPC handler to check if DevTools are open
+    electron_1.ipcMain.handle("is-dev-tools-open", () => {
+        return global.isDevToolsOpen === true;
+    });
     log('Setting up IPC handlers');
     // Initialize the global project directories list if it doesn't exist
     if (!global.projectDirectories) {

@@ -334,6 +334,11 @@ const ensureDirectoryExists = (dirPath: DirectoryPath): boolean => {
  * We default shallow=false and addToProjectDirectories=false if not provided.
  */
 export function registerIpcHandlers(): void {
+  // IPC handler to check if DevTools are open
+  ipcMain.handle("is-dev-tools-open", () => {
+    return global.isDevToolsOpen === true;
+  });
+
   log('Setting up IPC handlers');
 
   // Initialize the global project directories list if it doesn't exist

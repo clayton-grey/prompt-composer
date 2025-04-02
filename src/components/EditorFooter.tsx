@@ -5,12 +5,29 @@
  * with the coins icon + the numeric usage. The user wants to show e.g. [coins icon] 120 / 2048.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { usePrompt } from '../context/PromptContext';
 import { useTheme } from '../context/ThemeContext';
 import FileSystemDebugger from './Debug/FileSystemDebugger';
 
 const EditorFooter: React.FC = () => {
+  const [isDevToolsOpen, setIsDevToolsOpen] = useState(false);
+
+  useEffect(() => {
+    // Check if DevTools are open initially
+    window.electronAPI.isDevToolsOpen().then(setIsDevToolsOpen);
+
+    // Set up event listener for DevTools state changes
+    const handleDevToolsChange = (_event: any, isOpen: boolean) => {
+      setIsDevToolsOpen(isOpen);
+    };
+
+    window.electronAPI.onMessage('devtools-changed', handleDevToolsChange);
+
+    return () => {
+      window.electronAPI.removeChannelListener('devtools-changed', handleDevToolsChange);
+    };
+  }, []);
   const { tokenUsage, settings } = usePrompt();
   const { darkMode, toggleDarkMode } = useTheme();
   const [showDebug, setShowDebug] = useState(false);
@@ -68,9 +85,10 @@ const EditorFooter: React.FC = () => {
         <div className="flex items-center gap-2">
           <button
             onClick={toggleDebug}
-            title="Toggle Debug"
-            aria-label="Toggle Debug"
+            title="Check path permissions"
+            aria-label="Check path permissions"
             className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
+            style={{ display: isDevToolsOpen ? 'block' : 'none' }}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"

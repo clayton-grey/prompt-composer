@@ -151,6 +151,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    */
   getTemplatePaths: (templateName: string) => {
     return ipcRenderer.invoke('get-template-paths', templateName);
-  }
+  },
+  isDevToolsOpen: () => { return ipcRenderer.invoke("is-dev-tools-open"); }
 });
       
