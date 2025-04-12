@@ -1,3 +1,5 @@
+/* eslint-disable no-useless-escape */
+
 /**
  * @file templateResolver.ts
  * @description

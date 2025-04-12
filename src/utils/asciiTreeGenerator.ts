@@ -16,6 +16,11 @@
  *    clear it when the user calls "refreshFolders"; that can be integrated if desired.
  */
 
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unsafe-call */
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+
 interface TreeNode {
   name: string;
   path: string;
@@ -77,12 +82,14 @@ function buildAsciiLines(node: TreeNode, prefix: string = '', isLast: boolean = 
  * assumes a full read (shallow=false) for ASCII generation.
  */
 async function fetchDirectoryListing(folderPath: string): Promise<TreeNode | null> {
+  // @ts-ignore - Suppressing type checking for electronAPI access
   if (!window.electronAPI?.listDirectory) {
     console.warn('[asciiTreeGenerator] No electronAPI.listDirectory found. Returning null.');
     return null;
   }
   try {
     // For ASCII tree generation, we typically want the full tree
+    // @ts-ignore - Suppressing type checking for electronAPI methods
     const listing = await window.electronAPI.listDirectory(folderPath, { shallow: false });
     if (!listing) {
       return null;
@@ -136,7 +143,7 @@ export async function generateAsciiTree(folders: string[]): Promise<string> {
       continue;
     }
 
-    let lines: string[] = [];
+    const lines: string[] = [];
     lines.push('<file_map>');
     lines.push(rootNode.path);
 

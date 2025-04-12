@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { checkFilesystemPermissions } from '../../utils/electronUtils';
 
 interface DirectoryPermission {
   dir: string;
@@ -80,17 +81,21 @@ export const FileSystemDebugger: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [hovered, setHovered] = useState<boolean>(false);
 
-  const checkPermissions = async () => {
+  const checkPermissionsHandler = async () => {
     try {
       setLoading(true);
       setError(null);
 
       console.log('Checking filesystem permissions...');
-      // Use the correct type-safe approach
-      const result = await window.electronAPI.checkFilesystemPermissions();
+      // Use our type-safe helper function
+      const result = await checkFilesystemPermissions();
       console.log('Filesystem permission results:', result);
 
-      setPermissions(result);
+      if (!result) {
+        throw new Error('Failed to check filesystem permissions');
+      }
+
+      setPermissions(result as PermissionsResult);
     } catch (err) {
       console.error('Error checking permissions:', err);
       setError(err instanceof Error ? err.message : String(err));
@@ -100,7 +105,7 @@ export const FileSystemDebugger: React.FC = () => {
   };
 
   useEffect(() => {
-    checkPermissions();
+    checkPermissionsHandler();
   }, []);
 
   const renderPermissionStatus = (permission: DirectoryPermission | undefined) => {
@@ -157,7 +162,7 @@ export const FileSystemDebugger: React.FC = () => {
       )}
 
       <button
-        onClick={checkPermissions}
+        onClick={checkPermissionsHandler}
         disabled={loading}
         style={{
           ...styles.refreshButton,

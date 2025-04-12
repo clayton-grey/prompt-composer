@@ -348,6 +348,7 @@ function createWindow(): void {
       preload: preloadPath,
       nodeIntegration: false,
       contextIsolation: true,
+      spellcheck: true
     },
   });
 
@@ -403,6 +404,140 @@ function createWindow(): void {
     shell.openExternal(url);
     return { action: 'deny' };
   });
+
+  // Create a main menu that includes a Reload option
+  const { Menu } = require('electron');
+  
+  const template = [
+    {
+      label: process.platform === 'darwin' ? 'Prompt Composer' : 'Application',
+      submenu: [
+        {
+          label: 'Quit',
+          accelerator: 'CmdOrCtrl+Q',
+          click: () => app.quit()
+        }
+      ]
+    },
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'Add Folder',
+          accelerator: 'CmdOrCtrl+O',
+          click: () => {
+            if (mainWindow) {
+              const eventId = Date.now().toString();
+              console.log(`[Menu] Sending add-folder command (ID: ${eventId})`);
+              mainWindow.webContents.send('add-folder', { eventId });
+            }
+          }
+        },
+        {
+          label: 'Refresh Folders',
+          accelerator: 'CmdOrCtrl+R',
+          click: () => {
+            if (mainWindow) {
+              const eventId = Date.now().toString();
+              console.log(`[Menu] Sending refresh-folders command (ID: ${eventId})`);
+              mainWindow.webContents.send('refresh-folders', { eventId });
+            }
+          }
+        }
+      ]
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'delete' },
+        { type: 'separator' },
+        { role: 'selectAll' },
+        { type: 'separator' },
+        { 
+          label: 'Copy Prompt',
+          accelerator: 'CmdOrCtrl+Shift+C',
+          click: () => {
+            if (mainWindow) {
+              const eventId = Date.now().toString();
+              console.log(`[Menu] Sending copy-prompt command (ID: ${eventId})`);
+              mainWindow.webContents.send('copy-prompt', { eventId });
+            }
+          }
+        },
+        { 
+          label: 'Copy File Block Output',
+          accelerator: 'CmdOrCtrl+Alt+C',
+          click: () => {
+            if (mainWindow) {
+              const eventId = Date.now().toString();
+              console.log(`[Menu] Sending copy-file-block-output command (ID: ${eventId})`);
+              mainWindow.webContents.send('copy-file-block-output', { eventId });
+            }
+          }
+        }
+      ]
+    },
+    {
+      label: 'View',
+      submenu: [
+        {
+          label: 'Toggle Developer Tools',
+          accelerator: process.platform === 'darwin' ? 'Alt+Command+I' : 'Ctrl+Shift+I',
+          click: (_item: any, focusedWindow: any) => {
+            if (focusedWindow) {
+              focusedWindow.webContents.toggleDevTools();
+            }
+          }
+        }
+      ]
+    }
+  ];
+  
+  // @ts-ignore - Menu.buildFromTemplate type issue
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+
+  // Enable context menu for text fields
+  if (mainWindow) {
+    mainWindow.webContents.on('context-menu', (event, params) => {
+      const { editFlags } = params;
+      if (params.isEditable || params.selectionText.trim().length > 0) {
+        const ctxMenu = Menu.buildFromTemplate([
+          { role: 'cut', enabled: editFlags.canCut },
+          { role: 'copy', enabled: editFlags.canCopy },
+          { role: 'paste', enabled: editFlags.canPaste },
+          { type: 'separator' },
+          { role: 'selectAll' }
+        ]);
+        ctxMenu.popup();
+      }
+    });
+  }
+
+  // On macOS, re-open a window on activate event if no windows
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow();
+    }
+  });
+
+  // Basic CSP for dev
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const csp =
+      "default-src 'self'; script-src 'self' 'unsafe-eval' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://localhost:* http://localhost:* blob:; img-src 'self' data:; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'self' blob:; child-src 'self' blob:;";
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [csp],
+      },
+    });
+  });
 }
 
 // Electron ready
@@ -434,56 +569,6 @@ app.whenReady().then(() => {
 
   createWindow();
   
-  // Create a main menu that includes a Reload option
-  const { Menu } = require('electron');
-  
-  const template = [
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'Quit',
-          accelerator: 'CmdOrCtrl+Q',
-          click: () => app.quit()
-        }
-      ]
-    },
-    {
-      label: 'View',
-      submenu: [
-        {
-          label: 'Reload',
-          accelerator: 'CmdOrCtrl+R',
-          click: (_item: any, focusedWindow: any) => {
-            if (focusedWindow) {
-              // Reset project root before reload
-              global.projectRoot = null;
-              // @ts-ignore - Ignore the type check for the global templateCache
-              global.templateCache = {};
-              // Initialize project root again
-              initializeProjectRoot();
-              // Reload the window
-              focusedWindow.reload();
-            }
-          }
-        },
-        {
-          label: 'Toggle Developer Tools',
-          accelerator: process.platform === 'darwin' ? 'Alt+Command+I' : 'Ctrl+Shift+I',
-          click: (_item: any, focusedWindow: any) => {
-            if (focusedWindow) {
-              focusedWindow.webContents.toggleDevTools();
-            }
-          }
-        }
-      ]
-    }
-  ];
-  
-  // @ts-ignore - Menu.buildFromTemplate type issue
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
-
   // On macOS, re-open a window on activate event if no windows
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

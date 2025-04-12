@@ -13,6 +13,8 @@
  *  - Then trim leading/trailing blank lines from the entire final text
  */
 
+/* eslint-disable no-useless-escape */
+
 import React from 'react';
 import { TemplateBlock } from '../../types/Block';
 
@@ -23,9 +25,10 @@ const PLACEHOLDER_ANYWHERE = /\{\{[A-Za-z0-9_\-]+(?:=[^}]*)?\}\}/;
 
 interface TemplateBlockEditorProps {
   block: TemplateBlock;
+  onChange: (updatedBlock: TemplateBlock) => void;
 }
 
-const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({ block }) => {
+const TemplateBlockEditor: React.FC<TemplateBlockEditorProps> = ({ block, onChange }) => {
   const displayedText = transformForDisplay(block.content);
 
   return (

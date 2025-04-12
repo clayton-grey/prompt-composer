@@ -13,10 +13,10 @@
  *    to handle errors. We removed direct console.warn/error calls and replaced them with `logError`.
  *
  * Step 1 (Debug/Perf enhancements):
- *  - Added a logDebug function that logs debug/performance info in dev mode, or if DEBUG_PROD 
+ *  - Added a logDebug function that logs debug/performance info in dev mode, or if DEBUG_PROD
  *    environment variable is set to '1' (or truthy).
  *  - Instrumented the 'list-directory' and 'read-file' handlers to measure performance timing.
- *  - Added an IPC handler 'check-permissions' to test read/write in the user's home directory, 
+ *  - Added an IPC handler 'check-permissions' to test read/write in the user's home directory,
  *    helping to diagnose disk permission issues in packaged builds.
  */
 
@@ -39,7 +39,83 @@ const ALLOWED_EXTENSIONS = [
   '.css',
   '.html',
   '.sql',
+  '.cs',
 ];
+
+/**
+ * Read additional extensions from a .promptextensions file
+ * @param directoryPath The directory to look for .promptextensions file
+ * @param includeParentDirs If true, also check parent directories for extensions
+ * @returns Array of additional extensions to include
+ */
+async function readAdditionalExtensions(directoryPath: string, includeParentDirs = false): Promise<string[]> {
+  // Log the directory we're checking
+  logDebug(
+    'readAdditionalExtensions',
+    `Checking for .promptextensions in directory: ${directoryPath}`
+  );
+
+  // Helper function to read a .promptextensions file
+  const readExtensionsFile = async (filePath: string): Promise<string[]> => {
+    try {
+      const content = await fs.promises.readFile(filePath, 'utf8');
+      logDebug(
+        'readAdditionalExtensions',
+        `Found .promptextensions file at ${filePath}`
+      );
+      
+      // Parse each line as an extension - ignore comments and empty lines
+      const additionalExtensions = content
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line && !line.startsWith('#'))
+        .map(ext => ext.startsWith('.') ? ext : `.${ext}`); // Ensure extensions start with a dot
+        
+      logDebug(
+        'readAdditionalExtensions',
+        `Loaded ${additionalExtensions.length} custom extensions from ${filePath}: ${additionalExtensions.join(', ')}`
+      );
+      
+      return additionalExtensions;
+    } catch (err) {
+      // File doesn't exist or can't be read - this is normal
+      logDebug(
+        'readAdditionalExtensions',
+        `No .promptextensions file found at ${filePath} or error reading it: ${err instanceof Error ? err.message : String(err)}`
+      );
+      return [];
+    }
+  };
+
+  // Check for .promptextensions in the target directory
+  const rootExtensionsPath = path.join(directoryPath, '.promptextensions');
+  const rootExtensions = await readExtensionsFile(rootExtensionsPath);
+
+  // Also check for .promptextensions in .prompt-composer subdirectory (preferred location)
+  const composerExtensionsPath = path.join(directoryPath, '.prompt-composer', '.promptextensions');
+  const composerExtensions = await readExtensionsFile(composerExtensionsPath);
+
+  // Combine both sources, prioritizing .prompt-composer location
+  let combinedExtensions = [...new Set([...rootExtensions, ...composerExtensions])];
+  
+  // Check parent directories if requested
+  if (includeParentDirs) {
+    const parentDir = path.dirname(directoryPath);
+    // Stop at root directory
+    if (parentDir && parentDir !== directoryPath) {
+      const parentExtensions = await readAdditionalExtensions(parentDir, true);
+      // Combine with parent extensions
+      combinedExtensions = [...new Set([...combinedExtensions, ...parentExtensions])];
+    }
+  }
+  
+  logDebug(
+    'readAdditionalExtensions',
+    `Final combined extensions for ${directoryPath}: ${combinedExtensions.join(', ')}`
+  );
+  
+  return combinedExtensions;
+}
 
 /**
  * Helper function to unify error logging in the main process.
@@ -89,7 +165,7 @@ async function listPromptComposerFiles(folderPath: string): Promise<string[]> {
   for (const dirent of dirEntries) {
     if (!dirent.isFile()) continue;
     const ext = path.extname(dirent.name).toLowerCase();
-    if (ext === '.txt' || ext === '.md') {
+    if ((ext === '.txt' || ext === '.md') && !dirent.name.startsWith('.promptignore')) {
       results.push(dirent.name);
     }
   }
@@ -99,93 +175,72 @@ async function listPromptComposerFiles(folderPath: string): Promise<string[]> {
 /**
  * Creates an ignore object for a given path, reading .gitignore and .promptignore files
  * @param pathToList The directory path to create ignore rules for
- * @param projectRoot The project root path (if available)
  * @returns Ignore object with configured rules
  */
-async function createIgnoreForPath(pathToList: string, projectRoot: string): Promise<ignore.Ignore> {
+async function createIgnoreForPath(
+  pathToList: string
+): Promise<ignore.Ignore> {
   // Create a new ignore instance
   const ig = ignore();
 
   // Always ignore .git and .DS_Store
-  ig.add(['.git/**', '.DS_Store']);
+  ig.add(['.git/**', '.DS_Store', '.prompt-composer/**']);
 
   // Helper function to read an ignore file
   const readIgnoreFile = async (filePath: string, ignoreType: string): Promise<string[]> => {
     try {
       const content = await fs.promises.readFile(filePath, 'utf8');
       logDebug('createIgnoreForPath', `Successfully read ${ignoreType} from ${filePath}`);
-      return content.split('\n').filter(line => 
-        line.trim() !== '' && !line.startsWith('#')
-      );
+      return content.split('\n').filter(line => line.trim() !== '' && !line.startsWith('#'));
     } catch (err) {
       logDebug('createIgnoreForPath', `No ${ignoreType} found at ${filePath} or couldn't read it`);
       return [];
     }
   };
 
-  // Path-specific ignore rules (if we're in a project)
-  if (projectRoot) {
-    // Check for .gitignore in project root
-    const gitIgnorePath = path.join(projectRoot, '.gitignore');
-    const gitIgnoreRules = await readIgnoreFile(gitIgnorePath, '.gitignore');
-    
-    if (gitIgnoreRules.length > 0) {
-      ig.add(gitIgnoreRules);
-      logDebug('createIgnoreForPath', `Added ${gitIgnoreRules.length} rules from .gitignore in project root`);
-    }
+  // Only check the directory that is actively being scanned
+  // Check for .gitignore in the target directory
+  const localGitIgnorePath = path.join(pathToList, '.gitignore');
+  const localGitIgnoreRules = await readIgnoreFile(localGitIgnorePath, '.gitignore');
 
-    // Check for .promptignore in project root
-    const promptIgnorePath = path.join(projectRoot, '.promptignore');
-    const promptIgnoreRules = await readIgnoreFile(promptIgnorePath, '.promptignore');
-    
-    if (promptIgnoreRules.length > 0) {
-      ig.add(promptIgnoreRules);
-      logDebug('createIgnoreForPath', `Added ${promptIgnoreRules.length} rules from .promptignore in project root`);
-    }
-    
-    // Also check for .promptignore in .prompt-composer directory (legacy location)
-    const legacyPromptIgnorePath = path.join(projectRoot, '.prompt-composer', '.promptignore');
-    const legacyPromptIgnoreRules = await readIgnoreFile(legacyPromptIgnorePath, '.promptignore (legacy location)');
-    
-    if (legacyPromptIgnoreRules.length > 0) {
-      ig.add(legacyPromptIgnoreRules);
-      logDebug('createIgnoreForPath', `Added ${legacyPromptIgnoreRules.length} rules from .promptignore in legacy location`);
-    }
+  if (localGitIgnoreRules.length > 0) {
+    ig.add(localGitIgnoreRules);
+    logDebug(
+      'createIgnoreForPath',
+      `Added ${localGitIgnoreRules.length} rules from .gitignore in target directory`
+    );
   }
 
-  // If pathToList is not project root, check for ignore files in that directory too
-  if (pathToList !== projectRoot) {
-    // Check for .gitignore in the target directory
-    const localGitIgnorePath = path.join(pathToList, '.gitignore');
-    const localGitIgnoreRules = await readIgnoreFile(localGitIgnorePath, '.gitignore');
-    
-    if (localGitIgnoreRules.length > 0) {
-      ig.add(localGitIgnoreRules);
-      logDebug('createIgnoreForPath', `Added ${localGitIgnoreRules.length} rules from .gitignore in target directory`);
-    }
+  // Check for .promptignore in the target directory
+  const localPromptIgnorePath = path.join(pathToList, '.promptignore');
+  const localPromptIgnoreRules = await readIgnoreFile(localPromptIgnorePath, '.promptignore');
 
-    // Check for .promptignore in the target directory
-    const localPromptIgnorePath = path.join(pathToList, '.promptignore');
-    const localPromptIgnoreRules = await readIgnoreFile(localPromptIgnorePath, '.promptignore');
-    
-    if (localPromptIgnoreRules.length > 0) {
-      ig.add(localPromptIgnoreRules);
-      logDebug('createIgnoreForPath', `Added ${localPromptIgnoreRules.length} rules from .promptignore in target directory`);
-    }
-    
-    // Also check for .promptignore in .prompt-composer subdirectory (legacy location)
-    const localLegacyPromptIgnorePath = path.join(pathToList, '.prompt-composer', '.promptignore');
-    const localLegacyPromptIgnoreRules = await readIgnoreFile(localLegacyPromptIgnorePath, '.promptignore (legacy location)');
-    
-    if (localLegacyPromptIgnoreRules.length > 0) {
-      ig.add(localLegacyPromptIgnoreRules);
-      logDebug('createIgnoreForPath', `Added ${localLegacyPromptIgnoreRules.length} rules from .promptignore in legacy subdirectory`);
-    }
+  if (localPromptIgnoreRules.length > 0) {
+    ig.add(localPromptIgnoreRules);
+    logDebug(
+      'createIgnoreForPath',
+      `Added ${localPromptIgnoreRules.length} rules from .promptignore in target directory`
+    );
+  }
+
+  // Also check for .promptignore in .prompt-composer subdirectory (legacy location)
+  const localLegacyPromptIgnorePath = path.join(pathToList, '.prompt-composer', '.promptignore');
+  const localLegacyPromptIgnoreRules = await readIgnoreFile(
+    localLegacyPromptIgnorePath,
+    '.promptignore (legacy location)'
+  );
+
+  if (localLegacyPromptIgnoreRules.length > 0) {
+    ig.add(localLegacyPromptIgnoreRules);
+    logDebug(
+      'createIgnoreForPath',
+      `Added ${localLegacyPromptIgnoreRules.length} rules from .promptignore in legacy subdirectory`
+    );
   }
 
   // Always ignore some common large directories
   ig.add(['node_modules/**', 'dist/**', 'build/**', 'release/**', 'coverage/**']);
-  
+
   return ig;
 }
 
@@ -196,6 +251,8 @@ async function createIgnoreForPath(pathToList: string, projectRoot: string): Pro
  * @param isProjectDir Whether this path is within the recognized project root
  * @param projectRoot The project root path
  * @param shallow If true, only read immediate children (skip recursion)
+ * @param customExtensions Array of custom extensions to include
+ * @param forceAllExtensions If true, include ALL file extensions, bypassing filtering
  * @returns TreeNode[]
  */
 async function readDirectoryTree(
@@ -203,11 +260,19 @@ async function readDirectoryTree(
   ig: ignore.Ignore,
   isProjectDir: boolean,
   projectRoot: string,
-  shallow = false
+  shallow = false,
+  customExtensions: string[] = [],
+  forceAllExtensions = false
 ): Promise<TreeNode[]> {
   const results: TreeNode[] = [];
   let entries: string[] = [];
-  
+
+  // Log allowed extensions for this directory
+  logDebug(
+    'readDirectoryTree',
+    `Starting to read directory: ${dirPath} with custom extensions: ${customExtensions.join(', ')}`
+  );
+
   try {
     entries = await fs.promises.readdir(dirPath);
   } catch (err: unknown) {
@@ -224,16 +289,48 @@ async function readDirectoryTree(
     return results;
   }
 
+  // Check for .promptextensions file in the current directory and parent directories
+  const directoryExtensions = await readAdditionalExtensions(dirPath, true);
+  if (directoryExtensions.length > 0) {
+    // Merge with existing custom extensions
+    customExtensions = [...new Set([...customExtensions, ...directoryExtensions])];
+    logDebug(
+      'readDirectoryTree',
+      `Using ${customExtensions.length} custom extensions for directory ${dirPath}`
+    );
+  }
+  
+  // Create combined extensions list for this directory
+  const allowedExtensions = [...ALLOWED_EXTENSIONS, ...customExtensions];
+
+  // If forceAllExtensions is true, log that we're bypassing extension filtering
+  if (forceAllExtensions) {
+    logDebug(
+      'readDirectoryTree',
+      `Extension filtering DISABLED for ${dirPath} (forceAllExtensions=true) - DEBUG ONLY`
+    );
+  }
+
   for (const entry of entries) {
     // Skip common heavy directories immediately
-    if (entry === 'node_modules' || entry === '.git' || entry === 'release' || 
-        entry === '.DS_Store' || entry === 'dist' || entry === 'build' || 
-        entry === 'coverage') {
+    if (
+      entry === 'node_modules' ||
+      entry === '.git' ||
+      entry === 'release' ||
+      entry === '.DS_Store' ||
+      entry === 'dist' ||
+      entry === 'build' ||
+      entry === 'coverage' ||
+      entry === '.prompt-composer' || // Always skip .prompt-composer folder in file tree
+      entry === '.promptignore' || // Always skip .promptignore files
+      entry === '.gitignore' || // Always skip .gitignore files
+      entry === '.promptextensions' // Always skip .promptextensions files
+    ) {
       continue;
     }
-    
+
     const fullPath = path.join(dirPath, entry);
-    
+
     // Get path relative to project root (for ignore patterns)
     const relPath = isProjectDir
       ? path.relative(projectRoot, fullPath)
@@ -265,7 +362,15 @@ async function readDirectoryTree(
         });
       } else {
         // Recursively read its children
-        const children = await readDirectoryTree(fullPath, ig, isProjectDir, projectRoot, false);
+        const children = await readDirectoryTree(
+          fullPath, 
+          ig, 
+          isProjectDir, 
+          projectRoot, 
+          false,
+          customExtensions,
+          forceAllExtensions
+        );
         results.push({
           name: entry,
           path: fullPath,
@@ -276,7 +381,19 @@ async function readDirectoryTree(
     } else {
       // File
       const ext = path.extname(entry).toLowerCase();
-      if (ALLOWED_EXTENSIONS.includes(ext)) {
+      
+      // Log extension filtering decisions 
+      const shouldIncludeFile = forceAllExtensions || allowedExtensions.includes(ext);
+      
+      if (ext === '.meta') {
+        logDebug(
+          'readDirectoryTree',
+          `META file: ${fullPath} - Will ${shouldIncludeFile ? 'INCLUDE' : 'EXCLUDE'} (forceAll=${forceAllExtensions}, inAllowed=${allowedExtensions.includes(ext)})`
+        );
+      }
+      
+      // Include file if forceAllExtensions is true OR the extension is allowed
+      if (shouldIncludeFile) {
         results.push({
           name: entry,
           path: fullPath,
@@ -330,12 +447,12 @@ const ensureDirectoryExists = (dirPath: DirectoryPath): boolean => {
  * registerIpcHandlers
  *
  * The 'list-directory' channel now accepts:
- *   (dirPath: string, options?: { shallow?: boolean; addToProjectDirectories?: boolean })
- * We default shallow=false and addToProjectDirectories=false if not provided.
+ *   (dirPath: string, options?: { shallow?: boolean; addToProjectDirectories?: boolean; forceAllExtensions?: boolean })
+ * We default shallow=false, addToProjectDirectories=false, and forceAllExtensions=false if not provided.
  */
 export function registerIpcHandlers(): void {
   // IPC handler to check if DevTools are open
-  ipcMain.handle("is-dev-tools-open", () => {
+  ipcMain.handle('is-dev-tools-open', () => {
     return global.isDevToolsOpen === true;
   });
 
@@ -352,12 +469,22 @@ export function registerIpcHandlers(): void {
     async (
       _event,
       dirPath: string,
-      options?: { shallow?: boolean; addToProjectDirectories?: boolean }
+      options?: { 
+        shallow?: boolean; 
+        addToProjectDirectories?: boolean;
+        forceAllExtensions?: boolean; // Debug-only flag to bypass extension filtering
+      }
     ): Promise<DirectoryListing> => {
       const startTime = performance.now();
       const shallow = options?.shallow ?? false;
       const addToProjectDirectories = options?.addToProjectDirectories ?? false;
-      logDebug('[list-directory]', `Invoked for path=${dirPath}, shallow=${shallow}, addToProjectDirectories=${addToProjectDirectories}`);
+      // forceAllExtensions is only for debugging purposes, default to false
+      const forceAllExtensions = options?.forceAllExtensions ?? false;
+      
+      logDebug(
+        '[list-directory]',
+        `Invoked for path=${dirPath}, shallow=${shallow}, addToProjectDirectories=${addToProjectDirectories}, forceAllExtensions=${forceAllExtensions}`
+      );
 
       try {
         let targetPath = dirPath;
@@ -372,51 +499,69 @@ export function registerIpcHandlers(): void {
           if (stats.isDirectory()) {
             // Check if we can access the directory
             await fs.promises.access(targetPath, fs.constants.R_OK);
-            
+
             // Initialize projectDirectories if it doesn't exist
             if (!global.projectDirectories) {
               global.projectDirectories = [];
               logDebug('[list-directory]', 'Initialized empty projectDirectories array');
             }
-            
+
             // The first directory opened by the user becomes the "current" project root
             // but all directories are treated equally for template searching
             if (!global.projectRoot) {
               global.projectRoot = targetPath;
               logDebug('[list-directory]', `Set initial project root to: ${global.projectRoot}`);
             }
-            
+
             // Normalize path for consistent comparison
             const normalizedTargetPath = path.normalize(targetPath);
-            
+
             // Log current project directories
-            logDebug('[list-directory]', `Current project directories (${global.projectDirectories.length}): ${global.projectDirectories.join(', ') || 'none'}`);
-            logDebug('[list-directory]', `Current project root: ${global.projectRoot || 'not set'}`);
+            logDebug(
+              '[list-directory]',
+              `Current project directories (${global.projectDirectories.length}): ${global.projectDirectories.join(', ') || 'none'}`
+            );
+            logDebug(
+              '[list-directory]',
+              `Current project root: ${global.projectRoot || 'not set'}`
+            );
             logDebug('[list-directory]', `Target directory being opened: ${targetPath}`);
-            
+
             // Only add to projectDirectories if explicitly requested
             if (addToProjectDirectories) {
               // Check if it's already in the projectDirectories list using normalized paths
-              const alreadyInList = global.projectDirectories.some(dir => 
-                path.normalize(dir) === normalizedTargetPath
+              const alreadyInList = global.projectDirectories.some(
+                dir => path.normalize(dir) === normalizedTargetPath
               );
-              
+
               if (!alreadyInList) {
                 // Add it to the list of project directories for template search
                 global.projectDirectories.push(targetPath);
-                logDebug('[list-directory]', `User opened a new directory - added to project directories list. Now tracking ${global.projectDirectories.length} directories:`);
+                logDebug(
+                  '[list-directory]',
+                  `User opened a new directory - added to project directories list. Now tracking ${global.projectDirectories.length} directories:`
+                );
                 global.projectDirectories.forEach((dir, i) => {
                   logDebug('[list-directory]', `  [${i}] ${dir}`);
                 });
-                
+
                 // Reset template cache when adding a new directory
                 global.templateCache = {};
-                logDebug('[list-directory]', 'Template cache cleared due to new directory being added');
+                logDebug(
+                  '[list-directory]',
+                  'Template cache cleared due to new directory being added'
+                );
               } else {
-                logDebug('[list-directory]', `Directory ${targetPath} is already in the project directories list`);
+                logDebug(
+                  '[list-directory]',
+                  `Directory ${targetPath} is already in the project directories list`
+                );
               }
             } else {
-              logDebug('[list-directory]', `Directory ${targetPath} opened but not added to project directories (addToProjectDirectories=false)`);
+              logDebug(
+                '[list-directory]',
+                `Directory ${targetPath} opened but not added to project directories (addToProjectDirectories=false)`
+              );
             }
           }
         } catch (err) {
@@ -424,8 +569,34 @@ export function registerIpcHandlers(): void {
         }
 
         const projectRoot = global.projectRoot || process.cwd();
-        const ig = await createIgnoreForPath(targetPath, projectRoot);
-        const treeNodes = await readDirectoryTree(targetPath, ig, targetPath === projectRoot, projectRoot, shallow);
+        const ig = await createIgnoreForPath(targetPath);
+        
+        // Read additional extensions from this directory
+        const customExtensions = await readAdditionalExtensions(targetPath, true);
+        if (customExtensions.length > 0) {
+          logDebug(
+            '[list-directory]',
+            `Found ${customExtensions.length} custom extensions in ${targetPath}: ${customExtensions.join(', ')}`
+          );
+        }
+        
+        // If forceAllExtensions is true, pass an empty function for extension checking
+        // that will accept all file extensions
+        const readOptions = {
+          shallow,
+          customExtensions,
+          forceAllExtensions  // Pass the flag to readDirectoryTree
+        };
+        
+        const treeNodes = await readDirectoryTree(
+          targetPath,
+          ig,
+          targetPath === projectRoot,
+          projectRoot,
+          shallow,
+          customExtensions,
+          forceAllExtensions
+        );
         const baseName = path.basename(targetPath);
 
         const endTime = performance.now();
@@ -576,43 +747,55 @@ export function registerIpcHandlers(): void {
   // read-prompt-composer-file
   ipcMain.handle(
     'read-prompt-composer-file',
-    async (_event, fileName: string, subDirectory?: string): Promise<string | null> => {
+    async (_event, fileName: string, subDirectory?: string): Promise<string | { content: string; path: string } | null> => {
       try {
         // Sanity check for very long filenames which are likely template content
         // This happens when template content is mistakenly passed instead of a filename
         if (fileName && (fileName.length > 100 || fileName.includes('\n'))) {
-          logError('read-prompt-composer-file', 'Invalid filename: Received template content instead of a filename');
-            return null;
-          }
-        
+          logError(
+            'read-prompt-composer-file',
+            'Invalid filename: Received template content instead of a filename'
+          );
+          return null;
+        }
+
         // Create a list of search directories - start with project directories list
         const searchDirectories: string[] = [];
-        
+
         // First, add all explicitly opened project directories in the order they were added
         if (global.projectDirectories && global.projectDirectories.length > 0) {
           searchDirectories.push(...global.projectDirectories);
-          logDebug('read-prompt-composer-file', `Searching in ${global.projectDirectories.length} project directories`);
+          logDebug(
+            'read-prompt-composer-file',
+            `Searching in ${global.projectDirectories.length} project directories`
+          );
         } else {
-          logDebug('read-prompt-composer-file', 'No project directories available - user has not opened any folders yet');
+          logDebug(
+            'read-prompt-composer-file',
+            'No project directories available - user has not opened any folders yet'
+          );
         }
-        
+
         // Add home directory as fallback (always available)
         const homeDir = os.homedir();
         if (!searchDirectories.some(dir => path.normalize(dir) === path.normalize(homeDir))) {
           searchDirectories.push(homeDir);
           logDebug('read-prompt-composer-file', `Added home directory to search path: ${homeDir}`);
         }
-        
+
         // Log the search paths
-        logDebug('read-prompt-composer-file', `Search paths (${searchDirectories.length}): ${searchDirectories.join(', ')}`);
-        
+        logDebug(
+          'read-prompt-composer-file',
+          `Search paths (${searchDirectories.length}): ${searchDirectories.join(', ')}`
+        );
+
         // Try to find the file in each directory in order
         for (const baseDir of searchDirectories) {
           let dirPath = path.join(baseDir, '.prompt-composer');
-          
+
           // Log search details
           logDebug('read-prompt-composer-file', `Looking in directory: ${dirPath}`);
-          
+
           // Check if this directory exists and is readable
           try {
             await fs.promises.access(dirPath, fs.constants.R_OK);
@@ -620,62 +803,68 @@ export function registerIpcHandlers(): void {
             logDebug('read-prompt-composer-file', `Directory not accessible, skipping: ${dirPath}`);
             continue; // Skip to next directory
           }
-          
+
           if (subDirectory) {
             dirPath = path.join(dirPath, subDirectory);
-            
+
             // Check if subdirectory exists
             try {
               await fs.promises.access(dirPath, fs.constants.R_OK);
             } catch (subdirErr) {
-              logDebug('read-prompt-composer-file', `Subdirectory not accessible, skipping: ${dirPath}`);
+              logDebug(
+                'read-prompt-composer-file',
+                `Subdirectory not accessible, skipping: ${dirPath}`
+              );
               continue; // Skip to next directory
             }
           }
-          
+
           const filePath = path.join(dirPath, fileName);
           logDebug('read-prompt-composer-file', `Trying path: ${filePath}`);
-          
+
           // Try to read the file
           try {
             const content = await fs.promises.readFile(filePath, 'utf-8');
             logDebug('read-prompt-composer-file', `Successfully read file: ${filePath}`);
-        return content;
+            return { content, path: filePath };
           } catch (fileErr) {
             // If no extension was provided, try with extensions
             if (!fileName.includes('.')) {
               // Try with .txt extension
               const txtPath = filePath + '.txt';
               logDebug('read-prompt-composer-file', `Trying with .txt extension: ${txtPath}`);
-              
+
               try {
                 const txtContent = await fs.promises.readFile(txtPath, 'utf-8');
                 logDebug('read-prompt-composer-file', `Successfully read .txt file: ${txtPath}`);
-                return txtContent;
+                return { content: txtContent, path: txtPath };
               } catch (txtErr) {
                 // Continue to next extension
               }
-              
+
               // Try with .md extension
               const mdPath = filePath + '.md';
               logDebug('read-prompt-composer-file', `Trying with .md extension: ${mdPath}`);
-              
+
               try {
                 const mdContent = await fs.promises.readFile(mdPath, 'utf-8');
                 logDebug('read-prompt-composer-file', `Successfully read .md file: ${mdPath}`);
-                return mdContent;
+                return { content: mdContent, path: mdPath };
               } catch (mdErr) {
                 // Continue to next directory
               }
             }
           }
         }
-        
+
         // If we got here, no file was found in any location
         logDebug('read-prompt-composer-file', `No file found for ${fileName} in any location`);
         return null;
       } catch (error) {
-        console.error(`[read-prompt-composer-file] Error in read-prompt-composer-file (${fileName}):`, error);
+        console.error(
+          `[read-prompt-composer-file] Error in read-prompt-composer-file (${fileName}):`,
+          error
+        );
         return null;
       }
     }
@@ -723,41 +912,54 @@ export function registerIpcHandlers(): void {
   // read-global-prompt-composer-file
   ipcMain.handle(
     'read-global-prompt-composer-file',
-    async (event, fileName: string, subDirectory?: string): Promise<string | null> => {
+    async (event, fileName: string, subDirectory?: string): Promise<string | { content: string; path: string } | null> => {
       try {
         const homeDir = os.homedir();
         let dirPath = path.join(homeDir, '.prompt-composer');
-        
+
         // Ensure the base directory exists
         ensureDirectoryExists(dirPath);
-        
+
         if (subDirectory) {
           dirPath = path.join(dirPath, subDirectory);
           // Ensure the subdirectory exists
           ensureDirectoryExists(dirPath);
         }
-        
+
         const filePath = path.join(dirPath, fileName);
         log(`Attempting to read global file: ${filePath}`);
-        
-        const content = safeReadFile(filePath);
-        
-        // If no content but no extension was provided, try with extensions
-        if (!content && !fileName.includes('.')) {
-          // Try with .txt extension
-          const txtPath = filePath + '.txt';
-          log(`Trying with .txt extension: ${txtPath}`);
-          const txtContent = safeReadFile(txtPath);
-          if (txtContent) return txtContent;
+
+        try {
+          const content = await fs.promises.readFile(filePath, 'utf-8');
+          return { content, path: filePath };
+        } catch (fileErr) {
+          // If no extension was provided, try with extensions
+          if (!fileName.includes('.')) {
+            // Try with .txt extension
+            const txtPath = filePath + '.txt';
+            log(`Trying with .txt extension: ${txtPath}`);
+            
+            try {
+              const txtContent = await fs.promises.readFile(txtPath, 'utf-8');
+              return { content: txtContent, path: txtPath };
+            } catch (txtErr) {
+              // Continue to next extension
+            }
+
+            // Try with .md extension
+            const mdPath = filePath + '.md';
+            log(`Trying with .md extension: ${mdPath}`);
+            
+            try {
+              const mdContent = await fs.promises.readFile(mdPath, 'utf-8');
+              return { content: mdContent, path: mdPath };
+            } catch (mdErr) {
+              // No file found with any extension
+            }
+          }
           
-          // Try with .md extension
-          const mdPath = filePath + '.md';
-          log(`Trying with .md extension: ${mdPath}`);
-          const mdContent = safeReadFile(mdPath);
-          if (mdContent) return mdContent;
+          return null;
         }
-        
-        return content;
       } catch (error) {
         console.error(`Error in read-global-prompt-composer-file (${fileName}):`, error);
         return null;
@@ -770,14 +972,47 @@ export function registerIpcHandlers(): void {
     'write-prompt-composer-file',
     async (
       _event,
-      args: { relativeFilename: string; content: string }
+      args: { relativeFilename: string; content: string; originalPath?: string }
     ): Promise<boolean | { error: string }> => {
       try {
-        const projectRoot = process.cwd();
-        const promptComposerFolder = path.join(projectRoot, '.prompt-composer');
+        // If originalPath is provided, use that directly
+        if (args.originalPath) {
+          try {
+            // Get the directory from the original path
+            const dirPath = path.dirname(args.originalPath);
+            logDebug('[write-prompt-composer-file]', `Writing to original path: ${args.originalPath}`);
+            
+            // Ensure the directory exists
+            try {
+              await fs.promises.stat(dirPath);
+            } catch {
+              logDebug('[write-prompt-composer-file]', `Creating directory: ${dirPath}`);
+              await fs.promises.mkdir(dirPath, { recursive: true });
+            }
+            
+            // Write the file to the original path
+            await fs.promises.writeFile(args.originalPath, args.content, 'utf-8');
+            return true;
+          } catch (err: unknown) {
+            logError(`[write-prompt-composer-file] Error writing to original path ${args.originalPath}`, err);
+            if (err instanceof Error) {
+              return { error: `Failed to write file to original path: ${err.message}` };
+            }
+            return { error: `Failed to write file to original path: Unknown error` };
+          }
+        }
+        
+        // Use homeDir as base path for global files (fallback for backward compatibility)
+        const homeDir = os.homedir();
+        const promptComposerFolder = path.join(homeDir, '.prompt-composer');
+        
+        // Log the path for debugging
+        logDebug('[write-prompt-composer-file]', `Writing to ${promptComposerFolder}/${args.relativeFilename}`);
+        
         try {
           await fs.promises.stat(promptComposerFolder);
         } catch {
+          logDebug('[write-prompt-composer-file]', `Creating directory: ${promptComposerFolder}`);
           await fs.promises.mkdir(promptComposerFolder, { recursive: true });
         }
 
@@ -802,9 +1037,9 @@ export function registerIpcHandlers(): void {
     const results = {
       home: { read: false, write: false, path: '' },
       promptComposerGlobal: { read: false, write: false, exists: false, path: '' },
-      temp: { read: false, write: false, path: '' }
+      temp: { read: false, write: false, path: '' },
     };
-    
+
     try {
       // Test home directory access
       const homeDir = os.homedir();
@@ -813,7 +1048,7 @@ export function registerIpcHandlers(): void {
       results.home.read = true;
       await fs.promises.access(homeDir, fs.constants.W_OK);
       results.home.write = true;
-      
+
       // Test .prompt-composer access
       const promptComposerDir = path.join(homeDir, '.prompt-composer');
       results.promptComposerGlobal.path = promptComposerDir;
@@ -828,7 +1063,7 @@ export function registerIpcHandlers(): void {
         // Directory doesn't exist or isn't accessible
         logError(`[check-permissions] .prompt-composer dir issue: ${promptComposerDir}`, err);
       }
-      
+
       // Test temp directory access
       const tempDir = os.tmpdir();
       results.temp.path = tempDir;
@@ -836,7 +1071,7 @@ export function registerIpcHandlers(): void {
       results.temp.read = true;
       await fs.promises.access(tempDir, fs.constants.W_OK);
       results.temp.write = true;
-      
+
       return results;
     } catch (err) {
       logError('[check-permissions] Error testing permissions', err);
@@ -845,48 +1080,56 @@ export function registerIpcHandlers(): void {
   });
 
   // get-template-paths
-  ipcMain.handle('get-template-paths', async (_event, templateName: string): Promise<string[] | Record<string, any>> => {
-    try {
-      // Special diagnostic info request
-      if (templateName === '_diagnostic_info_') {
-        return {
-          projectDirectories: global.projectDirectories || [],
-          projectRoot: global.projectRoot || null,
-          home: os.homedir(),
-          templateCacheSize: Object.keys(global.templateCache || {}).length,
-          cwd: process.cwd(),
-          timestamp: new Date().toISOString(),
-          appPath: app.getAppPath(),
-          resourcePath: process.resourcesPath,
-          isProduction: process.env.NODE_ENV !== 'development',
-        };
-      }
+  ipcMain.handle(
+    'get-template-paths',
+    async (_event, templateName: string): Promise<string[] | Record<string, any>> => {
+      try {
+        // Special diagnostic info request
+        if (templateName === '_diagnostic_info_') {
+          return {
+            projectDirectories: global.projectDirectories || [],
+            projectRoot: global.projectRoot || null,
+            home: os.homedir(),
+            templateCacheSize: Object.keys(global.templateCache || {}).length,
+            cwd: process.cwd(),
+            timestamp: new Date().toISOString(),
+            appPath: app.getAppPath(),
+            resourcePath: process.resourcesPath,
+            isProduction: process.env.NODE_ENV !== 'development',
+          };
+        }
 
-      const searchPaths: string[] = [];
-      
-      // Project-specific templates (multiple project directories)
-      if (global.projectDirectories && global.projectDirectories.length > 0) {
-        for (const projectDir of global.projectDirectories) {
-          if (projectDir) {
-            const projectTemplate = path.join(projectDir, '.prompt-composer', 'template', templateName);
-            searchPaths.push(projectTemplate);
+        const searchPaths: string[] = [];
+
+        // Project-specific templates (multiple project directories)
+        if (global.projectDirectories && global.projectDirectories.length > 0) {
+          for (const projectDir of global.projectDirectories) {
+            if (projectDir) {
+              const projectTemplate = path.join(
+                projectDir,
+                '.prompt-composer',
+                'template',
+                templateName
+              );
+              searchPaths.push(projectTemplate);
+            }
           }
         }
+
+        // Global templates (in home directory)
+        const homeDir = os.homedir();
+        if (homeDir) {
+          const globalTemplate = path.join(homeDir, '.prompt-composer', 'template', templateName);
+          searchPaths.push(globalTemplate);
+        }
+
+        return searchPaths;
+      } catch (err: unknown) {
+        logError('[get-template-paths] Error getting template paths', err);
+        return [];
       }
-      
-      // Global templates (in home directory)
-      const homeDir = os.homedir();
-      if (homeDir) {
-        const globalTemplate = path.join(homeDir, '.prompt-composer', 'template', templateName);
-        searchPaths.push(globalTemplate);
-      }
-      
-      return searchPaths;
-    } catch (err: unknown) {
-      logError('[get-template-paths] Error getting template paths', err);
-      return [];
     }
-  });
+  );
 
   // Add a handler to check filesystem permissions
   ipcMain.handle('check-filesystem-permissions', async () => {
@@ -900,44 +1143,47 @@ export function registerIpcHandlers(): void {
 
     try {
       console.log('Checking filesystem permissions...');
-      
+
       // Check home directory
       const homeDir = app.getPath('home');
       result.home = await checkDirPermissions(homeDir);
-      
+
       // Check global .prompt-composer directory
       const globalPromptComposerDir = path.join(homeDir, '.prompt-composer');
       result.globalPromptComposer = await checkDirPermissions(globalPromptComposerDir);
-      
+
       // Check project .prompt-composer directory
       const projectDir = global.projectRoot || process.cwd();
       const projectPromptComposerDir = path.join(projectDir, '.prompt-composer');
-      
+
       // Log detailed information about the project directory checks
       console.log(`[check-permissions] Project root: ${projectDir}`);
       console.log(`[check-permissions] Project .prompt-composer: ${projectPromptComposerDir}`);
-      
+
       // Try to check if the projectDir itself is accessible first
       try {
         await fs.promises.access(projectDir, fs.constants.R_OK);
         console.log(`[check-permissions] Project directory is readable: ${projectDir}`);
-        
+
         result.projectPromptComposer = await checkDirPermissions(projectPromptComposerDir);
       } catch (projectDirErr) {
-        console.error(`[check-permissions] Project directory is not accessible: ${projectDir}`, projectDirErr);
-        
+        console.error(
+          `[check-permissions] Project directory is not accessible: ${projectDir}`,
+          projectDirErr
+        );
+
         // Still report on the directory, but mark it as not accessible
-        result.projectPromptComposer = { 
-          dir: projectPromptComposerDir, 
-          canRead: false, 
-          canWrite: false 
+        result.projectPromptComposer = {
+          dir: projectPromptComposerDir,
+          canRead: false,
+          canWrite: false,
         };
       }
-      
+
       // Check temp directory
       const tempDir = app.getPath('temp');
       result.temp = await checkDirPermissions(tempDir);
-      
+
       console.log('Filesystem permissions result:', result);
       return result;
     } catch (error) {
@@ -952,172 +1198,212 @@ export function registerIpcHandlers(): void {
   });
 
   // read-template-file
-  ipcMain.handle('read-template-file', async (_event, templateName: string): Promise<string | null> => {
-    try {
-      if (!templateName) {
-        logDebug('read-template-file', 'No template name provided');
-        return null;
-      }
-      
-      // Clean up template name by trimming any whitespace
-      const cleanTemplateName = templateName.trim();
-      
-      // Initialize projectDirectories if needed
-      if (!global.projectDirectories) {
-        global.projectDirectories = [];
-        logDebug('read-template-file', 'Initialized empty projectDirectories array');
-      }
-      
-      // Define search directories in priority order
-      const searchDirectories: string[] = [];
-      
-      // First, add all project directories that have been explicitly opened by the user
-      // These are searched in the order they were added
-      if (global.projectDirectories && global.projectDirectories.length > 0) {
-        searchDirectories.push(...global.projectDirectories);
-        logDebug('read-template-file', `Added ${global.projectDirectories.length} project directories to search paths`);
-      } else {
-        logDebug('read-template-file', 'No project directories in list - user has not opened any folders yet');
-      }
-      
-      // Last, add the home directory for user global templates (always available)
-      const homeDir = os.homedir();
-      if (!searchDirectories.includes(homeDir)) {
-        searchDirectories.push(homeDir);
-        logDebug('read-template-file', `Added home directory to search paths: ${homeDir}`);
-      }
-      
-      // Log the search order with more details
-      logDebug('read-template-file', `Template search paths (${searchDirectories.length}): ${searchDirectories.join(', ')}`);
-      
-      // Check if we have this template in cache already
-      if (global.templateCache && global.templateCache[cleanTemplateName]) {
-        logDebug('read-template-file', `Using cached template: ${cleanTemplateName}`);
-        return global.templateCache[cleanTemplateName];
-      }
-      
-      // Clear cache if paths were removed or changed
-      if (templateName.startsWith('_cache_invalidated')) {
-        logDebug('read-template-file', 'Cache invalidation requested');
-        global.templateCache = {};
-        return null;
-      }
-      
-      // Generate all possible file paths for the template in priority order
-      const allPaths: string[] = [];
-      
-      for (const baseDir of searchDirectories) {
-        try {
-          // Skip if directory isn't accessible
-          await fs.promises.access(baseDir, fs.constants.R_OK).catch(() => {
-            logDebug('read-template-file', `Directory not readable, skipping: ${baseDir}`);
-            return; // Skip to next directory
-          });
-          
-          const promptComposerDir = path.join(baseDir, '.prompt-composer');
-          
-          // Direct path in .prompt-composer
-          allPaths.push(path.join(promptComposerDir, cleanTemplateName));
-          
-          // If no extension provided, add .txt and .md variants
-          if (!path.extname(cleanTemplateName)) {
-            allPaths.push(path.join(promptComposerDir, `${cleanTemplateName}.txt`));
-            allPaths.push(path.join(promptComposerDir, `${cleanTemplateName}.md`));
-          }
-        } catch (err) {
-          logError('read-template-file', `Error processing directory ${baseDir}: ${err}`);
+  ipcMain.handle(
+    'read-template-file',
+    async (_event, templateName: string): Promise<string | null> => {
+      try {
+        if (!templateName) {
+          logDebug('read-template-file', 'No template name provided');
+          return null;
         }
-      }
-      
-      logDebug('read-template-file', `Generated ${allPaths.length} search paths for "${cleanTemplateName}"`);
-      
-      // Try each path in priority order
-      for (const filePath of allPaths) {
-        try {
-          if (fs.existsSync(filePath)) {
-            logDebug('read-template-file', `✅ Found template at: ${filePath}`);
-            const content = fs.readFileSync(filePath, 'utf8');
-            
-            // Cache the template by name for future use
-            if (!global.templateCache) {
-              global.templateCache = {};
+
+        // Clean up template name by trimming any whitespace
+        const cleanTemplateName = templateName.trim();
+
+        // Initialize projectDirectories if needed
+        if (!global.projectDirectories) {
+          global.projectDirectories = [];
+          logDebug('read-template-file', 'Initialized empty projectDirectories array');
+        }
+
+        // Define search directories in priority order
+        const searchDirectories: string[] = [];
+
+        // First, add all project directories that have been explicitly opened by the user
+        // These are searched in the order they were added
+        if (global.projectDirectories && global.projectDirectories.length > 0) {
+          searchDirectories.push(...global.projectDirectories);
+          logDebug(
+            'read-template-file',
+            `Added ${global.projectDirectories.length} project directories to search paths`
+          );
+        } else {
+          logDebug(
+            'read-template-file',
+            'No project directories in list - user has not opened any folders yet'
+          );
+        }
+
+        // Last, add the home directory for user global templates (always available)
+        const homeDir = os.homedir();
+        if (!searchDirectories.includes(homeDir)) {
+          searchDirectories.push(homeDir);
+          logDebug('read-template-file', `Added home directory to search paths: ${homeDir}`);
+        }
+
+        // Log the search order with more details
+        logDebug(
+          'read-template-file',
+          `Template search paths (${searchDirectories.length}): ${searchDirectories.join(', ')}`
+        );
+
+        // Check if we have this template in cache already
+        if (global.templateCache && global.templateCache[cleanTemplateName]) {
+          logDebug('read-template-file', `Using cached template: ${cleanTemplateName}`);
+          return global.templateCache[cleanTemplateName];
+        }
+
+        // Clear cache if paths were removed or changed
+        if (templateName.startsWith('_cache_invalidated')) {
+          logDebug('read-template-file', 'Cache invalidation requested');
+          global.templateCache = {};
+          return null;
+        }
+
+        // Generate all possible file paths for the template in priority order
+        const allPaths: string[] = [];
+
+        for (const baseDir of searchDirectories) {
+          try {
+            // Skip if directory isn't accessible
+            await fs.promises.access(baseDir, fs.constants.R_OK).catch(() => {
+              logDebug('read-template-file', `Directory not readable, skipping: ${baseDir}`);
+              return; // Skip to next directory
+            });
+
+            const promptComposerDir = path.join(baseDir, '.prompt-composer');
+
+            // Direct path in .prompt-composer
+            allPaths.push(path.join(promptComposerDir, cleanTemplateName));
+
+            // If no extension provided, add .txt and .md variants
+            if (!path.extname(cleanTemplateName)) {
+              allPaths.push(path.join(promptComposerDir, `${cleanTemplateName}.txt`));
+              allPaths.push(path.join(promptComposerDir, `${cleanTemplateName}.md`));
             }
-            global.templateCache[cleanTemplateName] = content;
-            
-            return content;
+          } catch (err) {
+            logError('read-template-file', `Error processing directory ${baseDir}: ${err}`);
           }
-        } catch (err: any) {
-          logError('read-template-file', `Error reading template file ${filePath}: ${err.message}`);
         }
+
+        logDebug(
+          'read-template-file',
+          `Generated ${allPaths.length} search paths for "${cleanTemplateName}"`
+        );
+
+        // Try each path in priority order
+        for (const filePath of allPaths) {
+          try {
+            if (fs.existsSync(filePath)) {
+              logDebug('read-template-file', `✅ Found template at: ${filePath}`);
+              const content = fs.readFileSync(filePath, 'utf8');
+
+              // Cache the template by name for future use
+              if (!global.templateCache) {
+                global.templateCache = {};
+              }
+              global.templateCache[cleanTemplateName] = content;
+
+              return content;
+            }
+          } catch (err: any) {
+            logError(
+              'read-template-file',
+              `Error reading template file ${filePath}: ${err.message}`
+            );
+          }
+        }
+
+        logDebug('read-template-file', `Template "${cleanTemplateName}" not found in any location`);
+        return null;
+      } catch (error) {
+        logError('read-template-file', `Error in read-template-file: ${error}`);
+        return null;
       }
-      
-      logDebug('read-template-file', `Template "${cleanTemplateName}" not found in any location`);
-      return null;
-    } catch (error) {
-      logError('read-template-file', `Error in read-template-file: ${error}`);
-      return null;
     }
-  });
+  );
 
   // This handler is called when a folder is removed from the UI
-  ipcMain.handle('remove-project-directory', async (_event, folderPath: string): Promise<boolean> => {
-    try {
-      logDebug('remove-project-directory', `Removing directory from templates list: ${folderPath}`);
-      
-      // Initialize if needed
-      if (!global.projectDirectories) {
-        global.projectDirectories = [];
-        logDebug('remove-project-directory', 'Initialized empty projectDirectories array');
-        return true; // Nothing to remove
-      }
-      
-      // Log current directories to help debug
-      logDebug('remove-project-directory', `Current directories before removal (${global.projectDirectories.length}): ${global.projectDirectories.join(', ')}`);
-      
-      // Normalize path to handle slash differences
-      const normalizedRequestedPath = path.normalize(folderPath);
-      
-      // Find and remove the directory from the list (using normalized paths for comparison)
-      const index = global.projectDirectories.findIndex(dir => path.normalize(dir) === normalizedRequestedPath);
-      
-      if (index !== -1) {
-        global.projectDirectories.splice(index, 1);
-        logDebug('remove-project-directory', `Removed directory at index ${index}: ${folderPath}`);
-        logDebug('remove-project-directory', `Remaining directories (${global.projectDirectories.length}): ${global.projectDirectories.join(', ')}`);
-        
-        // Clear template cache when removing a directory
-        global.templateCache = {};
-        logDebug('remove-project-directory', 'Template cache cleared');
-        
-        // If this was the current project root, reset it to the first available directory
-        if (global.projectRoot === folderPath) {
-          global.projectRoot = global.projectDirectories.length > 0 ? 
-            global.projectDirectories[0] : null;
-          logDebug('remove-project-directory', `Reset project root to: ${global.projectRoot || 'null'}`);
-          
-          // Note: This is important because some operations still use global.projectRoot
-          // for backward compatibility, but we're moving toward using the entire 
-          // projectDirectories list for template searching
+  ipcMain.handle(
+    'remove-project-directory',
+    async (_event, folderPath: string): Promise<boolean> => {
+      try {
+        logDebug(
+          'remove-project-directory',
+          `Removing directory from templates list: ${folderPath}`
+        );
+
+        // Initialize if needed
+        if (!global.projectDirectories) {
+          global.projectDirectories = [];
+          logDebug('remove-project-directory', 'Initialized empty projectDirectories array');
+          return true; // Nothing to remove
         }
-        
-        return true;
+
+        // Log current directories to help debug
+        logDebug(
+          'remove-project-directory',
+          `Current directories before removal (${global.projectDirectories.length}): ${global.projectDirectories.join(', ')}`
+        );
+
+        // Normalize path to handle slash differences
+        const normalizedRequestedPath = path.normalize(folderPath);
+
+        // Find and remove the directory from the list (using normalized paths for comparison)
+        const index = global.projectDirectories.findIndex(
+          dir => path.normalize(dir) === normalizedRequestedPath
+        );
+
+        if (index !== -1) {
+          global.projectDirectories.splice(index, 1);
+          logDebug(
+            'remove-project-directory',
+            `Removed directory at index ${index}: ${folderPath}`
+          );
+          logDebug(
+            'remove-project-directory',
+            `Remaining directories (${global.projectDirectories.length}): ${global.projectDirectories.join(', ')}`
+          );
+
+          // Clear template cache when removing a directory
+          global.templateCache = {};
+          logDebug('remove-project-directory', 'Template cache cleared');
+
+          // If this was the current project root, reset it to the first available directory
+          if (global.projectRoot === folderPath) {
+            global.projectRoot =
+              global.projectDirectories.length > 0 ? global.projectDirectories[0] : null;
+            logDebug(
+              'remove-project-directory',
+              `Reset project root to: ${global.projectRoot || 'null'}`
+            );
+
+            // Note: This is important because some operations still use global.projectRoot
+            // for backward compatibility, but we're moving toward using the entire
+            // projectDirectories list for template searching
+          }
+
+          return true;
+        }
+
+        logDebug('remove-project-directory', `Directory not found in list: ${folderPath}`);
+        return true; // Not in list, return success anyway
+      } catch (err) {
+        logError('remove-project-directory', `Error removing directory: ${err}`);
+        return false;
       }
-      
-      logDebug('remove-project-directory', `Directory not found in list: ${folderPath}`);
-      return true; // Not in list, return success anyway
-    } catch (err) {
-      logError('remove-project-directory', `Error removing directory: ${err}`);
-      return false;
     }
-  });
+  );
 }
 
 /**
  * Helper function to check read/write permissions for a directory
  */
-async function checkDirPermissions(dirPath: string): Promise<{ dir: string; canRead: boolean; canWrite: boolean }> {
+async function checkDirPermissions(
+  dirPath: string
+): Promise<{ dir: string; canRead: boolean; canWrite: boolean }> {
   const result = { dir: dirPath, canRead: false, canWrite: false };
-  
+
   try {
     // Check if directory exists
     try {
@@ -1132,7 +1418,7 @@ async function checkDirPermissions(dirPath: string): Promise<{ dir: string; canR
         return result;
       }
     }
-    
+
     // Check read permission
     try {
       await fs.promises.access(dirPath, fs.constants.R_OK);
@@ -1140,7 +1426,7 @@ async function checkDirPermissions(dirPath: string): Promise<{ dir: string; canR
     } catch (error) {
       console.log(`No read permission for: ${dirPath}`);
     }
-    
+
     // Check write permission
     try {
       // Create a temp file to test write permissions
@@ -1151,7 +1437,7 @@ async function checkDirPermissions(dirPath: string): Promise<{ dir: string; canR
     } catch (error) {
       console.log(`No write permission for: ${dirPath}`);
     }
-    
+
     return result;
   } catch (error) {
     console.error(`Error checking directory permissions for ${dirPath}:`, error);

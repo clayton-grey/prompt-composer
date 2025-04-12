@@ -5,27 +5,30 @@
  * with the coins icon + the numeric usage. The user wants to show e.g. [coins icon] 120 / 2048.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import React, { useState, useEffect } from 'react';
 import { usePrompt } from '../context/PromptContext';
 import { useTheme } from '../context/ThemeContext';
 import FileSystemDebugger from './Debug/FileSystemDebugger';
+import { isDevToolsOpen, addIpcListener, removeIpcListener } from '../utils/electronUtils';
 
 const EditorFooter: React.FC = () => {
-  const [isDevToolsOpen, setIsDevToolsOpen] = useState(false);
+  const [isDevToolsOpenState, setIsDevToolsOpen] = useState(false);
 
   useEffect(() => {
     // Check if DevTools are open initially
-    window.electronAPI.isDevToolsOpen().then(setIsDevToolsOpen);
+    isDevToolsOpen().then(setIsDevToolsOpen);
 
     // Set up event listener for DevTools state changes
     const handleDevToolsChange = (_event: any, isOpen: boolean) => {
       setIsDevToolsOpen(isOpen);
     };
 
-    window.electronAPI.onMessage('devtools-changed', handleDevToolsChange);
+    addIpcListener('devtools-changed', handleDevToolsChange);
 
     return () => {
-      window.electronAPI.removeChannelListener('devtools-changed', handleDevToolsChange);
+      removeIpcListener('devtools-changed', handleDevToolsChange);
     };
   }, []);
   const { tokenUsage, settings } = usePrompt();
@@ -88,7 +91,7 @@ const EditorFooter: React.FC = () => {
             title="Check path permissions"
             aria-label="Check path permissions"
             className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded"
-            style={{ display: isDevToolsOpen ? 'block' : 'none' }}
+            style={{ display: isDevToolsOpenState ? 'block' : 'none' }}
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"

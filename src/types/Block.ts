@@ -99,6 +99,17 @@ export interface PromptResponseBlock extends BaseBlock {
   sourceFile: string;
 
   /**
+   * The full path from where this file was originally loaded
+   * This is used when writing changes back to disk
+   */
+  originalPath?: string;
+
+  /**
+   * Alternative full path property that might be set by the loader
+   */
+  fullPath?: string;
+
+  /**
    * The current content loaded from that file.
    * This is updated as the user types, and we persist changes back to that file.
    */

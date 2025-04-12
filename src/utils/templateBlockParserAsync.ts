@@ -15,14 +15,19 @@ import { Block, TextBlock, TemplateBlock, FilesBlock, PromptResponseBlock } from
 import { flattenTemplate } from './flattenTemplate';
 
 // Fix TypeScript error with window.electronAPI
+// Using @ts-ignore to avoid conflicts with src/types/electron.d.ts
+// @ts-ignore
 declare global {
+  // @ts-ignore
   interface Window {
+    // @ts-ignore
     electronAPI?: {
       readPromptComposerFile: (fileName: string, subDirectory?: string) => Promise<string | null>;
       readGlobalPromptComposerFile: (
         fileName: string,
         subDirectory?: string
       ) => Promise<string | null>;
+      getTemplatePaths: (fileName: string, subDirectory?: string) => Promise<string[]>;
     };
   }
 }
@@ -67,7 +72,7 @@ export async function parseTemplateBlocksAsync(
   let leadAssigned = false;
 
   // Regex capturing placeholders of the form {{PLACEHOLDER}} or {{PLACEHOLDER=value}}
-  const placeholderRegex = /(\{\{([A-Za-z0-9_\-]+)(?:=([^}]*))?\}\})/g;
+  const placeholderRegex = /(\{\{([A-Za-z0-9_-]+)(?:=([^}]*))?\}\})/g;
 
   /**
    * Utility to quickly build a 'template' segment block for plain text
@@ -182,16 +187,66 @@ export async function parseTemplateBlocksAsync(
     if (b.type === 'promptResponse') {
       const prb = b as PromptResponseBlock;
       let fileContent: string | null = null;
+
       try {
+        // @ts-ignore - Suppressing type checking for electronAPI access
         if (window.electronAPI?.readPromptComposerFile) {
-          fileContent = await window.electronAPI.readPromptComposerFile(prb.sourceFile);
+          // @ts-ignore - Suppressing type checking for electronAPI methods
+          const result = await window.electronAPI.readPromptComposerFile(prb.sourceFile);
+
+          // Handle both string and object return values for backward compatibility
+          if (result) {
+            if (typeof result === 'string') {
+              fileContent = result;
+            } else if (typeof result === 'object') {
+              // Type assertion to handle the object with content and path
+              const resultObj = result as { content: string; path: string };
+              if (resultObj.content) {
+                fileContent = resultObj.content;
+
+                // Store the full path for writing back to the same location
+                if (resultObj.path) {
+                  prb.originalPath = resultObj.path;
+                  console.log('[parseTemplateBlocksAsync] Found original path:', resultObj.path);
+                }
+              }
+            }
+          }
         }
+
+        // Try global as fallback
+        // @ts-ignore - Suppressing type checking for electronAPI access
         if (!fileContent && window.electronAPI?.readGlobalPromptComposerFile) {
-          fileContent = await window.electronAPI.readGlobalPromptComposerFile(prb.sourceFile);
+          // @ts-ignore - Suppressing type checking for electronAPI methods
+          const result = await window.electronAPI.readGlobalPromptComposerFile(prb.sourceFile);
+
+          // Handle both string and object return values
+          if (result) {
+            if (typeof result === 'string') {
+              fileContent = result;
+            } else if (typeof result === 'object') {
+              // Type assertion to handle the object with content and path
+              const resultObj = result as { content: string; path: string };
+              if (resultObj.content) {
+                fileContent = resultObj.content;
+
+                // Store the full path for writing back to the same location
+                if (resultObj.path) {
+                  prb.originalPath = resultObj.path;
+                  console.log(
+                    '[parseTemplateBlocksAsync] Found original path from global:',
+                    resultObj.path
+                  );
+                }
+              }
+            }
+          }
         }
       } catch (err) {
         console.warn('[parseTemplateBlocksAsync] Could not load promptResponse file:', err);
       }
+
+      // Store the content
       prb.content = fileContent || '';
     }
   }

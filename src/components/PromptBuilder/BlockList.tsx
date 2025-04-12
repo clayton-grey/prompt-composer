@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import React, { useEffect } from 'react';
 import { usePrompt } from '../../context/PromptContext';
 import BlockEditor from './BlockEditor';

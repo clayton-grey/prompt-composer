@@ -37,6 +37,9 @@ export interface ProjectContextType {
   projectFolders: string[];
   addProjectFolder: (folderPath: string) => Promise<void>;
   removeProjectFolder: (folderPath: string) => Promise<void>;
+  refreshWithAllExtensions: (folderPath: string) => Promise<void>;
+  testMetaFilesInclusion: (folderPath: string) => Promise<void>;
+  syncSelectedFileContents: () => Promise<void>;
 }
 
 const ProjectContext = createContext<ProjectContextType>({
@@ -54,6 +57,9 @@ const ProjectContext = createContext<ProjectContextType>({
   projectFolders: [],
   addProjectFolder: async () => {},
   removeProjectFolder: async () => {},
+  refreshWithAllExtensions: async () => {},
+  testMetaFilesInclusion: async () => {},
+  syncSelectedFileContents: async () => {},
 });
 
 export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
@@ -150,8 +156,57 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
    * getSelectedFileEntries
    */
   const getSelectedFileEntries = useCallback(() => {
+    // Create a fresh result array with current selectedFileContents
     const results: Array<{ path: string; content: string; language: string }> = [];
+
+    // Also log the current state to help with debugging
+    console.log(
+      `[ProjectContext] getSelectedFileEntries: ${Object.keys(selectedFileContents).length} files in content map`
+    );
+
+    // IMPORTANT: Check and log if any keys have undefined or empty content
+    const emptyContentPaths = Object.entries(selectedFileContents)
+      .filter(([_, content]) => !content)
+      .map(([path]) => path);
+
+    if (emptyContentPaths.length > 0) {
+      console.warn(
+        `[ProjectContext] Found ${emptyContentPaths.length} entries with empty content:`
+      );
+      emptyContentPaths.forEach(path => console.warn(`  - ${path}`));
+    }
+
+    // Get the current list of paths with 'all' selection state
+    const validSelectedPaths: string[] = [];
+    for (const key in directoryCache) {
+      const listing = directoryCache[key];
+      if (!listing) continue;
+      const rootNode: TreeNode = {
+        name: listing.baseName,
+        path: listing.absolutePath,
+        type: 'directory',
+        children: listing.children,
+      };
+      // This will collect all currently selected file paths based on node states
+      projectActions.collectAllFilePaths(rootNode, nodeStates, validSelectedPaths);
+    }
+
+    // Process only the files that are actually present in selectedFileContents
+    // AND are still selected according to our current node states
     for (const [filePath, content] of Object.entries(selectedFileContents)) {
+      // Skip any file that isn't selected according to node states
+      if (!validSelectedPaths.includes(filePath)) {
+        console.log(`[ProjectContext] Skipping unselected file: ${filePath}`);
+        continue;
+      }
+
+      // Skip any empty content - may indicate a file that failed to load
+      if (!content) {
+        console.warn(`[ProjectContext] Skipping empty content for ${filePath}`);
+        continue;
+      }
+
+      // Determine the language based on file extension
       let language = 'plaintext';
       if (filePath.endsWith('.js') || filePath.endsWith('.jsx')) language = 'javascript';
       else if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) language = 'typescript';
@@ -160,11 +215,20 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
       else if (filePath.endsWith('.json')) language = 'json';
       else if (filePath.endsWith('.css')) language = 'css';
       else if (filePath.endsWith('.html')) language = 'html';
+      else if (filePath.endsWith('.cs')) language = 'csharp';
+      else if (filePath.endsWith('.meta')) language = 'yaml';
 
       results.push({ path: filePath, content, language });
     }
+
+    if (results.length !== Object.keys(selectedFileContents).length) {
+      console.log(
+        `[ProjectContext] Only included ${results.length} files out of ${Object.keys(selectedFileContents).length} in content map`
+      );
+    }
+
     return results;
-  }, [selectedFileContents]);
+  }, [selectedFileContents, nodeStates, directoryCache]);
 
   /**
    * toggleNodeSelection
@@ -461,6 +525,166 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     ]
   );
 
+  /**
+   * refreshWithAllExtensions
+   * Development-only debug utility to refresh a directory with all file extensions,
+   * bypassing the normal extension filtering
+   */
+  const refreshWithAllExtensions = useCallback(
+    async (folderPath: string) => {
+      // Only allow this in development mode
+      if (process.env.NODE_ENV !== 'development') {
+        showToast('Debug function only available in development mode', 'error');
+        return;
+      }
+
+      try {
+        // @ts-ignore - Suppressing type checking for electronAPI access
+        if (!window.electronAPI?.listDirectory) {
+          showToast('Electron API not available', 'error');
+          return;
+        }
+
+        // @ts-ignore - Suppressing type checking for electronAPI methods
+        const result = await window.electronAPI.listDirectory(folderPath, {
+          shallow: false,
+          addToProjectDirectories: false,
+          forceAllExtensions: true,
+        });
+
+        if (result) {
+          setDirectoryCache(prev => ({
+            ...prev,
+            [folderPath]: result,
+          }));
+
+          showToast(`[DEBUG] Refreshed ${folderPath} with all file extensions`, 'info');
+
+          // Log some debug info in dev mode
+          const extensions = new Set<string>();
+          const allFiles: string[] = [];
+
+          const traverseForExtensions = (node: TreeNode) => {
+            if (node.type === 'file') {
+              allFiles.push(node.path);
+              const ext = node.path.split('.').pop()?.toLowerCase();
+              if (ext) extensions.add(`.${ext}`);
+            }
+
+            if (node.type === 'directory' && node.children) {
+              for (const child of node.children) {
+                traverseForExtensions(child);
+              }
+            }
+          };
+
+          for (const child of result.children) {
+            traverseForExtensions(child);
+          }
+
+          console.log(
+            `[DEBUG] Found ${allFiles.length} files with extensions:`,
+            Array.from(extensions).sort().join(', ')
+          );
+        }
+      } catch (err) {
+        if (err instanceof Error) {
+          showToast(`Error refreshing directory: ${err.message}`, 'error');
+        } else {
+          showToast('Unknown error refreshing directory', 'error');
+        }
+      }
+    },
+    [showToast, setDirectoryCache]
+  );
+
+  /**
+   * Test if .meta files are being included via .promptextensions
+   */
+  const testMetaFilesInclusion = useCallback(
+    async (folderPath: string) => {
+      try {
+        // First refresh the folder to make sure we have latest tree structure
+        await refreshFolders([folderPath]);
+
+        // Find a directory node from the cache
+        const listing = directoryCache[folderPath];
+        if (!listing) {
+          showToast(`Directory not found in cache: ${folderPath}`, 'error');
+          return;
+        }
+
+        const rootNode: TreeNode = {
+          name: listing.baseName,
+          path: listing.absolutePath,
+          type: 'directory',
+          children: listing.children,
+        };
+
+        // Use the debug function to examine extensions
+        projectActions.debugFileExtensions(rootNode, 'Testing .meta file inclusion');
+
+        // Also try direct inspection
+        await projectActions.inspectDirectoryForFileTypes(folderPath, '.meta');
+
+        showToast('Extension test completed - check console for results', 'info');
+      } catch (err) {
+        console.error('[ProjectContext] Error testing meta files:', err);
+        showToast('Error testing meta files - see console', 'error');
+      }
+    },
+    [directoryCache, refreshFolders, showToast]
+  );
+
+  /**
+   * syncSelectedFileContents
+   */
+  const syncSelectedFileContents = useCallback(async () => {
+    try {
+      console.log('[ProjectContext] Synchronizing selected file contents');
+      await projectActions.syncSelectedFileContents({
+        directoryCache,
+        setDirectoryCache,
+        nodeStates,
+        setNodeStates,
+        expandedPaths,
+        setExpandedPaths,
+        selectedFileContents,
+        setSelectedFileContents,
+        projectFolders,
+        setProjectFolders,
+      });
+      console.log('[ProjectContext] Synchronization complete');
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        showToast(`Error synchronizing selected file contents: ${error.message}`, 'error');
+        if (process.env.NODE_ENV === 'development') {
+          console.error(
+            '[ProjectContext] Error synchronizing selected file contents:',
+            error.message
+          );
+        }
+      } else {
+        showToast('Unknown error synchronizing selected file contents', 'error');
+        if (process.env.NODE_ENV === 'development') {
+          console.error('[ProjectContext] Unknown error synchronizing selected file contents');
+        }
+      }
+    }
+  }, [
+    directoryCache,
+    selectedFileContents,
+    nodeStates,
+    expandedPaths,
+    projectFolders,
+    setDirectoryCache,
+    setNodeStates,
+    setExpandedPaths,
+    setSelectedFileContents,
+    setProjectFolders,
+    showToast,
+  ]);
+
   const contextValue: ProjectContextType = {
     getDirectoryListing,
     nodeStates,
@@ -476,6 +700,9 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     projectFolders,
     addProjectFolder,
     removeProjectFolder,
+    refreshWithAllExtensions,
+    testMetaFilesInclusion,
+    syncSelectedFileContents,
   };
 
   return <ProjectContext.Provider value={contextValue}>{children}</ProjectContext.Provider>;

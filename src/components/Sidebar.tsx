@@ -13,6 +13,15 @@
  *  - Shows the list of project folders and a FileTree for each
  *  - Provides buttons for add folder, refresh, copy output
  *  - Displays a mini-footer with selected file token usage
+ *
+ * Recent Fix / Explanation:
+ *  - Added a final forced synchronization pass after the second refresh cycle in the
+ *    handleCopyFileBlockOutput function. This ensures that any files discovered
+ *    to be missing truly get removed from the selection state before we finalize
+ *    the file block output.
+ *
+ * Usage:
+ *  <Sidebar />
  */
 
 import React from 'react';
@@ -20,6 +29,8 @@ import FileTree from './Sidebar/FileTree';
 import { useProject } from '../context/ProjectContext';
 import { useToast } from '../context/ToastContext';
 import { generateAsciiTree } from '../utils/asciiTreeGenerator';
+import { useMenuShortcuts } from '../hooks/useMenuShortcuts';
+import { generateFileBlockOutputSimple } from '../utils/projectActions';
 
 const Sidebar: React.FC = () => {
   const {
@@ -29,19 +40,24 @@ const Sidebar: React.FC = () => {
     refreshFolders,
     selectedFilesTokenCount,
     getSelectedFileEntries,
+    syncSelectedFileContents,
   } = useProject();
 
   const { showToast } = useToast();
+  const { copyFileBlockBtnRef, refreshFoldersBtnRef } = useMenuShortcuts();
 
   /**
    * handleAddFolder
+   * Prompts the user to select a new folder to add to the project folder list.
    */
   const handleAddFolder = async () => {
     try {
+      // @ts-ignore - Suppressing type checking for electronAPI access
       if (!window.electronAPI?.showOpenDialog) {
         console.warn('[Sidebar] Missing electronAPI.showOpenDialog');
         return;
       }
+      // @ts-ignore - Suppressing type checking for electronAPI methods
       const result = await window.electronAPI.showOpenDialog({
         properties: ['openDirectory'],
         title: 'Select Project Folder',
@@ -59,6 +75,7 @@ const Sidebar: React.FC = () => {
 
   /**
    * handleRefresh
+   * Refreshes the file tree data for all currently tracked project folders.
    */
   const handleRefresh = async () => {
     try {
@@ -70,6 +87,8 @@ const Sidebar: React.FC = () => {
 
   /**
    * handleRemoveFolder
+   * Removes a folder from the project folders list.
+   * @param folderPath The absolute path to remove
    */
   const handleRemoveFolder = async (folderPath: string) => {
     try {
@@ -83,31 +102,79 @@ const Sidebar: React.FC = () => {
    * handleCopyFileBlockOutput
    * Gathers ASCII tree for each folder plus selected file contents, copies the final string.
    */
-  const handleCopyFileBlockOutput = async () => {
+  const handleCopyFileBlockOutput = async (e: any = null) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    console.log('[Sidebar] Copying file block output');
     try {
-      let finalOutput = '';
+      // Show feedback that we're starting the copy process
+      showToast('Preparing file block output...', 'info');
 
-      // For each project folder, generate the ASCII tree
-      for (const folder of projectFolders) {
-        const ascii = await generateAsciiTree([folder]);
-        if (ascii) {
-          finalOutput += ascii.trim() + '\n\n';
-        }
+      // First do a deeper refresh of all project folders to ensure we have the latest file system state
+      console.log('[Sidebar] Performing full refresh of all project folders');
+      await refreshFolders(projectFolders);
+
+      // After the initial refresh, synchronize selected files with the latest file tree state
+      // This will rebuild the entire file content map
+      console.log('[Sidebar] Performing full synchronization of selected files');
+      await syncSelectedFileContents();
+
+      // Get current entries after first sync
+      let currentEntries = getSelectedFileEntries();
+      console.log(
+        `[Sidebar] After first sync: ${currentEntries.length} files in selected files map`
+      );
+
+      // Add a longer delay to ensure React state updates are fully applied
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Do a second full refresh cycle to catch any remaining inconsistencies
+      console.log('[Sidebar] Performing second refresh cycle');
+      await refreshFolders(projectFolders);
+      await syncSelectedFileContents();
+
+      // Get the final list of selected entries
+      currentEntries = getSelectedFileEntries();
+      console.log(`[Sidebar] After final sync: ${currentEntries.length} files selected`);
+
+      // *** FIX IMPLEMENTATION ***
+      // Force one more synchronization pass to be absolutely sure that
+      // any files flagged as missing are removed from the selection state
+      console.log('[Sidebar] Forcing final sync check for any missing files');
+      await syncSelectedFileContents();
+      const finalEntries2 = getSelectedFileEntries();
+      console.log(
+        `[Sidebar] After forced final sync: ${finalEntries2.length} files in selected files map`
+      );
+
+      // Now generate the file block output
+      console.log('[Sidebar] Generating file block output');
+      const output = await generateFileBlockOutputSimple(
+        projectFolders,
+        () => getSelectedFileEntries(), // fresh call to ensure the latest data
+        refreshFolders
+      );
+
+      if (!output || output.trim() === '') {
+        console.error('[Sidebar] Generated output is empty');
+        showToast('Failed to generate output - no content found', 'error');
+        return;
       }
 
-      // Now append all selected file entries
-      const selectedEntries = getSelectedFileEntries();
-      for (const entry of selectedEntries) {
-        finalOutput += `<file_contents>\nFile: ${entry.path}\n\`\`\`${entry.language}\n${entry.content}\n\`\`\`\n</file_contents>\n\n`;
-      }
+      // Copy the output to clipboard
+      await navigator.clipboard.writeText(output);
+      console.log('[Sidebar] Successfully copied file block output to clipboard');
+      console.log(`[Sidebar] Output size: ${output.length} characters`);
 
-      // Copy to clipboard
-      await navigator.clipboard.writeText(finalOutput.trim());
-      console.log('[Sidebar] Copied file block output to clipboard.');
-      showToast('Copied file block output to clipboard!', 'info');
-    } catch (err) {
-      console.error('[Sidebar] Failed to copy file block output:', err);
-      showToast('Failed to copy file block output. See console.', 'error');
+      // Show success notification with file count
+      showToast(`Copied ${finalEntries2.length} files to clipboard`, 'info');
+    } catch (error: unknown) {
+      console.error('[Sidebar] Error copying file block output:', error);
+      if (error instanceof Error) {
+        showToast(`Error copying file block output: ${error.message}`, 'error');
+      } else {
+        showToast('Error copying file block output', 'error');
+      }
     }
   };
 
@@ -125,6 +192,7 @@ const Sidebar: React.FC = () => {
             <>
               {/* Copy File Block Output Button */}
               <button
+                ref={copyFileBlockBtnRef}
                 onClick={handleCopyFileBlockOutput}
                 className="w-8 h-8 rounded hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100 flex items-center justify-center"
                 title="Copy File Block Output"
@@ -146,14 +214,15 @@ const Sidebar: React.FC = () => {
                   <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
                   <path
                     d="M4 16c-1.1 0-2-.9-2-2V4
-                       c0-1.1.9-2 2-2h10
-                       c1.1 0 2 .9 2 2"
+                       a2 2 0 0 1 2-2h10
+                       a2 2 0 0 1 2 2"
                   />
                 </svg>
               </button>
 
               {/* Refresh Button */}
               <button
+                ref={refreshFoldersBtnRef}
                 onClick={handleRefresh}
                 className="w-8 h-8 rounded hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-gray-100 flex items-center justify-center"
                 title="Refresh Folders"

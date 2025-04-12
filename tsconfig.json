@@ -20,7 +20,7 @@
     },
     "sourceMap": true
   },
-  "include": ["electron-main/**/*"],
+  "include": ["electron-main/**/*", "src/**/*"],
   "exclude": ["node_modules", "dist"]
 }
       

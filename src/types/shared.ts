@@ -13,4 +13,6 @@
  * Example:
  *  import { TreeNode, DirectoryListing } from '@/types/shared';
  */
-Object.defineProperty(exports, '__esModule', { value: true });
+
+// Re-export these types from electron-main/types
+export type { TreeNode, DirectoryListing } from '../../electron-main/types';

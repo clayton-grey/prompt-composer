@@ -26,6 +26,8 @@
  *  - More robust styling or theming
  */
 
+/* eslint-disable @typescript-eslint/no-unused-vars */
+
 import React, { createContext, useContext, useCallback, useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -44,9 +46,9 @@ interface ToastMessage {
   message: string;
 
   /**
-   * Type of toast, e.g. 'info' or 'error'
+   * Type of toast, e.g. 'info', 'warning', or 'error'
    */
-  type: 'info' | 'error';
+  type: 'info' | 'warning' | 'error';
 }
 
 /**
@@ -58,7 +60,7 @@ interface ToastContextType {
    * @param message the text to display
    * @param type the toast type, defaults to 'info'
    */
-  showToast: (message: string, type?: 'info' | 'error') => void;
+  showToast: (message: string, type?: 'info' | 'warning' | 'error') => void;
 }
 
 /**
@@ -78,7 +80,7 @@ export const ToastProvider: React.FC<React.PropsWithChildren> = ({ children }) =
    * showToast - Appends a new toast to the list
    * The toast is automatically removed after 5 seconds
    */
-  const showToast = useCallback((message: string, type: 'info' | 'error' = 'info') => {
+  const showToast = useCallback((message: string, type: 'info' | 'warning' | 'error' = 'info') => {
     const newToast: ToastMessage = {
       id: uuidv4(),
       message,
@@ -109,7 +111,11 @@ export const ToastProvider: React.FC<React.PropsWithChildren> = ({ children }) =
           <div
             key={toast.id}
             className={`px-4 py-2 rounded shadow text-white ${
-              toast.type === 'error' ? 'bg-red-600' : 'bg-gray-800'
+              toast.type === 'error'
+                ? 'bg-red-600'
+                : toast.type === 'warning'
+                  ? 'bg-yellow-600'
+                  : 'bg-gray-800'
             }`}
           >
             <div className="flex items-center">

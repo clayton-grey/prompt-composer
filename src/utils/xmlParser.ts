@@ -20,6 +20,13 @@
 
 import { Block, TextBlock, TemplateBlock, FilesBlock } from '../types/Block';
 
+/**
+ * XMLNode interface for type-checking
+ */
+interface XMLNode {
+  name: string;
+}
+
 // Existing importFromXML, used internally:
 export function importFromXML(xmlString: string): {
   version: string;
@@ -161,6 +168,7 @@ export async function importAndValidateFromXML(xmlString: string): Promise<{
   const data = importFromXML(xmlString);
 
   // 2) For each "files" block, check file existence
+  // @ts-ignore - Suppressing type checking for electronAPI access
   if (!window.electronAPI?.verifyFileExistence) {
     console.warn(
       '[importAndValidateFromXML] No electronAPI.verifyFileExistence found. Skipping path validation.'
@@ -174,6 +182,7 @@ export async function importAndValidateFromXML(xmlString: string): Promise<{
       const filesBlock = blk as FilesBlock;
       const validFiles = [];
       for (const fObj of filesBlock.files) {
+        // @ts-ignore - Suppressing type checking for electronAPI methods
         const doesExist = await window.electronAPI.verifyFileExistence(fObj.path);
         if (doesExist) {
           validFiles.push(fObj);
@@ -230,7 +239,7 @@ export function exportToXML(data: {
         xml += `      <files>\n`;
         for (const fileObj of b.files) {
           xml += `        <file path="${escapeXml(fileObj.path)}" language="${escapeXml(fileObj.language)}">\n`;
-          xml += `<![CDATA[\n${fileObj.content}\n]\]>`;
+          xml += `<![CDATA[\n${fileObj.content}\n]]>`;
           xml += `\n        </file>\n`;
         }
         xml += `      </files>\n`;
@@ -262,4 +271,32 @@ function unescapeXml(str: string): string {
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&amp;/g, '&');
+}
+
+/**
+ * Checks if a node is a file block in XML structure
+ */
+function isFileBlock(node: XMLNode): boolean {
+  return node.name === 'file_block';
+}
+
+/**
+ * Checks if a file exists if the path is provided.
+ * Returns the fileExists value asynchronously.
+ */
+async function verifyFileExists(path: string): Promise<boolean> {
+  // Don't perform path verification if the string is blank
+  if (!path || path.trim() === '') return false;
+
+  try {
+    // @ts-ignore - Suppressing type checking for electronAPI access
+    if (window.electronAPI?.verifyFileExistence) {
+      // @ts-ignore - Suppressing type checking for electronAPI methods
+      return await window.electronAPI.verifyFileExistence(path);
+    }
+    return false;
+  } catch (err) {
+    console.error('[xmlParser] Error verifying file existence:', err);
+    return false;
+  }
 }

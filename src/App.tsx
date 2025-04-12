@@ -12,6 +12,8 @@
  * You can adapt the styling or remove the partial classes if needed for your layout.
  */
 
+/* eslint-disable @typescript-eslint/no-unused-vars */
+
 import React, { useRef, useEffect, useState } from 'react';
 import Sidebar from './components/Sidebar';
 import MainContent from './components/MainContent';
@@ -20,6 +22,7 @@ import { ToastProvider } from './context/ToastContext';
 import { usePrompt } from './context/PromptContext';
 import { TemplateBlock } from './types/Block';
 import EditorFooter from './components/EditorFooter';
+import { MenuShortcutsProvider } from './context/MenuShortcutsContext';
 
 const MIN_SIDEBAR_WIDTH = 270;
 const MAX_SIDEBAR_WIDTH = 1200;
@@ -76,33 +79,37 @@ const App: React.FC = () => {
 
   return (
     <ToastProvider>
-      <div className={`${darkMode ? 'dark' : ''} h-screen w-screen overflow-hidden flex flex-row`}>
-        {/* Left column: sidebar */}
+      <MenuShortcutsProvider>
         <div
-          className="relative dark:bg-gray-700 bg-gray-200 flex-none flex flex-col"
-          style={{
-            width: sidebarWidth,
-            minWidth: MIN_SIDEBAR_WIDTH,
-            maxWidth: '50%',
-          }}
+          className={`${darkMode ? 'dark' : ''} h-screen w-screen overflow-hidden flex flex-row`}
         >
-          <Sidebar />
+          {/* Left column: sidebar */}
           <div
-            onMouseDown={startResize}
-            className="absolute top-0 right-0 w-2 h-full cursor-col-resize bg-transparent hover:bg-gray-300 dark:hover:bg-gray-600 z-10"
-          />
-        </div>
-
-        {/* Right column: editor => main content + pinned footer */}
-        <div className="flex-grow flex flex-col dark:bg-gray-900 bg-gray-50">
-          <div className="flex-1 overflow-auto">
-            <MainContent />
+            className="relative dark:bg-gray-700 bg-gray-200 flex-none flex flex-col"
+            style={{
+              width: sidebarWidth,
+              minWidth: MIN_SIDEBAR_WIDTH,
+              maxWidth: '50%',
+            }}
+          >
+            <Sidebar />
+            <div
+              onMouseDown={startResize}
+              className="absolute top-0 right-0 w-2 h-full cursor-col-resize bg-transparent hover:bg-gray-300 dark:hover:bg-gray-600 z-10"
+            />
           </div>
 
-          {/* Here is the EditorFooter pinned at the bottom */}
-          <EditorFooter />
+          {/* Right column: editor => main content + pinned footer */}
+          <div className="flex-grow flex flex-col dark:bg-gray-900 bg-gray-50">
+            <div className="flex-1 overflow-auto">
+              <MainContent />
+            </div>
+
+            {/* Here is the EditorFooter pinned at the bottom */}
+            <EditorFooter />
+          </div>
         </div>
-      </div>
+      </MenuShortcutsProvider>
     </ToastProvider>
   );
 };

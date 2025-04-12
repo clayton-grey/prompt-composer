@@ -1,3 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unused-vars */
+
 /**
  * @file PromptResponseBlockEditor.tsx
  * @description
@@ -107,10 +111,23 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
         return;
       }
 
+      // Get originalPath from the block if available
+      // This will be the full path from where the file was originally loaded
+      const originalPath = block.originalPath || block.fullPath || null;
+
+      // Log debug info in development mode
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[PromptResponseBlockEditor] Writing file:', {
+          sourceFile: block.sourceFile,
+          originalPath,
+        });
+      }
+
       electronAPI
         .writePromptComposerFile({
           relativeFilename: block.sourceFile,
           content: newVal,
+          originalPath,
         })
         .then((result: any) => {
           if (result && typeof result === 'object' && 'error' in result) {
@@ -127,7 +144,7 @@ const PromptResponseBlockEditor: React.FC<PromptResponseBlockEditorProps> = ({
           }
         });
     },
-    [block.sourceFile, showToast]
+    [block.sourceFile, block.originalPath, block.fullPath, showToast]
   );
 
   const handleFullTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {

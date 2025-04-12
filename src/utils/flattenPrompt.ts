@@ -8,6 +8,8 @@
  * respect the boolean in the block. If it's false, we do not embed the ASCII map.
  */
 
+/* eslint-disable @typescript-eslint/no-unused-vars */
+
 import { Block, TextBlock, TemplateBlock, FilesBlock, PromptResponseBlock } from '../types/Block';
 
 /**

@@ -6,6 +6,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { checkPermissions as checkPermissionsUtil } from '../../utils/electronUtils';
 
 interface PermissionResult {
   read: boolean;
@@ -32,8 +33,11 @@ const PermissionsDebugger: React.FC = () => {
   const checkPermissions = async () => {
     setLoading(true);
     try {
-      const result = await window.electronAPI.checkPermissions();
-      setPermissions(result);
+      const result = await checkPermissionsUtil();
+      if (!result) {
+        throw new Error('Failed to check permissions');
+      }
+      setPermissions(result as PermissionsState);
     } catch (err) {
       console.error('Failed to check permissions:', err);
       setPermissions({ error: String(err) });

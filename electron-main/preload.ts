@@ -128,7 +128,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   /**
    * Writes a file to the project's .prompt-composer folder
    */
-  writePromptComposerFile: async (args: { relativeFilename: string; content: string }) => {
+  writePromptComposerFile: async (args: { 
+    relativeFilename: string; 
+    content: string; 
+    originalPath?: string 
+  }) => {
     return ipcRenderer.invoke('write-prompt-composer-file', args);
   },
 

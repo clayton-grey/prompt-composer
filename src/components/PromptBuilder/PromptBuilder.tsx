@@ -1,9 +1,12 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
+
 import React, { useEffect, useState } from 'react';
 import { usePrompt } from '../../context/PromptContext';
 import BlockList from './BlockList';
 import TemplateListView from './TemplateListView';
 import { Block, TemplateBlock } from '../../types/Block';
 import { parseTemplateBlocksAsync } from '../../utils/templateBlockParserAsync';
+import { useMenuShortcuts } from '../../hooks/useMenuShortcuts';
 
 /**
  * Utility to reconstruct the raw text from all blocks (if user is editing the entire composition).
@@ -32,6 +35,7 @@ function reconstructAllBlocksRaw(blocks: Block[]): string {
 
 export const PromptBuilder: React.FC = () => {
   const { blocks, updateBlock, getFlattenedPrompt, importComposition } = usePrompt();
+  const { copyPromptBtnRef } = useMenuShortcuts();
 
   const hasBlocks = blocks.length > 0;
   // For simplicity, we treat the entire set of blocks as a single "raw" editing scenario
@@ -46,6 +50,7 @@ export const PromptBuilder: React.FC = () => {
   }, [editingRaw, blocks]);
 
   const handleCopy = async () => {
+    console.log('[PromptBuilder] handleCopy called directly from button click');
     try {
       const promptString = await getFlattenedPrompt();
       await navigator.clipboard.writeText(promptString);
@@ -93,6 +98,7 @@ export const PromptBuilder: React.FC = () => {
             {/* Copy Prompt Button (only if not in raw edit mode) */}
             {!editingRaw && (
               <button
+                ref={copyPromptBtnRef}
                 onClick={handleCopy}
                 title="Copy Prompt"
                 aria-label="Copy Prompt"

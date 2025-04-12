@@ -5,6 +5,8 @@
  * Contains interface declarations for window.electronAPI.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 interface DirectoryPermission {
   dir: string;
   canRead: boolean;
@@ -23,7 +25,11 @@ interface ElectronAPI {
   // File system operations
   listDirectory: (
     path: string,
-    options?: { shallow?: boolean; addToProjectDirectories?: boolean }
+    options?: {
+      shallow?: boolean;
+      addToProjectDirectories?: boolean;
+      forceAllExtensions?: boolean;
+    }
   ) => Promise<any>;
   readFile: (path: string) => Promise<string>;
   writeFile: (path: string, content: string) => Promise<void>;

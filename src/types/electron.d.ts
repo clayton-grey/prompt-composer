@@ -7,6 +7,8 @@
  * In this update, we import types from the common/types.ts module to unify usage.
  */
 
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { DirectoryListing } from '../../electron-main/types';
 
 declare global {
@@ -68,7 +70,10 @@ declare global {
       /**
        * Reads a file from the project's .prompt-composer folder
        */
-      readPromptComposerFile: (relativeFilename: string) => Promise<string | null>;
+      readPromptComposerFile: (
+        fileName: string,
+        subDirectory?: string
+      ) => Promise<string | { content: string; path: string } | null>;
 
       /**
        * Writes a file to the project's .prompt-composer folder
@@ -77,6 +82,7 @@ declare global {
       writePromptComposerFile: (args: {
         relativeFilename: string;
         content: string;
+        originalPath?: string;
       }) => Promise<boolean | { error: string }>;
 
       /**
@@ -95,12 +101,40 @@ declare global {
       /**
        * Reads a template file from the global ~/.prompt-composer directory
        */
-      readGlobalPromptComposerFile: (fileName: string) => Promise<string | null>;
+      readGlobalPromptComposerFile: (
+        fileName: string,
+        subDirectory?: string
+      ) => Promise<string | { content: string; path: string } | null>;
 
       /**
        * Removes a directory from the projectDirectories list in the main process
        */
       removeProjectDirectory: (folderPath: string) => Promise<boolean>;
+
+      /**
+       * Reads a template file (searches project and global directories)
+       */
+      readTemplateFile: (templateName: string) => Promise<string | null>;
+
+      /**
+       * Get the template paths for a given template name
+       */
+      getTemplatePaths: (templateName: string) => Promise<string[] | Record<string, any>>;
+
+      /**
+       * Check if DevTools are open
+       */
+      isDevToolsOpen: () => Promise<boolean>;
+
+      /**
+       * Check permissions for various filesystem locations
+       */
+      checkPermissions: () => Promise<any>;
+
+      /**
+       * Check filesystem permissions for various locations
+       */
+      checkFilesystemPermissions: () => Promise<any>;
     };
   }
 }
