@@ -61,7 +61,6 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
     collapseSubtree,
     directoryCache,
     refreshFolders,
-    testMetaFilesInclusion,
   } = useProject();
 
   /**
@@ -383,18 +382,6 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
       onRemoveFolder(folderPath);
     };
 
-    // Debug function to test .meta file inclusion
-    const handleTestMetaFiles = () => {
-      if (typeof window !== 'undefined' && window.electronAPI) {
-        // We can only do this in development mode
-        if (process.env.NODE_ENV === 'development') {
-          if (testMetaFilesInclusion) {
-            testMetaFilesInclusion(folderPath);
-          }
-        }
-      }
-    };
-
     return (
       <div key={folderPath} className="mb-2">
         <div className="flex items-center bg-transparent p-1">
@@ -411,25 +398,6 @@ const FileTree: React.FC<FileTreeProps> = ({ folders, onRemoveFolder }) => {
 
           {/* Additional folder-level actions */}
           <div className="flex items-center ml-2">
-            {process.env.NODE_ENV === 'development' && (
-              <button
-                onClick={handleTestMetaFiles}
-                className="mr-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
-                title="Test Meta Files"
-                aria-label="Test Meta Files"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  className="h-4 w-4"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  aria-hidden="true"
-                >
-                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                </svg>
-              </button>
-            )}
             <button
               onClick={handleCollapseClick}
               className="mr-2 text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"

@@ -38,7 +38,6 @@ export interface ProjectContextType {
   addProjectFolder: (folderPath: string) => Promise<void>;
   removeProjectFolder: (folderPath: string) => Promise<void>;
   refreshWithAllExtensions: (folderPath: string) => Promise<void>;
-  testMetaFilesInclusion: (folderPath: string) => Promise<void>;
   syncSelectedFileContents: () => Promise<void>;
 }
 
@@ -58,7 +57,6 @@ const ProjectContext = createContext<ProjectContextType>({
   addProjectFolder: async () => {},
   removeProjectFolder: async () => {},
   refreshWithAllExtensions: async () => {},
-  testMetaFilesInclusion: async () => {},
   syncSelectedFileContents: async () => {},
 });
 
@@ -599,44 +597,6 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
   );
 
   /**
-   * Test if .meta files are being included via .promptextensions
-   */
-  const testMetaFilesInclusion = useCallback(
-    async (folderPath: string) => {
-      try {
-        // First refresh the folder to make sure we have latest tree structure
-        await refreshFolders([folderPath]);
-
-        // Find a directory node from the cache
-        const listing = directoryCache[folderPath];
-        if (!listing) {
-          showToast(`Directory not found in cache: ${folderPath}`, 'error');
-          return;
-        }
-
-        const rootNode: TreeNode = {
-          name: listing.baseName,
-          path: listing.absolutePath,
-          type: 'directory',
-          children: listing.children,
-        };
-
-        // Use the debug function to examine extensions
-        projectActions.debugFileExtensions(rootNode, 'Testing .meta file inclusion');
-
-        // Also try direct inspection
-        await projectActions.inspectDirectoryForFileTypes(folderPath, '.meta');
-
-        showToast('Extension test completed - check console for results', 'info');
-      } catch (err) {
-        console.error('[ProjectContext] Error testing meta files:', err);
-        showToast('Error testing meta files - see console', 'error');
-      }
-    },
-    [directoryCache, refreshFolders, showToast]
-  );
-
-  /**
    * syncSelectedFileContents
    */
   const syncSelectedFileContents = useCallback(async () => {
@@ -701,7 +661,6 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     addProjectFolder,
     removeProjectFolder,
     refreshWithAllExtensions,
-    testMetaFilesInclusion,
     syncSelectedFileContents,
   };
 

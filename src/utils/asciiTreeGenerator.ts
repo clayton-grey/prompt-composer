@@ -1,25 +1,28 @@
-/**
- * @file asciiTreeGenerator.ts
- * @description
- * Provides unified logic for generating ASCII directory trees for one or more root folders.
- *
- * Step 9 Changes:
- *  - We add a simple memoization approach to avoid regenerating the same ASCII tree
- *    if the same folder array is passed in consecutively.
- *  - We store the previous input array + output string in a local variable.
- *  - If the next call has exactly the same folder array (same order and entries),
- *    we return the cached result.
- *
- * Implementation details:
- *  - The user can call clearAsciiCache() if they suspect the folder structure changed
- *    drastically and want a fresh generation forcibly. For now, we do not automatically
- *    clear it when the user calls "refreshFolders"; that can be integrated if desired.
- */
-
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable @typescript-eslint/no-unsafe-call */
 /* eslint-disable @typescript-eslint/no-unsafe-argument */
+
+/**
+ * @file asciiTreeGenerator.ts
+ * @description
+ * **Patch – May 18 2025**
+ *
+ * The previous implementation used a **naïve in‑memory cache** (lastFoldersInput / lastAsciiResult)
+ * to avoid regenerating identical ASCII trees. Unfortunately, that optimisation caused stale
+ * directory trees to be emitted after files were added, removed, or renamed – you had to restart
+ * Prompt Composer to see an accurate tree.
+ *
+ * The cache has been **completely removed** so every call produces a fresh view of the file system.
+ * The performance impact is negligible for the typical project sizes we target (< 2 000 nodes).
+ *
+ * If you ever want caching again you can re‑introduce it behind an explicit `useCache` flag,
+ * but the default behaviour must now prioritise correctness.
+ */
+
+// -------------------------------------------------------------------------------------------------
+//  Types
+// -------------------------------------------------------------------------------------------------
 
 interface TreeNode {
   name: string;
@@ -28,47 +31,32 @@ interface TreeNode {
   children?: TreeNode[];
 }
 
-// Cache references
-let lastFoldersInput: string[] | null = null;
-let lastAsciiResult: string | null = null;
-
-/**
- * Clears the in-memory ASCII tree cache. Useful if the folder structure changes significantly.
- */
-export function clearAsciiCache(): void {
-  lastFoldersInput = null;
-  lastAsciiResult = null;
-}
+// -------------------------------------------------------------------------------------------------
+//  Helpers
+// -------------------------------------------------------------------------------------------------
 
 /**
  * Recursively builds the ASCII lines for a given node and its children.
- * @param node The node to process (file or directory)
- * @param prefix The prefix used for indentation in the ASCII tree
- * @param isLast Whether this node is the last child of its parent
- * @returns An array of string lines that represent this node (and its subtree)
  */
-function buildAsciiLines(node: TreeNode, prefix: string = '', isLast: boolean = true): string[] {
+function buildAsciiLines(node: TreeNode, prefix = '', isLast = true): string[] {
   const lines: string[] = [];
   const nodeMarker = isLast ? '└── ' : '├── ';
 
   let label = node.name;
-  if (node.type === 'directory') {
-    label = '[D] ' + node.name;
-  }
+  if (node.type === 'directory') label = `[D] ${node.name}`;
 
   lines.push(prefix + nodeMarker + label);
 
   if (node.type === 'directory' && node.children && node.children.length > 0) {
-    // Sort directories first, then files
-    const sortedChildren = [...node.children].sort((a, b) => {
-      if (a.type !== b.type) {
-        return a.type === 'directory' ? -1 : 1;
-      }
+    // Sort directories first, then files for a tidy output.
+    const sorted = [...node.children].sort((a, b) => {
+      if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
       return a.name.localeCompare(b.name);
     });
+
     const childPrefix = prefix + (isLast ? '    ' : '│   ');
-    sortedChildren.forEach((child, idx) => {
-      const childIsLast = idx === sortedChildren.length - 1;
+    sorted.forEach((child, idx) => {
+      const childIsLast = idx === sorted.length - 1;
       lines.push(...buildAsciiLines(child, childPrefix, childIsLast));
     });
   }
@@ -77,107 +65,78 @@ function buildAsciiLines(node: TreeNode, prefix: string = '', isLast: boolean = 
 }
 
 /**
- * fetchDirectoryListing
- * Utility to call electronAPI.listDirectory for a single folder path. This
- * assumes a full read (shallow=false) for ASCII generation.
+ * Request a fresh directory listing for `folderPath` from the main process.
+ * We always force a **non‑shallow** read so the ASCII tree is complete.
  */
 async function fetchDirectoryListing(folderPath: string): Promise<TreeNode | null> {
-  // @ts-ignore - Suppressing type checking for electronAPI access
+  // @ts-ignore – suppressing type checks for the injected API
   if (!window.electronAPI?.listDirectory) {
-    console.warn('[asciiTreeGenerator] No electronAPI.listDirectory found. Returning null.');
+    console.warn('[asciiTreeGenerator] window.electronAPI.listDirectory unavailable.');
     return null;
   }
+
   try {
-    // For ASCII tree generation, we typically want the full tree
-    // @ts-ignore - Suppressing type checking for electronAPI methods
+    // @ts-ignore
     const listing = await window.electronAPI.listDirectory(folderPath, { shallow: false });
-    if (!listing) {
-      return null;
-    }
-    const rootNode: TreeNode = {
+    if (!listing) return null;
+
+    return {
       name: listing.baseName,
       path: listing.absolutePath,
       type: 'directory',
       children: listing.children,
-    };
-    return rootNode;
+    } as TreeNode;
   } catch (err) {
-    console.warn('[asciiTreeGenerator] Failed to process folder:', folderPath, err);
+    console.warn('[asciiTreeGenerator] Failed to fetch directory listing:', folderPath, err);
     return null;
   }
 }
 
+// -------------------------------------------------------------------------------------------------
+//  Public API
+// -------------------------------------------------------------------------------------------------
+
 /**
- * generateAsciiTree
- * Builds a combined ASCII directory tree for one or more folder paths, using a naive memoization.
- *
- * @param folders string[] - An array of folder paths
- * @returns A Promise resolving to a single string containing the ASCII directory tree
- * for each folder, separated by blank lines if multiple folders are provided.
- *
- * Caching Approach:
- *  - If the input array is identical (length + each folder path) to lastFoldersInput,
- *    we return lastAsciiResult. Otherwise, we generate and store in the cache.
+ * Generate an ASCII directory tree for one or more root folders.
+ * Always returns a freshly computed string – no caching.
  */
 export async function generateAsciiTree(folders: string[]): Promise<string> {
-  if (!folders || folders.length === 0) {
-    return '';
-  }
+  if (!folders || folders.length === 0) return '';
 
-  // Check naive cache
-  const isSameAsCached =
-    lastFoldersInput &&
-    lastFoldersInput.length === folders.length &&
-    lastFoldersInput.every((f, idx) => f === folders[idx]);
-
-  if (isSameAsCached && lastAsciiResult) {
-    return lastAsciiResult;
-  }
-
-  let finalOutput = '';
+  let output = '';
 
   for (let i = 0; i < folders.length; i++) {
     const folderPath = folders[i];
     const rootNode = await fetchDirectoryListing(folderPath);
-    if (!rootNode) {
-      continue;
-    }
+    if (!rootNode) continue;
 
     const lines: string[] = [];
     lines.push('<file_map>');
     lines.push(rootNode.path);
 
-    // Sort top-level children
     if (rootNode.children && rootNode.children.length > 0) {
-      const sortedChildren = [...rootNode.children].sort((a, b) => {
-        if (a.type !== b.type) {
-          return a.type === 'directory' ? -1 : 1;
-        }
+      const sortedTop = [...rootNode.children].sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'directory' ? -1 : 1;
         return a.name.localeCompare(b.name);
       });
 
-      sortedChildren.forEach((child, idx) => {
-        const isLast = idx === sortedChildren.length - 1;
+      sortedTop.forEach((child, idx) => {
+        const isLast = idx === sortedTop.length - 1;
         lines.push(...buildAsciiLines(child, '', isLast));
       });
     }
 
     lines.push('</file_map>');
-    if (i < folders.length - 1) {
-      lines.push('');
-    }
+    if (i < folders.length - 1) lines.push('');
 
-    finalOutput += lines.join('\n');
-    if (i < folders.length - 1) {
-      finalOutput += '\n';
-    }
+    output += lines.join('\n');
+    if (i < folders.length - 1) output += '\n';
   }
 
-  const trimmed = finalOutput.trim();
+  return output.trim();
+}
 
-  // Store in naive cache
-  lastFoldersInput = [...folders];
-  lastAsciiResult = trimmed;
-
-  return trimmed;
+// Stub retained for backward compatibility – does nothing now but avoids runtime errors.
+export function clearAsciiCache(): void {
+  /* no‑op – cache removed */
 }
