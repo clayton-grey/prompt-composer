@@ -51,6 +51,7 @@ interface PromptContextType {
    * Current token usage snapshot for the entire composition.
    */
   tokenUsage: TokenUsage;
+  tokenUsageUpdating: boolean;
 
   /**
    * Called to produce the final flattened prompt string, including
@@ -92,6 +93,7 @@ const PromptContext = createContext<PromptContextType>({
   setSettings: () => {},
   updateFileBlock: () => {},
   tokenUsage: { total: 0, byBlock: [] },
+  tokenUsageUpdating: false,
   getFlattenedPrompt: async () => '',
   importComposition: () => {},
   replaceTemplateGroup: async () => {},
@@ -101,8 +103,14 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [settings, setSettingsState] = useState<PromptSettings>(defaultSettings);
   const [tokenUsage, setTokenUsage] = useState<TokenUsage>({ total: 0, byBlock: [] });
+  const [tokenUsageUpdating, setTokenUsageUpdating] = useState<boolean>(false);
 
-  const { getSelectedFileEntries, projectFolders } = useProject();
+  const {
+    projectFolders,
+    refreshFolders, // we’ll reuse the Sidebar logic: refresh → sync
+    syncSelectedFileContents,
+    getSelectedFileEntries, // ← add this
+  } = useProject();
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
   const addBlock = useCallback((block: Block) => {
@@ -203,9 +211,14 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
 
   const getFlattenedPrompt = useCallback(async () => {
     try {
-      const selectedEntries = getSelectedFileEntries();
-      const flattened = await flattenPrompt(blocks, projectFolders, selectedEntries);
-      return flattened;
+      /* 1️⃣ make sure folder listings are current (optional but cheap) */
+      await refreshFolders(projectFolders);
+
+      /* 2️⃣ force-sync and capture the *fresh* entry list right away   */
+      const freshEntries = await syncSelectedFileContents();
+
+      /* 3️⃣ now build the prompt with those entries                   */
+      return await flattenPrompt(blocks, projectFolders, freshEntries);
     } catch (err: unknown) {
       if (err instanceof Error) {
         console.error('[PromptContext] Failed to flatten prompt:', err.message);
@@ -214,13 +227,16 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
       }
       return '';
     }
-  }, [blocks, projectFolders, getSelectedFileEntries]);
+  }, [blocks, projectFolders, refreshFolders, syncSelectedFileContents]);
 
   // Recompute token usage whenever blocks, model, or selected file entries change.
   useEffect(() => {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
+    // ⚙️  start the “loading” flag immediately
+    setTokenUsageUpdating(true);
+
     debounceRef.current = setTimeout(() => {
       try {
         const selectedEntries = getSelectedFileEntries();
@@ -234,6 +250,8 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
         }
         setTokenUsage({ total: 0, byBlock: [] });
       }
+      // ✅ done – remove the spinner
+      setTokenUsageUpdating(false);
     }, 500);
 
     return () => {
@@ -253,6 +271,7 @@ export const PromptProvider: React.FC<React.PropsWithChildren> = ({ children }) 
     setSettings,
     updateFileBlock,
     tokenUsage,
+    tokenUsageUpdating,
     getFlattenedPrompt,
     importComposition,
     replaceTemplateGroup,

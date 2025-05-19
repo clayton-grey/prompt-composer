@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 
 import React, { useEffect, useState } from 'react';
+import { useToast } from '../../context/ToastContext';
 import { usePrompt } from '../../context/PromptContext';
 import BlockList from './BlockList';
 import TemplateListView from './TemplateListView';
@@ -35,6 +36,7 @@ function reconstructAllBlocksRaw(blocks: Block[]): string {
 
 export const PromptBuilder: React.FC = () => {
   const { blocks, updateBlock, getFlattenedPrompt, importComposition } = usePrompt();
+  const { showToast } = useToast();
   const { copyPromptBtnRef } = useMenuShortcuts();
 
   const hasBlocks = blocks.length > 0;
@@ -53,10 +55,18 @@ export const PromptBuilder: React.FC = () => {
     console.log('[PromptBuilder] handleCopy called directly from button click');
     try {
       const promptString = await getFlattenedPrompt();
+      if (!promptString.trim()) {
+        showToast('Prompt is empty – nothing copied.', 'warning');
+        return;
+      }
+
       await navigator.clipboard.writeText(promptString);
       console.log('[PromptBuilder] Prompt copied to clipboard');
+      showToast('Copied prompt to clipboard!', 'info'); // ← NEW
     } catch (err) {
       console.error('[PromptBuilder] Failed to copy prompt:', err);
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      showToast(`Failed to copy prompt: ${msg}`, 'error'); // ← NEW
     }
   };
 

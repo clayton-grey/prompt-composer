@@ -618,36 +618,66 @@ export async function addProjectFolder(
  * Removes a folder from the projectFolders list. We do not remove from nodeStates or directoryCache
  * unless further cleanup is explicitly needed by the UI logic.
  */
+/**
+ * removeProjectFolder
+ * Removes a folder from the project, **and** purges anything
+ * (cache, node states, file contents, expansions) that lives underneath it.
+ */
 export async function removeProjectFolder(
   folderPath: string,
   params: ProjectActionsParams
 ): Promise<void> {
+  /* 1 ────────────────────────────────────────────────────────────
+     Drop from the list that drives the UI
+  ─────────────────────────────────────────────────────────────── */
   params.setProjectFolders(prev => prev.filter(p => p !== folderPath));
 
-  clearTemplateCaches();
-
-  // @ts-ignore - Suppressing type checking for electronAPI access
-  if (window.electronAPI?.removeProjectDirectory) {
-    try {
-      // @ts-ignore - Suppressing type checking for electronAPI methods
-      await window.electronAPI.removeProjectDirectory(folderPath);
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        console.error(
-          `[projectActions] Failed to remove project directory from main process: ${folderPath}`,
-          err.message
-        );
-      } else {
-        console.error(
-          `[projectActions] Failed to remove project directory from main process: ${folderPath}`,
-          err
-        );
-      }
+  /* 2 ────────────────────────────────────────────────────────────
+     Nuke every cache/state entry whose path starts with folderPath
+  ─────────────────────────────────────────────────────────────── */
+  params.setDirectoryCache(prev => {
+    const updated: typeof prev = {};
+    for (const [path, listing] of Object.entries(prev)) {
+      if (!path.startsWith(folderPath)) updated[path] = listing;
     }
-  } else {
-    console.warn(
-      '[projectActions] removeProjectDirectory: electronAPI.removeProjectDirectory is unavailable'
-    );
+    return updated;
+  });
+
+  params.setExpandedPaths(prev => {
+    const updated: typeof prev = {};
+    for (const [path, val] of Object.entries(prev)) {
+      if (!path.startsWith(folderPath)) updated[path] = val;
+    }
+    return updated;
+  });
+
+  params.setNodeStates(prev => {
+    const updated: typeof prev = {};
+    for (const [path, val] of Object.entries(prev)) {
+      if (!path.startsWith(folderPath)) updated[path] = val;
+    }
+    return updated;
+  });
+
+  params.setSelectedFileContents(prev => {
+    const updated: typeof prev = {};
+    for (const [path, content] of Object.entries(prev)) {
+      if (!path.startsWith(folderPath)) updated[path] = content;
+    }
+    return updated;
+  });
+
+  /* 3 ────────────────────────────────────────────────────────────
+     Tell the main process (optional helper)
+  ─────────────────────────────────────────────────────────────── */
+  // @ts-ignore – electron preload typing
+  if (window?.electronAPI?.removeProjectDirectory) {
+    try {
+      // @ts-ignore
+      await window.electronAPI.removeProjectDirectory(folderPath);
+    } catch (err) {
+      console.warn('[projectActions] Failed to inform main process:', err);
+    }
   }
 }
 
@@ -697,11 +727,18 @@ function debugSelectedFiles(params: ProjectActionsParams, message: string): void
  * Force synchronize the file contents with the currently selected files
  * This is a more direct approach to ensure the file map is up-to-date
  */
-export async function syncSelectedFileContents(params: ProjectActionsParams): Promise<void> {
+export async function syncSelectedFileContents(
+  params: ProjectActionsParams
+): Promise<Array<{ path: string; content: string; language: string }>> {
+  // ❶ single declaration – visible to entire function
+  const newFileContents: Record<string, string> = {};
+
   try {
     console.log('[projectActions] Beginning synchronization of selected file contents');
 
-    // Get all currently selected file paths from the node states
+    /* ------------------------------------------------------------
+       1. Gather the list of file paths that are currently selected
+    ------------------------------------------------------------ */
     const allFilePaths: string[] = [];
     for (const key in params.directoryCache) {
       const listing = params.directoryCache[key];
@@ -714,118 +751,97 @@ export async function syncSelectedFileContents(params: ProjectActionsParams): Pr
       };
       collectAllFilePaths(rootNode, params.nodeStates, allFilePaths);
     }
-
     console.log(`[projectActions] Found ${allFilePaths.length} files with 'all' selection state`);
 
-    // CRITICAL FIX: Always start with a fresh content map
-    // Rather than checking what to add/remove, just rebuild the whole thing
-    const newFileContents: Record<string, string> = {};
-
-    // Keep track of files that no longer exist
+    /* ------------------------------------------------------------
+       2. Read every file fresh from disk (batched)
+    ------------------------------------------------------------ */
     const missingFilePaths: string[] = [];
-
-    // Read content for all files - use verifyFileExistence to check first if available
-    console.log(
-      `[projectActions] Creating fresh content map for all ${allFilePaths.length} selected files`
-    );
-
-    // Process files in small batches to avoid overwhelming the system
     const batchSize = 5;
     let successfulReads = 0;
 
     for (let i = 0; i < allFilePaths.length; i += batchSize) {
       const batch = allFilePaths.slice(i, i + batchSize);
-      const batchPromises = batch.map(async path => {
-        try {
-          // Check if the file exists first if the API is available
-          let fileExists = true;
-          // @ts-ignore - Accessing window.electronAPI
-          if (window.electronAPI?.verifyFileExistence) {
-            try {
-              // @ts-ignore - Calling verifyFileExistence
-              fileExists = await window.electronAPI.verifyFileExistence(path);
-              if (!fileExists) {
+      await Promise.all(
+        batch.map(async path => {
+          try {
+            // Optional existence check
+            // @ts-ignore
+            if (window.electronAPI?.verifyFileExistence) {
+              // @ts-ignore
+              const exists = await window.electronAPI.verifyFileExistence(path);
+              if (!exists) {
                 console.log(`[projectActions] File no longer exists: ${path}`);
                 missingFilePaths.push(path);
                 return;
               }
-            } catch (err) {
-              // If verification fails, try reading anyway
-              console.warn(
-                `[projectActions] Error verifying file existence ${path}, will try reading anyway:`,
-                err
-              );
             }
-          }
 
-          // Always read the file fresh from disk
-          const content = await readFile(path);
-
-          if (content) {
-            newFileContents[path] = content;
-            successfulReads++;
-            console.log(`[projectActions] Successfully read file: ${path}`);
-          } else {
-            console.warn(`[projectActions] Empty content for file: ${path}`);
+            const content = await readFile(path);
+            if (content) {
+              newFileContents[path] = content;
+              successfulReads++;
+            } else {
+              console.warn(`[projectActions] Empty content for file: ${path}`);
+              missingFilePaths.push(path);
+            }
+          } catch (err) {
+            console.error(`[projectActions] Error reading file ${path}:`, err);
             missingFilePaths.push(path);
           }
-        } catch (err) {
-          console.error(`[projectActions] Error reading file ${path}:`, err);
-          missingFilePaths.push(path);
-        }
-      });
-
-      await Promise.all(batchPromises);
+        })
+      );
     }
 
-    // IMPORTANT: Remove missing files from node states
+    /* ------------------------------------------------------------
+       3. Update nodeStates if some files vanished
+    ------------------------------------------------------------ */
     if (missingFilePaths.length > 0) {
       console.log(
         `[projectActions] Removing ${missingFilePaths.length} missing files from selection state`
       );
-
-      // Create a new node states object with missing files set to 'none'
       const updatedNodeStates = { ...params.nodeStates };
       for (const path of missingFilePaths) {
-        if (updatedNodeStates[path]) {
-          console.log(`[projectActions] Clearing selection state for missing file: ${path}`);
-          updatedNodeStates[path] = 'none';
-        }
+        updatedNodeStates[path] = 'none';
       }
-
-      // Update parent directory states recursively
+      // Re-compute directory tri-states
       for (const key in params.directoryCache) {
         const listing = params.directoryCache[key];
         if (!listing) continue;
-        const rootNode: TreeNode = {
-          name: listing.baseName,
-          path: listing.absolutePath,
-          type: 'directory',
-          children: listing.children,
-        };
-        // Recalculate states based on removed files
-        recalcSubtreeState(rootNode, updatedNodeStates);
+        recalcSubtreeState(
+          {
+            name: listing.baseName,
+            path: listing.absolutePath,
+            type: 'directory',
+            children: listing.children,
+          },
+          updatedNodeStates
+        );
       }
-
-      // Apply the updated node states
       params.setNodeStates(updatedNodeStates);
     }
 
-    // Log success metrics
-    console.log(
-      `[projectActions] Read ${successfulReads} files successfully out of ${allFilePaths.length} selected files`
-    );
-
-    // Always replace the entire content map with our freshly built one
+    /* ------------------------------------------------------------
+       4. Commit the fresh content map  +  build/return freshEntries
+    ------------------------------------------------------------ */
     params.setSelectedFileContents(newFileContents);
 
-    // Log the final state
+    const freshEntries: Array<{ path: string; content: string; language: string }> = (
+      Object.entries(newFileContents) as [string, string][]
+    ).map(([path, content]) => ({
+      path,
+      content,
+      language: getLanguageFromPath(path),
+    }));
+
     console.log(
-      `[projectActions] Finished synchronization with ${Object.keys(newFileContents).length} files in content map`
+      `[projectActions] Finished synchronization. ${successfulReads} files read; ${freshEntries.length} in final map`
     );
-    console.log(`[projectActions] Selected file contents synchronized successfully`);
+    return freshEntries;
   } catch (err) {
     console.error('[projectActions] Error syncing selected file contents:', err);
+    // ensure the function still returns the promised type on failure
+    return [];
   }
 }
 

@@ -28,6 +28,7 @@ export interface ProjectContextType {
   expandedPaths: Record<string, boolean>;
   selectedFileContents: Record<string, string>;
   selectedFilesTokenCount: number;
+  selectedFilesTokenCountUpdating: boolean;
   directoryCache: Record<string, DirectoryListing>;
   toggleNodeSelection: (node: TreeNode) => void;
   toggleExpansion: (nodePath: string) => void;
@@ -38,7 +39,9 @@ export interface ProjectContextType {
   addProjectFolder: (folderPath: string) => Promise<void>;
   removeProjectFolder: (folderPath: string) => Promise<void>;
   refreshWithAllExtensions: (folderPath: string) => Promise<void>;
-  syncSelectedFileContents: () => Promise<void>;
+  syncSelectedFileContents: () => Promise<
+    Array<{ path: string; content: string; language: string }>
+  >;
 }
 
 const ProjectContext = createContext<ProjectContextType>({
@@ -47,6 +50,7 @@ const ProjectContext = createContext<ProjectContextType>({
   expandedPaths: {},
   selectedFileContents: {},
   selectedFilesTokenCount: 0,
+  selectedFilesTokenCountUpdating: false,
   directoryCache: {},
   toggleNodeSelection: () => {},
   toggleExpansion: () => {},
@@ -57,7 +61,7 @@ const ProjectContext = createContext<ProjectContextType>({
   addProjectFolder: async () => {},
   removeProjectFolder: async () => {},
   refreshWithAllExtensions: async () => {},
-  syncSelectedFileContents: async () => {},
+  syncSelectedFileContents: async () => [],
 });
 
 export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
@@ -66,6 +70,8 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
   const [expandedPaths, setExpandedPaths] = useState<Record<string, boolean>>({});
   const [selectedFileContents, setSelectedFileContents] = useState<Record<string, string>>({});
   const [selectedFilesTokenCount, setSelectedFilesTokenCount] = useState<number>(0);
+  const [selectedFilesTokenCountUpdating, setSelectedFilesTokenCountUpdating] =
+    useState<boolean>(false);
   const [projectFolders, setProjectFolders] = useState<string[]>([]);
   const { showToast } = useToast();
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -80,6 +86,9 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
+    // ⚙️  start the “loading” flag immediately
+    setSelectedFilesTokenCountUpdating(true);
+
     debounceRef.current = setTimeout(() => {
       let total = 0;
       const model = 'gpt-4';
@@ -93,6 +102,8 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
         total += estimateTokens(formatted, model);
       }
       setSelectedFilesTokenCount(total);
+      // ✅ done – remove the spinner
+      setSelectedFilesTokenCountUpdating(false);
     }, 300);
 
     return () => {
@@ -599,10 +610,14 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
   /**
    * syncSelectedFileContents
    */
-  const syncSelectedFileContents = useCallback(async () => {
+  const syncSelectedFileContents = useCallback(async (): Promise<
+    Array<{ path: string; content: string; language: string }>
+  > => {
     try {
       console.log('[ProjectContext] Synchronizing selected file contents');
-      await projectActions.syncSelectedFileContents({
+
+      // ‼️  simply return what projectActions gives you
+      const fresh = await projectActions.syncSelectedFileContents({
         directoryCache,
         setDirectoryCache,
         nodeStates,
@@ -614,15 +629,14 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
         projectFolders,
         setProjectFolders,
       });
+
       console.log('[ProjectContext] Synchronization complete');
+      return fresh; // <- fresh is in scope here
     } catch (error: unknown) {
       if (error instanceof Error) {
         showToast(`Error synchronizing selected file contents: ${error.message}`, 'error');
         if (process.env.NODE_ENV === 'development') {
-          console.error(
-            '[ProjectContext] Error synchronizing selected file contents:',
-            error.message
-          );
+          console.error('[ProjectContext] Error synchronizing selected file contents:', error);
         }
       } else {
         showToast('Unknown error synchronizing selected file contents', 'error');
@@ -630,6 +644,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
           console.error('[ProjectContext] Unknown error synchronizing selected file contents');
         }
       }
+      return []; // satisfy the promised return type on error
     }
   }, [
     directoryCache,
@@ -651,6 +666,7 @@ export const ProjectProvider: React.FC<React.PropsWithChildren> = ({ children })
     expandedPaths,
     selectedFileContents,
     selectedFilesTokenCount,
+    selectedFilesTokenCountUpdating,
     directoryCache,
     toggleNodeSelection,
     toggleExpansion,

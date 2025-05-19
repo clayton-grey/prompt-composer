@@ -39,6 +39,7 @@ const Sidebar: React.FC = () => {
     removeProjectFolder,
     refreshFolders,
     selectedFilesTokenCount,
+    selectedFilesTokenCountUpdating,
     getSelectedFileEntries,
     syncSelectedFileContents,
   } = useProject();
@@ -117,7 +118,7 @@ const Sidebar: React.FC = () => {
       // After the initial refresh, synchronize selected files with the latest file tree state
       // This will rebuild the entire file content map
       console.log('[Sidebar] Performing full synchronization of selected files');
-      await syncSelectedFileContents();
+      const fresh1 = await syncSelectedFileContents(); // fresh1 is optional debugging
 
       // Get current entries after first sync
       let currentEntries = getSelectedFileEntries();
@@ -131,27 +132,14 @@ const Sidebar: React.FC = () => {
       // Do a second full refresh cycle to catch any remaining inconsistencies
       console.log('[Sidebar] Performing second refresh cycle');
       await refreshFolders(projectFolders);
-      await syncSelectedFileContents();
-
-      // Get the final list of selected entries
-      currentEntries = getSelectedFileEntries();
-      console.log(`[Sidebar] After final sync: ${currentEntries.length} files selected`);
-
-      // *** FIX IMPLEMENTATION ***
-      // Force one more synchronization pass to be absolutely sure that
-      // any files flagged as missing are removed from the selection state
-      console.log('[Sidebar] Forcing final sync check for any missing files');
-      await syncSelectedFileContents();
-      const finalEntries2 = getSelectedFileEntries();
-      console.log(
-        `[Sidebar] After forced final sync: ${finalEntries2.length} files in selected files map`
-      );
+      const finalEntries = await syncSelectedFileContents(); // ← this is the definitive set
+      console.log(`[Sidebar] After final sync: ${finalEntries.length} files selected`);
 
       // Now generate the file block output
       console.log('[Sidebar] Generating file block output');
       const output = await generateFileBlockOutputSimple(
         projectFolders,
-        () => getSelectedFileEntries(), // fresh call to ensure the latest data
+        () => finalEntries, // ← hand generator the already-fresh array
         refreshFolders
       );
 
@@ -167,7 +155,7 @@ const Sidebar: React.FC = () => {
       console.log(`[Sidebar] Output size: ${output.length} characters`);
 
       // Show success notification with file count
-      showToast(`Copied ${finalEntries2.length} files to clipboard`, 'info');
+      showToast(`Copied ${finalEntries.length} files to clipboard`, 'info');
     } catch (error: unknown) {
       console.error('[Sidebar] Error copying file block output:', error);
       if (error instanceof Error) {
@@ -343,6 +331,26 @@ const Sidebar: React.FC = () => {
         </svg>
 
         <span>{selectedFilesTokenCount}</span>
+
+        {selectedFilesTokenCountUpdating && (
+          /* FULL refresh-ccw icon, spun with Tailwind’s animate-spin */
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="w-4 h-4 animate-spin"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <path d="M3 3v5h5" />
+            <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+            <path d="M16 16h5v5" />
+          </svg>
+        )}
       </div>
     </aside>
   );
